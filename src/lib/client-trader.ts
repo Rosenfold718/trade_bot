@@ -164,10 +164,7 @@ export async function runAutoTradeCycle(
     };
   }
 
-  // Step 2: If >= 3 open trades, skip
-  if (updatedOpenTrades.length >= 3) {
-    return { action: 'idle', closedTrades: [], message: 'Макс. 3 открытых сделки', scannedCount: 0, bestScore: 0 };
-  }
+  // No hard limit on open trades — risk is managed by deposit/balance allocation
 
   // Step 3: If balance too low, skip
   if (balance < 5) {
@@ -183,8 +180,8 @@ export async function runAutoTradeCycle(
     return { action: 'idle', closedTrades: [], message: 'Сигналов не найдено, сканирую...', scannedCount: 20, bestScore: 0 };
   }
 
-  // Trade amount: 15% of balance or $15, whichever is less (but at least $5)
-  const tradeAmount = Math.max(5, Math.min(balance * 0.15, 15));
+  // Trade amount: scale with balance — 10% per trade, min $3, max $20
+  const tradeAmount = Math.max(3, Math.min(balance * 0.10, 20));
 
   return {
     action: 'new-trade',

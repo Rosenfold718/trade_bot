@@ -7,7 +7,7 @@ import CoinList from '@/components/coin-list';
 import TradingDashboard from '@/components/trading-dashboard';
 import ControlPanel from '@/components/control-panel';
 import OrderBook from '@/components/order-book';
-import TradeDetailModal from '@/components/trade-detail-modal';
+// Trade details are shown inline on the chart when clicking a trade
 import type { CandleData, TraderState, Trade, IndicatorWeight, BacktestResult } from '@/lib/types';
 
 // Dynamic import with ssr: false — lightweight-charts requires browser DOM APIs
@@ -35,6 +35,7 @@ export type Timeframe = (typeof TIMEFRAMES)[number];
 export default function Home() {
   const {
     selectedSymbol,
+    coins,
     traderState,
     setTraderState,
     weights,
@@ -53,7 +54,8 @@ export default function Home() {
   const [candles, setCandles] = useState<CandleData[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
   const [timeframe, setTimeframe] = useState<Timeframe>(TIMEFRAMES[3]); // default 1H
-  const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
+  // Track which trade is focused (for inline info panel)
+  const [focusedTradeId, setFocusedTradeId] = useState<string | null>(null);
   const initDone = useRef(false);
   const weightsRef = useRef(weights);
   const openTradesRef = useRef(openTrades);
@@ -313,7 +315,9 @@ export default function Home() {
                 </button>
               ))}
             </div>
-            <TradingChart data={candles} symbol={selectedSymbol} timeframe={timeframe} openTrades={openTrades} />
+            <TradingChart data={candles} symbol={selectedSymbol} timeframe={timeframe} openTrades={openTrades} recentTrades={recentTrades} />
+            {/* Inline trade info panel — overlaid on chart */}
+            <InlineTradeInfo focusedTradeId={focusedTradeId} symbol={selectedSymbol} />
             </div>
 
             {/* Order Book */}
@@ -324,12 +328,12 @@ export default function Home() {
 
           {/* Bottom Trades Table */}
           <div className="h-44 border-t border-white/5 bg-[#0d0d14] shrink-0 overflow-auto">
-            <TradesTable openTrades={openTrades} recentTrades={recentTrades} onSelectTrade={setSelectedTrade} />
+            <TradesTable openTrades={openTrades} recentTrades={recentTrades} onSelectTrade={(trade) => {
+            setSelectedSymbol(trade.symbol);
+            setFocusedTradeId(trade.id);
+          }} />
           </div>
         </main>
-
-        {/* Trade Detail Modal */}
-        <TradeDetailModal trade={selectedTrade} onClose={() => setSelectedTrade(null)} />
 
         {/* Right Panel — Dashboard + Controls */}
         <aside className="w-72 shrink-0 overflow-y-auto border-l border-white/5">
@@ -445,6 +449,127 @@ function ActivityLog() {
             </span>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function fmtPriceInline(price: number): string {
+  if (price >= 10000) return price.toFixed(1);
+  if (price >= 100) return price.toFixed(2);
+  if (price >= 1) return price.toFixed(3);
+  if (price >= 0.01) return price.toFixed(5);
+  return price.toFixed(7);
+}
+
+function InlineTradeInfo({ focusedTradeId, symbol }: { focusedTradeId: string | null; symbol: string }) {
+  const { openTrades, recentTrades, coins } = useTerminalStore();
+
+  // Find the focused trade
+  const allTrades = [...openTrades, ...recentTrades];
+  const trade = focusedTradeId ? allTrades.find(t => t.id === focusedTradeId) : null;
+
+  // If no focused trade but there are open trades on this symbol, show the first one
+  const symbolTrades = openTrades.filter(t => t.symbol === symbol && t.status === 'open');
+  const activeTrade = trade ?? (symbolTrades.length > 0 ? symbolTrades[0] : null);
+
+  if (!activeTrade) return null;
+
+  const isLong = activeTrade.direction === 'long';
+  const isOpen = activeTrade.status === 'open';
+
+  // Live price from coins WebSocket
+  const coinData = coins.find(c => c.symbol === activeTrade.symbol);
+  const livePrice = coinData?.price ?? (activeTrade.exit_price ?? activeTrade.entry_price ?? 0);
+
+  // Live PnL
+  let livePnl = 0;
+  if (isOpen && livePrice > 0) {
+    const priceChange = isLong
+      ? (livePrice - activeTrade.entry_price) / activeTrade.entry_price
+      : (activeTrade.entry_price - livePrice) / activeTrade.entry_price;
+    livePnl = activeTrade.amount * priceChange * activeTrade.leverage;
+  } else if (activeTrade.pnl != null) {
+    livePnl = activeTrade.pnl;
+  }
+
+  // Duration
+  const openTime = new Date(activeTrade.opened_at).getTime();
+  const endTime = activeTrade.closed_at ? new Date(activeTrade.closed_at).getTime() : Date.now();
+  const diffMin = Math.floor((endTime - openTime) / 60000);
+  const hours = Math.floor(diffMin / 60);
+  const mins = diffMin % 60;
+  const durationStr = hours > 0 ? `${hours}ч ${mins}м` : `${mins}м`;
+
+  // Distance to TP/SL
+  let distTP = 0, distSL = 0;
+  if (isOpen) {
+    distTP = isLong
+      ? ((activeTrade.take_profit ?? livePrice) - livePrice) / livePrice * 100
+      : (livePrice - (activeTrade.take_profit ?? livePrice)) / livePrice * 100;
+    distSL = isLong
+      ? (livePrice - (activeTrade.stop_loss ?? livePrice)) / livePrice * 100
+      : ((activeTrade.stop_loss ?? livePrice) - livePrice) / livePrice * 100;
+  }
+
+  return (
+    <div className="absolute top-3 right-3 z-10 w-52 bg-[#0d0d14]/95 backdrop-blur-md border border-white/10 rounded-lg overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
+        <div className="flex items-center gap-2">
+          <span className={`text-xs font-bold ${isLong ? 'text-green-400' : 'text-red-400'}`}>
+            {isLong ? '▲ LONG' : '▼ SHORT'}
+          </span>
+          <span className="text-xs font-semibold text-white/90">
+            {activeTrade.symbol.replace('USDT', '')}
+          </span>
+        </div>
+        <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${
+          isOpen
+            ? 'bg-yellow-500/10 text-yellow-400/80 border border-yellow-500/20'
+            : 'bg-white/5 text-white/40 border border-white/10'
+        }`}>
+          {isOpen ? 'OPEN' : 'CLOSED'}
+        </span>
+      </div>
+
+      {/* Rows */}
+      <div className="px-3 py-2 space-y-1.5">
+        {/* Live PnL */}
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-white/40">PnL</span>
+          <span className={`text-xs font-mono font-bold ${livePnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+            {livePnl >= 0 ? '+' : ''}{livePnl.toFixed(2)}$
+          </span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-white/40">Текущая цена</span>
+          <span className="text-[10px] font-mono text-white/70">${fmtPriceInline(livePrice)}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-white/40">Вход</span>
+          <span className="text-[10px] font-mono text-white/60">${fmtPriceInline(activeTrade.entry_price)}</span>
+        </div>
+        {isOpen && activeTrade.take_profit != null && (
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-green-400/60">TP ({distTP >= 0 ? '+' : ''}{distTP.toFixed(1)}%)</span>
+            <span className="text-[10px] font-mono text-green-400/80">${fmtPriceInline(activeTrade.take_profit)}</span>
+          </div>
+        )}
+        {isOpen && activeTrade.stop_loss != null && (
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-red-400/60">SL ({distSL <= 0 ? '' : '+'}{distSL.toFixed(1)}%)</span>
+            <span className="text-[10px] font-mono text-red-400/80">${fmtPriceInline(activeTrade.stop_loss)}</span>
+          </div>
+        )}
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-white/40">Плечо / Объём</span>
+          <span className="text-[10px] font-mono text-white/50">{activeTrade.leverage}x / ${activeTrade.amount.toFixed(1)}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-white/40">Длительность</span>
+          <span className="text-[10px] font-mono text-white/50">{durationStr}</span>
+        </div>
       </div>
     </div>
   );

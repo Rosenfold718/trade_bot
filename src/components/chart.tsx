@@ -8,6 +8,7 @@ interface TradingChartProps {
   symbol: string;
   timeframe: { label: string; interval: string };
   openTrades?: Trade[];
+  recentTrades?: Trade[];
 }
 
 /** Adaptive price formatting: BTC ~1 decimal, PEPE ~7 decimals */
@@ -19,7 +20,7 @@ function fmtPrice(price: number): string {
   return price.toFixed(7);
 }
 
-export default function TradingChart({ data, symbol, timeframe, openTrades }: TradingChartProps) {
+export default function TradingChart({ data, symbol, timeframe, openTrades, recentTrades }: TradingChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
   const candleSeriesRef = useRef<any>(null);
@@ -196,6 +197,35 @@ export default function TradingChart({ data, symbol, timeframe, openTrades }: Tr
           });
           priceLinesRef.current.push(slLine);
         }
+      }
+
+      // Exit lines for recently closed trades on this symbol
+      const closedTrades = (recentTrades ?? []).filter(
+        (t) => t.symbol === symbol && t.status === 'closed' && t.exit_price != null,
+      );
+      for (const trade of closedTrades) {
+        // Entry — grey dashed
+        if (trade.entry_price != null) {
+          const line = candleSeries.createPriceLine({
+            price: trade.entry_price,
+            color: 'rgba(255,255,255,0.25)',
+            lineWidth: 1,
+            lineStyle: 2,
+            axisLabelVisible: true,
+            title: `IN $${fmtPrice(trade.entry_price)}`,
+          });
+          priceLinesRef.current.push(line);
+        }
+        // Exit — yellow dotted
+        const exitLine = candleSeries.createPriceLine({
+          price: trade.exit_price!,
+          color: '#eab308',
+          lineWidth: 1,
+          lineStyle: 1, // dotted
+          axisLabelVisible: true,
+          title: `EXIT $${fmtPrice(trade.exit_price!)}`,
+        });
+        priceLinesRef.current.push(exitLine);
       }
 
       // Immediately apply any data we already have
