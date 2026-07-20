@@ -54,6 +54,10 @@ export default function Home() {
   const [timeframe, setTimeframe] = useState<Timeframe>(TIMEFRAMES[3]); // default 1H
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
   const initDone = useRef(false);
+  const weightsRef = useRef(weights);
+  const openTradesRef = useRef(openTrades);
+  weightsRef.current = weights;
+  openTradesRef.current = openTrades;
 
   // Initialize app data
   const initData = useCallback(async () => {
@@ -122,54 +126,63 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [setTraderState, setOpenTrades, setRecentTrades]);
 
-  // Auto-trading loop: 30s cycle
+  // Auto-trading loop: fully client-side (Binance CORS works from browser)
   useEffect(() => {
     if (!autoTrading) return;
 
     let cancelled = false;
+
     const runCycle = async () => {
+      if (cancelled) return;
       try {
-        // Step 1: Monitor open trades (check TP/SL)
-        const monitorRes = await fetch('/api/trader', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'monitor-trades' }),
-        });
-        const monitorData = await monitorRes.json();
+        // Build weights map
+        const wMap: Record<string, number> = {};
+        for (const w of weightsRef.current) wMap[w.indicator_name] = w.weight;
+
+        // Run full cycle client-side
+        const { runAutoTradeCycle } = await import('@/lib/client-trader');
+        const result = await runAutoTradeCycle(openTradesRef.current, wMap, timeframe.interval);
 
         if (cancelled) return;
+        console.log('[AutoTrade]', result.message);
 
-        // Refresh state after monitoring
-        const refreshRes = await fetch('/api/trader');
-        const refreshData = await refreshRes.json();
-        if (cancelled) return;
-        if (refreshData.state) setTraderState(refreshData.state as TraderState);
-        if (refreshData.openTrades) setOpenTrades(refreshData.openTrades as Trade[]);
-        if (refreshData.recentTrades) setRecentTrades(refreshData.recentTrades as Trade[]);
-
-        // Step 2: If no open trades (or < 3), find new signals
-        const currentOpenTrades = refreshData.openTrades || [];
-        if (currentOpenTrades.length < 3) {
-          const autoRes = await fetch('/api/trader', {
+        // Step 1: Close trades that hit TP/SL
+        for (const ct of result.closedTrades) {
+          await fetch('/api/trader', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'auto-trade', timeframe: timeframe.interval }),
+            body: JSON.stringify({ action: 'close-trade', tradeId: ct.tradeId, exitPrice: ct.exitPrice }),
           });
-          const autoData = await autoRes.json();
-          if (cancelled) return;
-
-          // Refresh again after auto-trade
-          if (autoData.success) {
-            const finalRes = await fetch('/api/trader');
-            const finalData = await finalRes.json();
-            if (cancelled) return;
-            if (finalData.state) setTraderState(finalData.state as TraderState);
-            if (finalData.openTrades) setOpenTrades(finalData.openTrades as Trade[]);
-            if (finalData.recentTrades) setRecentTrades(finalData.recentTrades as Trade[]);
-          }
         }
+
+        // Step 2: Open new trade if signal found
+        if (result.newTrade) {
+          const nt = result.newTrade;
+          await fetch('/api/trader', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'open-trade',
+              symbol: nt.symbol,
+              entryPrice: nt.price,
+              amount: nt.amount,
+              leverage: nt.leverage,
+              direction: nt.direction,
+              stopLoss: nt.stopLoss,
+              takeProfit: nt.takeProfit,
+            }),
+          });
+        }
+
+        // Step 3: Refresh state from DB
+        const res = await fetch('/api/trader');
+        const data = await res.json();
+        if (cancelled) return;
+        if (data.state) setTraderState(data.state as TraderState);
+        if (data.openTrades) setOpenTrades(data.openTrades as Trade[]);
+        if (data.recentTrades) setRecentTrades(data.recentTrades as Trade[]);
       } catch (err) {
-        console.error('Auto-trading cycle error:', err);
+        console.error('[AutoTrade] Cycle error:', err);
       }
     };
 
@@ -183,27 +196,26 @@ export default function Home() {
     };
   }, [autoTrading, timeframe.interval, setTraderState, setOpenTrades, setRecentTrades]);
 
-  // Analyze on symbol change
+  // Analyze on symbol change — fully client-side
   useEffect(() => {
     if (candles.length < 50) return;
+    let cancelled = false;
     const analyze = async () => {
       try {
-        const res = await fetch('/api/trader', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'analyze', symbol: selectedSymbol }),
-        });
-        const data = await res.json();
-        if (data.decision) {
-          setCurrentAnalysis(data.decision);
+        const wMap: Record<string, number> = {};
+        for (const w of weightsRef.current) wMap[w.indicator_name] = w.weight;
+        const { analyzeSymbol } = await import('@/lib/client-trader');
+        const decision = await analyzeSymbol(selectedSymbol, timeframe.interval, timeframe.limit, wMap);
+        if (!cancelled && decision) {
+          setCurrentAnalysis(decision);
         }
       } catch {
         // silent
       }
     };
-    const timeout = setTimeout(analyze, 500);
-    return () => clearTimeout(timeout);
-  }, [selectedSymbol, candles.length, setCurrentAnalysis]);
+    const timeout = setTimeout(analyze, 300);
+    return () => { cancelled = true; clearTimeout(timeout); };
+  }, [selectedSymbol, candles.length, timeframe, setCurrentAnalysis]);
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-[#0a0a0f]">
