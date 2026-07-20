@@ -399,7 +399,7 @@ export function makeTradingDecision(
     }
   }
 
-  const OPEN_THRESHOLD = idleMinutes > 5 ? 0.8 : 1.5; // Lower threshold to actually trade
+  const OPEN_THRESHOLD = 0.5; // Low threshold to actively trade
   const absLongScore = Math.abs(longScore);
   const absShortScore = Math.abs(shortScore);
   const maxScore = Math.max(absLongScore, absShortScore);

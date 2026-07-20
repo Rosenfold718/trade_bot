@@ -35,6 +35,10 @@ interface TerminalStore {
   currentAnalysis: TradingDecision | null;
   setCurrentAnalysis: (analysis: TradingDecision | null) => void;
 
+  // Activity log
+  activityLog: Array<{ time: string; message: string; type: 'info' | 'trade' | 'error' }>;
+  addLog: (message: string, type?: 'info' | 'trade' | 'error') => void;
+
   // UI state
   isLoading: boolean;
   setIsLoading: (loading: boolean) => void;
@@ -99,6 +103,15 @@ export const useTerminalStore = create<TerminalStore>((set) => ({
 
   currentAnalysis: null,
   setCurrentAnalysis: (currentAnalysis) => set({ currentAnalysis }),
+
+  activityLog: [],
+  addLog: (message, type = 'info') =>
+    set((state) => ({
+      activityLog: [
+        { time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), message, type },
+        ...state.activityLog,
+      ].slice(0, 50), // keep last 50
+    })),
 
   isLoading: false,
   setIsLoading: (isLoading) => set({ isLoading }),

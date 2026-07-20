@@ -47,6 +47,7 @@ export default function Home() {
     isLoading,
     autoTrading,
     setAutoTrading,
+    addLog,
   } = useTerminalStore();
 
   const [candles, setCandles] = useState<CandleData[]>([]);
@@ -139,26 +140,33 @@ export default function Home() {
         const wMap: Record<string, number> = {};
         for (const w of weightsRef.current) wMap[w.indicator_name] = w.weight;
 
+        const balance = traderState?.balance ?? 100;
+
         // Run full cycle client-side
         const { runAutoTradeCycle } = await import('@/lib/client-trader');
-        const result = await runAutoTradeCycle(openTradesRef.current, wMap, timeframe.interval);
+        const result = await runAutoTradeCycle(openTradesRef.current, wMap, timeframe.interval, balance);
 
         if (cancelled) return;
         console.log('[AutoTrade]', result.message);
+        addLog(result.message, result.action === 'new-trade' ? 'trade' : 'info');
 
         // Step 1: Close trades that hit TP/SL
         for (const ct of result.closedTrades) {
-          await fetch('/api/trader', {
+          const closeRes = await fetch('/api/trader', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'close-trade', tradeId: ct.tradeId, exitPrice: ct.exitPrice }),
           });
+          const closeData = await closeRes.json();
+          if (closeData.success) {
+            addLog(`Закрыта ${ct.symbol}: ${ct.reason} | PnL: ${ct.pnl >= 0 ? '+' : ''}$${ct.pnl.toFixed(2)}`, ct.pnl >= 0 ? 'trade' : 'error');
+          }
         }
 
         // Step 2: Open new trade if signal found
         if (result.newTrade) {
           const nt = result.newTrade;
-          await fetch('/api/trader', {
+          const openRes = await fetch('/api/trader', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -172,6 +180,12 @@ export default function Home() {
               takeProfit: nt.takeProfit,
             }),
           });
+          const openData = await openRes.json();
+          if (openData.success) {
+            addLog(`Открыта ${nt.direction.toUpperCase()} ${nt.symbol.replace('USDT', '')} @ $${nt.price.toFixed(2)} | ${nt.leverage}x | $${nt.amount.toFixed(2)}`, 'trade');
+          } else {
+            addLog(`Ошибка открытия: ${openData.error || 'unknown'}`, 'error');
+          }
         }
 
         // Step 3: Refresh state from DB
@@ -183,9 +197,11 @@ export default function Home() {
         if (data.recentTrades) setRecentTrades(data.recentTrades as Trade[]);
       } catch (err) {
         console.error('[AutoTrade] Cycle error:', err);
+        addLog(`Ошибка цикла: ${err instanceof Error ? err.message : 'unknown'}`, 'error');
       }
     };
 
+    addLog('Авто-трейдинг запущен', 'trade');
     // Run immediately, then every 30 seconds
     runCycle();
     const interval = setInterval(runCycle, 30000);
@@ -193,8 +209,9 @@ export default function Home() {
     return () => {
       cancelled = true;
       clearInterval(interval);
+      addLog('Авто-трейдинг остановлен', 'info');
     };
-  }, [autoTrading, timeframe.interval, setTraderState, setOpenTrades, setRecentTrades]);
+  }, [autoTrading, timeframe.interval, setTraderState, setOpenTrades, setRecentTrades, addLog, traderState?.balance]);
 
   // Analyze on symbol change — fully client-side
   useEffect(() => {
@@ -317,6 +334,7 @@ export default function Home() {
         {/* Right Panel — Dashboard + Controls */}
         <aside className="w-72 shrink-0 overflow-y-auto border-l border-white/5">
           <TradingDashboard />
+          <ActivityLog />
           <div className="border-t border-white/5">
             <ControlPanel />
           </div>
@@ -400,6 +418,34 @@ function TradesTable({ openTrades, recentTrades, onSelectTrade }: { openTrades: 
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function ActivityLog() {
+  const { activityLog } = useTerminalStore();
+  if (activityLog.length === 0) return null;
+
+  return (
+    <div className="border-t border-white/5 p-3">
+      <div className="text-xs uppercase tracking-wider text-white/40 font-medium mb-2 flex items-center gap-1.5">
+        <div className={`w-1.5 h-1.5 rounded-full ${activityLog[0]?.type === 'trade' ? 'bg-green-400' : activityLog[0]?.type === 'error' ? 'bg-red-400' : 'bg-white/30'}`} />
+        Лог активности
+      </div>
+      <div className="max-h-40 overflow-y-auto space-y-0.5 pr-1 custom-scrollbar">
+        {activityLog.map((entry, i) => (
+          <div key={i} className="flex gap-2 text-[10px] font-mono">
+            <span className="text-white/20 shrink-0">{entry.time}</span>
+            <span className={
+              entry.type === 'trade' ? 'text-green-400/80' :
+              entry.type === 'error' ? 'text-red-400/80' :
+              'text-white/40'
+            }>
+              {entry.message}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

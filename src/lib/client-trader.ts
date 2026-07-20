@@ -1,4 +1,4 @@
-import type { CandleData, TradingDecision, Trade, IndicatorWeight, IndicatorSignal } from './types';
+import type { CandleData, TradingDecision, Trade, IndicatorSignal } from './types';
 import { makeTradingDecision, analyzeIndicators } from './trading-engine';
 
 // ============================================================
@@ -66,7 +66,8 @@ export async function findBestSignal(
 ): Promise<{ decision: TradingDecision; price: number; symbol: string } | null> {
   const symbols = await fetchTopSymbolsClient();
   const available = symbols.filter(s => !openTradeSymbols.has(s));
-  const checkSymbols = available.sort(() => Math.random() - 0.5).slice(0, 15);
+  // Shuffle and check more symbols for better signal detection
+  const checkSymbols = available.sort(() => Math.random() - 0.5).slice(0, 20);
 
   let best: { decision: TradingDecision; price: number; symbol: string } | null = null;
   let bestScore = 0;
@@ -75,7 +76,7 @@ export async function findBestSignal(
     try {
       const candles = await fetchCandlesClient(sym, interval, limit);
       if (candles.length < 50) continue;
-      const decision = makeTradingDecision(sym, candles, weights, 30);
+      const decision = makeTradingDecision(sym, candles, weights, 0);
       if (decision.direction !== 'none' && Math.abs(decision.score) > bestScore) {
         bestScore = Math.abs(decision.score);
         best = { decision, price: candles[candles.length - 1].close, symbol: sym };
@@ -93,7 +94,7 @@ export async function findBestSignal(
 // ============================================================
 
 export interface MonitorResult {
- closedTrades: Array<{ tradeId: string; symbol: string; direction: string; pnl: number; reason: string; exitPrice: number }>;
+  closedTrades: Array<{ tradeId: string; symbol: string; direction: string; pnl: number; reason: string; exitPrice: number }>;
 }
 
 export async function monitorTradesClient(openTrades: Trade[]): Promise<MonitorResult> {
@@ -140,11 +141,14 @@ export async function runAutoTradeCycle(
   openTrades: Trade[],
   weights: Record<string, number>,
   interval: string,
+  balance: number,
 ): Promise<{
     action: 'monitor' | 'new-trade' | 'idle';
     closedTrades: MonitorResult['closedTrades'];
     newTrade?: { symbol: string; direction: string; price: number; leverage: number; stopLoss: number; takeProfit: number; amount: number };
     message: string;
+    scannedCount: number;
+    bestScore: number;
   }> {
   // Step 1: Monitor open trades
   const { closedTrades } = await monitorTradesClient(openTrades);
@@ -155,24 +159,32 @@ export async function runAutoTradeCycle(
       action: 'monitor',
       closedTrades,
       message: `Closed ${closedTrades.length} trade(s): ${closedTrades.map(c => `${c.symbol} (${c.reason})`).join(', ')}`,
+      scannedCount: 0,
+      bestScore: 0,
     };
   }
 
-  // Step 2: If < 3 open trades, look for new signals
+  // Step 2: If >= 3 open trades, skip
   if (updatedOpenTrades.length >= 3) {
-    return { action: 'idle', closedTrades: [], message: 'Max 3 open trades' };
+    return { action: 'idle', closedTrades: [], message: 'Макс. 3 открытых сделки', scannedCount: 0, bestScore: 0 };
+  }
+
+  // Step 3: If balance too low, skip
+  if (balance < 5) {
+    return { action: 'idle', closedTrades: [], message: 'Недостаточно баланса ($<5)', scannedCount: 0, bestScore: 0 };
   }
 
   const openSymbols = new Set(updatedOpenTrades.map(t => t.symbol));
-  const limitMap: Record<string, number> = { '1m': 1000, '5m': 1000, '15m': 1000, '1h': 720 };
+  const limitMap: Record<string, number> = { '1m': 1000, '5m': 1000, '15m': 1000, '1h': 720, '4h': 500 };
   const limit = limitMap[interval] || 720;
 
   const best = await findBestSignal(weights, openSymbols, interval, limit);
   if (!best || best.decision.direction === 'none') {
-    return { action: 'idle', closedTrades: [], message: 'No strong signals found' };
+    return { action: 'idle', closedTrades: [], message: 'Сигналов не найдено, сканирую...', scannedCount: 20, bestScore: 0 };
   }
 
-  const tradeAmount = 15; // $15 per trade from $100 balance
+  // Trade amount: 15% of balance or $15, whichever is less (but at least $5)
+  const tradeAmount = Math.max(5, Math.min(balance * 0.15, 15));
 
   return {
     action: 'new-trade',
@@ -186,6 +198,8 @@ export async function runAutoTradeCycle(
       takeProfit: best.decision.takeProfit,
       amount: tradeAmount,
     },
-    message: `Signal: ${best.decision.direction.toUpperCase()} ${best.symbol} @ ${best.price} (${best.decision.leverage}x, score ${best.decision.score.toFixed(2)})`,
+    message: `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${best.symbol.replace('USDT', '')} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x | Score: ${best.decision.score.toFixed(2)}`,
+    scannedCount: 20,
+    bestScore: Math.abs(best.decision.score),
   };
 }

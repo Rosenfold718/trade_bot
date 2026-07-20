@@ -5,7 +5,7 @@ import { useTerminalStore } from '@/lib/store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { CreditCard, RotateCcw, Play, Loader2, Zap } from 'lucide-react';
+import { CreditCard, RotateCcw, Play, Loader2, Zap, Power } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -57,6 +57,7 @@ export default function ControlPanel() {
       setOpenTrades([]);
       setRecentTrades([]);
       setBacktestResults([]);
+      setAutoTrading(false);
       setWeights([
         { id: 'rsi', indicator_name: 'RSI', weight: 1, calculated_winrate: null },
         { id: 'macd', indicator_name: 'MACD', weight: 1, calculated_winrate: null },
@@ -82,12 +83,10 @@ export default function ControlPanel() {
       const res = await fetch('/api/backtest', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
-        // Refresh weights
         const wRes = await fetch('/api/weights');
         const wData = await wRes.json();
         if (Array.isArray(wData)) setWeights(wData);
 
-        // Refresh backtest results
         const bRes = await fetch('/api/backtest');
         const bData = await bRes.json();
         if (Array.isArray(bData)) setBacktestResults(bData);
@@ -99,38 +98,39 @@ export default function ControlPanel() {
     }
   };
 
-  const handleAutoTrade = async () => {
-    if (autoTrading) {
-      setAutoTrading(false);
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      const res = await fetch('/api/trader', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'auto-trade' }),
-      });
-      const data = await res.json();
-
-      if (data.success) {
-        // Refresh state
-        const initRes = await fetch('/api/init');
-        const initData = await initRes.json();
-        if (initData.state) setTraderState(initData.state);
-        if (initData.openTrades) setOpenTrades(initData.openTrades);
-        if (initData.recentTrades) setRecentTrades(initData.recentTrades);
-      }
-    } catch (err) {
-      console.error('Auto-trade error:', err);
-    } finally {
-      setIsLoading(false);
-    }
+  const handleToggleAutoTrading = () => {
+    setAutoTrading(!autoTrading);
   };
 
   return (
     <div className="p-3 space-y-2">
+      {/* Auto Trading Toggle */}
+      <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/5 rounded-xl">
+        <CardHeader className="p-3 pb-2">
+          <CardTitle className="text-xs uppercase tracking-wider text-white/50 font-medium flex items-center gap-1.5">
+            <Power className="h-3 w-3" /> Авто-трейдинг
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-3 pt-0 space-y-2">
+          <Button
+            onClick={handleToggleAutoTrading}
+            className={`w-full h-9 text-xs rounded-lg font-semibold transition-all duration-300 ${
+              autoTrading
+                ? 'bg-green-600 hover:bg-green-700 text-white shadow-lg shadow-green-600/20'
+                : 'bg-white/5 hover:bg-white/10 text-white/70 border border-white/10'
+            }`}
+          >
+            <Power className={`h-3.5 w-3.5 mr-2 ${autoTrading ? 'animate-pulse' : ''}`} />
+            {autoTrading ? '● АВТО-ТРЕЙДИНГ ВКЛЮЧЕН' : 'Включить авто-трейдинг'}
+          </Button>
+          {autoTrading && (
+            <p className="text-[10px] text-green-400/60 font-mono text-center animate-pulse">
+              Сканирует рынок каждые 30 сек...
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Credit */}
       <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/5 rounded-xl">
         <CardHeader className="p-3 pb-2">
@@ -174,23 +174,6 @@ export default function ControlPanel() {
           </CardTitle>
         </CardHeader>
         <CardContent className="p-3 pt-0 space-y-2">
-          <Button
-            onClick={handleAutoTrade}
-            disabled={isLoading}
-            className={`w-full h-8 text-xs rounded-md font-medium ${
-              autoTrading
-                ? 'bg-red-600 hover:bg-red-700 text-white'
-                : 'bg-blue-600 hover:bg-blue-700 text-white'
-            }`}
-          >
-            {isLoading ? (
-              <Loader2 className="h-3 w-3 animate-spin mr-1.5" />
-            ) : (
-              <Zap className="h-3 w-3 mr-1.5" />
-            )}
-            {isLoading ? 'Анализ...' : autoTrading ? 'Стоп Авто' : 'Авто-сделка'}
-          </Button>
-
           <Button
             onClick={handleBacktest}
             disabled={backtestLoading}
