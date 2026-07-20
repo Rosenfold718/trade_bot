@@ -117,6 +117,6 @@ export const useTerminalStore = create<TerminalStore>((set) => ({
   setIsLoading: (isLoading) => set({ isLoading }),
   backtestLoading: false,
   setBacktestLoading: (backtestLoading) => set({ backtestLoading }),
-  autoTrading: false,
+  autoTrading: true,
   setAutoTrading: (autoTrading) => set({ autoTrading }),
 }));

@@ -399,7 +399,7 @@ export function makeTradingDecision(
     }
   }
 
-  const OPEN_THRESHOLD = 0.5; // Low threshold to actively trade
+  const OPEN_THRESHOLD = 0.15; // Aggressive threshold — trade often
   const absLongScore = Math.abs(longScore);
   const absShortScore = Math.abs(shortScore);
   const maxScore = Math.max(absLongScore, absShortScore);
@@ -413,10 +413,20 @@ export function makeTradingDecision(
   } else if (absShortScore >= OPEN_THRESHOLD && absShortScore > absLongScore) {
     direction = 'short';
     score = shortScore;
+  } else if (maxScore > 0.02) {
+    // Sub-threshold fallback: still trade if there's any directional bias
+    // (avoids infinite idle when market is slightly directional)
+    if (absLongScore >= absShortScore) {
+      direction = 'long';
+      score = longScore;
+    } else {
+      direction = 'short';
+      score = shortScore;
+    }
   }
 
-  // Leverage based on signal strength (1x to 10x)
-  const leverage = direction === 'none' ? 1 : Math.min(10, Math.max(1, Math.round(maxScore * 2)));
+  // Leverage based on signal strength (1x to 10x), lower for weak signals
+  const leverage = direction === 'none' ? 1 : Math.min(10, Math.max(1, Math.round(maxScore * 3)));
 
   // Stop loss and take profit based on ATR
   const stopLossPercent = atr / price; // e.g., 0.02 for 2%
