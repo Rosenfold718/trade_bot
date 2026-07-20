@@ -1,16 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, openTrade, closeTrade, updateBalance, repayDebt } from '@/lib/db';
+import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, openTrade, closeTrade, updateBalance, repayDebt } from '@/lib/db';
 import { fetchKlines, makeTradingDecision, fetchTopSymbols } from '@/lib/trading-engine';
 
 export async function GET() {
   try {
     await initDB();
-    const [state, weights, openTrades] = await Promise.all([
+    const [state, weights, openTrades, recentTrades] = await Promise.all([
       getTraderState(),
       getIndicatorWeights(),
       getOpenTrades(),
+      getRecentTrades(20),
     ]);
-    return NextResponse.json({ state, weights, openTrades });
+    return NextResponse.json({ state, weights, openTrades, recentTrades });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json({ error: message }, { status: 500 });
@@ -21,7 +22,7 @@ export async function POST(request: NextRequest) {
   try {
     await initDB();
     const body = await request.json();
-    const { action, symbol } = body as { action: string; symbol?: string };
+    const { action, symbol, timeframe } = body as { action: string; symbol?: string; timeframe?: string };
 
     if (action === 'analyze') {
       if (!symbol) return NextResponse.json({ error: 'Symbol required' }, { status: 400 });
@@ -31,7 +32,18 @@ export async function POST(request: NextRequest) {
       const weights: Record<string, number> = {};
       for (const w of weightsArr) weights[w.indicator_name] = w.weight;
 
-      const candles = await fetchKlines(symbol, '1h', 720);
+      const interval = timeframe || '1h';
+      const limitMap: Record<string, number> = {
+        '1m': 1000,
+        '5m': 1000,
+        '15m': 1000,
+        '1h': 720,
+        '4h': 500,
+        '1d': 365,
+      };
+      const limit = limitMap[interval] || 720;
+
+      const candles = await fetchKlines(symbol, interval, limit);
       if (candles.length < 50) {
         return NextResponse.json({ error: 'Not enough candle data' }, { status: 400 });
       }
@@ -99,7 +111,90 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, pnl, newBalance });
     }
 
+    if (action === 'monitor-trades') {
+      const openTrades = await getOpenTrades();
+      const closedTrades: Array<{ tradeId: string; symbol: string; direction: string; pnl: number; reason: string }> = [];
+
+      for (const trade of openTrades) {
+        try {
+          // Fetch current price
+          const url = `https://api.binance.com/api/v3/ticker/price?symbol=${trade.symbol}`;
+          const res = await fetch(url);
+          if (!res.ok) continue;
+          const data = await res.json();
+          const currentPrice = parseFloat(data.price);
+
+          let shouldClose = false;
+          let reason = '';
+          let exitPrice = currentPrice;
+
+          // Check TP
+          if (trade.direction === 'long' && trade.take_profit && currentPrice >= trade.take_profit) {
+            shouldClose = true;
+            reason = 'TP hit';
+          } else if (trade.direction === 'short' && trade.take_profit && currentPrice <= trade.take_profit) {
+            shouldClose = true;
+            reason = 'TP hit';
+          }
+
+          // Check SL
+          if (trade.direction === 'long' && trade.stop_loss && currentPrice <= trade.stop_loss) {
+            shouldClose = true;
+            reason = 'SL hit';
+          } else if (trade.direction === 'short' && trade.stop_loss && currentPrice >= trade.stop_loss) {
+            shouldClose = true;
+            reason = 'SL hit';
+          }
+
+          if (shouldClose) {
+            const priceChange = trade.direction === 'long'
+              ? (exitPrice - trade.entry_price) / trade.entry_price
+              : (trade.entry_price - exitPrice) / trade.entry_price;
+            const pnl = trade.amount * priceChange * trade.leverage - trade.amount * 0.001;
+
+            await closeTrade(trade.id, exitPrice, pnl);
+
+            const state = await getTraderState();
+            let newBalance = state.balance + trade.amount + pnl;
+
+            if (pnl > 0 && state.debt_to_repay > 0) {
+              const repayAmount = pnl * 0.1;
+              await repayDebt(repayAmount);
+              newBalance -= Math.min(repayAmount, state.debt_to_repay);
+            }
+
+            await updateBalance(newBalance);
+
+            closedTrades.push({
+              tradeId: trade.id,
+              symbol: trade.symbol,
+              direction: trade.direction,
+              pnl,
+              reason,
+            });
+          }
+        } catch {
+          // Skip this trade if price fetch fails
+          continue;
+        }
+      }
+
+      // Return updated state
+      const [updatedState, updatedTrades] = await Promise.all([
+        getTraderState(),
+        getOpenTrades(),
+      ]);
+
+      return NextResponse.json({
+        success: true,
+        closedTrades,
+        openTrades: updatedTrades,
+        state: updatedState,
+      });
+    }
+
     if (action === 'auto-trade') {
+      const interval = timeframe || '1h';
       const symbols = await fetchTopSymbols();
       const weightsArr = await getIndicatorWeights();
       const weights: Record<string, number> = {};
@@ -111,14 +206,28 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ message: 'Max 3 open trades', openTrades });
       }
 
+      // Skip symbols that already have open trades
+      const openSymbols = new Set(openTrades.map(t => t.symbol));
+      const availableSymbols = symbols.filter(s => !openSymbols.has(s));
+
       let bestDecision: { decision: ReturnType<typeof makeTradingDecision>; price: number; symbol: string } | null = null;
       let bestScore = 0;
 
       // Check up to 10 random symbols for signals
-      const checkSymbols = symbols.sort(() => Math.random() - 0.5).slice(0, 10);
+      const checkSymbols = availableSymbols.sort(() => Math.random() - 0.5).slice(0, 10);
       for (const sym of checkSymbols) {
         try {
-          const candles = await fetchKlines(sym, '1h', 720);
+          const limitMap: Record<string, number> = {
+            '1m': 1000,
+            '5m': 1000,
+            '15m': 1000,
+            '1h': 720,
+            '4h': 500,
+            '1d': 365,
+          };
+          const limit = limitMap[interval] || 720;
+
+          const candles = await fetchKlines(sym, interval, limit);
           if (candles.length < 50) continue;
           const lastTrade = openTrades[0];
           let idleMinutes = 30;

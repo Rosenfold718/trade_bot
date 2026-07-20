@@ -7,6 +7,7 @@ import CoinList from '@/components/coin-list';
 import TradingDashboard from '@/components/trading-dashboard';
 import ControlPanel from '@/components/control-panel';
 import OrderBook from '@/components/order-book';
+import TradeDetailModal from '@/components/trade-detail-modal';
 import type { CandleData, TraderState, Trade, IndicatorWeight, BacktestResult } from '@/lib/types';
 
 // Dynamic import with ssr: false — lightweight-charts requires browser DOM APIs
@@ -44,11 +45,14 @@ export default function Home() {
     setRecentTrades,
     setCurrentAnalysis,
     isLoading,
+    autoTrading,
+    setAutoTrading,
   } = useTerminalStore();
 
   const [candles, setCandles] = useState<CandleData[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
   const [timeframe, setTimeframe] = useState<Timeframe>(TIMEFRAMES[3]); // default 1H
+  const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
   const initDone = useRef(false);
 
   // Initialize app data
@@ -110,12 +114,74 @@ export default function Home() {
         const data = await res.json();
         if (data.state) setTraderState(data.state as TraderState);
         if (data.openTrades) setOpenTrades(data.openTrades as Trade[]);
+        if (data.recentTrades) setRecentTrades(data.recentTrades as Trade[]);
       } catch {
         // silent
       }
     }, 15000);
     return () => clearInterval(interval);
-  }, [setTraderState, setOpenTrades]);
+  }, [setTraderState, setOpenTrades, setRecentTrades]);
+
+  // Auto-trading loop: 30s cycle
+  useEffect(() => {
+    if (!autoTrading) return;
+
+    let cancelled = false;
+    const runCycle = async () => {
+      try {
+        // Step 1: Monitor open trades (check TP/SL)
+        const monitorRes = await fetch('/api/trader', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'monitor-trades' }),
+        });
+        const monitorData = await monitorRes.json();
+
+        if (cancelled) return;
+
+        // Refresh state after monitoring
+        const refreshRes = await fetch('/api/trader');
+        const refreshData = await refreshRes.json();
+        if (cancelled) return;
+        if (refreshData.state) setTraderState(refreshData.state as TraderState);
+        if (refreshData.openTrades) setOpenTrades(refreshData.openTrades as Trade[]);
+        if (refreshData.recentTrades) setRecentTrades(refreshData.recentTrades as Trade[]);
+
+        // Step 2: If no open trades (or < 3), find new signals
+        const currentOpenTrades = refreshData.openTrades || [];
+        if (currentOpenTrades.length < 3) {
+          const autoRes = await fetch('/api/trader', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'auto-trade', timeframe: timeframe.interval }),
+          });
+          const autoData = await autoRes.json();
+          if (cancelled) return;
+
+          // Refresh again after auto-trade
+          if (autoData.success) {
+            const finalRes = await fetch('/api/trader');
+            const finalData = await finalRes.json();
+            if (cancelled) return;
+            if (finalData.state) setTraderState(finalData.state as TraderState);
+            if (finalData.openTrades) setOpenTrades(finalData.openTrades as Trade[]);
+            if (finalData.recentTrades) setRecentTrades(finalData.recentTrades as Trade[]);
+          }
+        }
+      } catch (err) {
+        console.error('Auto-trading cycle error:', err);
+      }
+    };
+
+    // Run immediately, then every 30 seconds
+    runCycle();
+    const interval = setInterval(runCycle, 30000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [autoTrading, timeframe.interval, setTraderState, setOpenTrades, setRecentTrades]);
 
   // Analyze on symbol change
   useEffect(() => {
@@ -145,8 +211,13 @@ export default function Home() {
       <header className="h-10 flex items-center justify-between px-4 border-b border-white/5 bg-[#0d0d14]/90 backdrop-blur-sm shrink-0 z-20">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+            <div className={`w-2 h-2 rounded-full ${autoTrading ? 'bg-green-400 animate-pulse' : 'bg-green-400/40'}`} />
             <span className="text-sm font-bold text-white/90 tracking-tight">TRADE BOT</span>
+            {autoTrading && (
+              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/25 animate-pulse">
+                AUTO LIVE
+              </span>
+            )}
           </div>
           <div className="h-4 w-px bg-white/10" />
           <span className="text-xs text-white/40 font-mono">
@@ -213,7 +284,7 @@ export default function Home() {
                 </button>
               ))}
             </div>
-            <TradingChart data={candles} symbol={selectedSymbol} timeframe={timeframe} />
+            <TradingChart data={candles} symbol={selectedSymbol} timeframe={timeframe} openTrades={openTrades} />
             </div>
 
             {/* Order Book */}
@@ -224,9 +295,12 @@ export default function Home() {
 
           {/* Bottom Trades Table */}
           <div className="h-44 border-t border-white/5 bg-[#0d0d14] shrink-0 overflow-auto">
-            <TradesTable openTrades={openTrades} recentTrades={recentTrades} />
+            <TradesTable openTrades={openTrades} recentTrades={recentTrades} onSelectTrade={setSelectedTrade} />
           </div>
         </main>
+
+        {/* Trade Detail Modal */}
+        <TradeDetailModal trade={selectedTrade} onClose={() => setSelectedTrade(null)} />
 
         {/* Right Panel — Dashboard + Controls */}
         <aside className="w-72 shrink-0 overflow-y-auto border-l border-white/5">
@@ -240,7 +314,7 @@ export default function Home() {
   );
 }
 
-function TradesTable({ openTrades, recentTrades }: { openTrades: Trade[]; recentTrades: Trade[] }) {
+function TradesTable({ openTrades, recentTrades, onSelectTrade }: { openTrades: Trade[]; recentTrades: Trade[]; onSelectTrade: (trade: Trade) => void }) {
   const allTrades = [...openTrades, ...recentTrades.filter(t => t.status === 'closed')].slice(0, 30);
   if (allTrades.length === 0) {
     return (
@@ -270,7 +344,11 @@ function TradesTable({ openTrades, recentTrades }: { openTrades: Trade[]; recent
             const isLong = trade.direction === 'long';
             const pnl = trade.pnl;
             return (
-              <tr key={trade.id} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
+              <tr
+                key={trade.id}
+                className="border-b border-white/[0.03] hover:bg-white/[0.04] transition-colors cursor-pointer"
+                onClick={() => onSelectTrade(trade)}
+              >
                 <td className="py-1.5 px-3 font-mono text-white/80 font-medium">
                   {trade.symbol.replace('USDT', '')}
                 </td>

@@ -107,6 +107,132 @@ function calcVolumeSignal(candles: CandleData[], period: number = 20): number {
 }
 
 // ============================================================
+// Additional Indicator Calculations
+// ============================================================
+
+function calcStochRSI(closes: number[], rsiPeriod: number = 14, stochPeriod: number = 14): number {
+  if (closes.length < rsiPeriod + stochPeriod) return 0.5;
+  // Calculate RSI for each window
+  const rsiValues: number[] = [];
+  for (let i = rsiPeriod; i <= closes.length; i++) {
+    rsiValues.push(calcRSI(closes.slice(0, i), rsiPeriod));
+  }
+  // Take last stochPeriod RSI values
+  const recentRSI = rsiValues.slice(-stochPeriod);
+  const minRSI = Math.min(...recentRSI);
+  const maxRSI = Math.max(...recentRSI);
+  const currentRSI = recentRSI[recentRSI.length - 1];
+  if (maxRSI === minRSI) return 0.5;
+  return (currentRSI - minRSI) / (maxRSI - minRSI);
+}
+
+function calcADX(candles: CandleData[], period: number = 14): { adx: number; plusDI: number; minusDI: number } {
+  if (candles.length < period * 2) return { adx: 0, plusDI: 0, minusDI: 0 };
+
+  const trueRanges: number[] = [];
+  const plusDM: number[] = [];
+  const minusDM: number[] = [];
+
+  for (let i = 1; i < candles.length; i++) {
+    const high = candles[i].high;
+    const low = candles[i].low;
+    const prevHigh = candles[i - 1].high;
+    const prevLow = candles[i - 1].low;
+    const prevClose = candles[i - 1].close;
+
+    const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+    trueRanges.push(tr);
+
+    const upMove = high - prevHigh;
+    const downMove = prevLow - low;
+
+    plusDM.push(upMove > downMove && upMove > 0 ? upMove : 0);
+    minusDM.push(downMove > upMove && downMove > 0 ? downMove : 0);
+  }
+
+  // Smooth with Wilder's method
+  const smooth = (data: number[], p: number) => {
+    const result: number[] = [];
+    let sum = 0;
+    for (let i = 0; i < p && i < data.length; i++) sum += data[i];
+    result.push(sum);
+    for (let i = p; i < data.length; i++) {
+      sum = sum - sum / p + data[i];
+      result.push(sum);
+    }
+    return result;
+  };
+
+  const smoothTR = smooth(trueRanges, period);
+  const smoothPlusDM = smooth(plusDM, period);
+  const smoothMinusDM = smooth(minusDM, period);
+
+  const diValues: number[] = [];
+  const plusDIValues: number[] = [];
+  const minusDIValues: number[] = [];
+
+  for (let i = 0; i < smoothTR.length; i++) {
+    const pdi = smoothTR[i] > 0 ? (smoothPlusDM[i] / smoothTR[i]) * 100 : 0;
+    const mdi = smoothTR[i] > 0 ? (smoothMinusDM[i] / smoothTR[i]) * 100 : 0;
+    plusDIValues.push(pdi);
+    minusDIValues.push(mdi);
+    const diSum = pdi + mdi;
+    diValues.push(diSum > 0 ? (Math.abs(pdi - mdi) / diSum) * 100 : 0);
+  }
+
+  // Smooth ADX
+  const adxSmoothed: number[] = [];
+  if (diValues.length >= period) {
+    let adxSum = 0;
+    for (let i = 0; i < period; i++) adxSum += diValues[i];
+    adxSmoothed.push(adxSum / period);
+    for (let i = period; i < diValues.length; i++) {
+      adxSmoothed.push((adxSmoothed[adxSmoothed.length - 1] * (period - 1) + diValues[i]) / period);
+    }
+  }
+
+  const lastIdx = adxSmoothed.length - 1;
+  return {
+    adx: adxSmoothed.length > 0 ? adxSmoothed[lastIdx] : 0,
+    plusDI: plusDIValues.length > 0 ? plusDIValues[plusDIValues.length - 1] : 0,
+    minusDI: minusDIValues.length > 0 ? minusDIValues[minusDIValues.length - 1] : 0,
+  };
+}
+
+function calcOBV(candles: CandleData[]): { obv: number; trend: number } {
+  if (candles.length < 2) return { obv: 0, trend: 0 };
+  let obv = 0;
+  const obvHistory: number[] = [];
+  for (let i = 1; i < candles.length; i++) {
+    if (candles[i].close > candles[i - 1].close) obv += candles[i].volume;
+    else if (candles[i].close < candles[i - 1].close) obv -= candles[i].volume;
+    obvHistory.push(obv);
+  }
+  // Simple trend: compare recent OBV vs earlier OBV
+  if (obvHistory.length < 10) return { obv, trend: 0 };
+  const recent = obvHistory.slice(-10).reduce((a, b) => a + b, 0) / 10;
+  const earlier = obvHistory.slice(-20, -10).reduce((a, b) => a + b, 0) / Math.min(10, obvHistory.length - 10);
+  const trend = earlier !== 0 ? (recent - earlier) / Math.abs(earlier) : 0;
+  return { obv, trend: Math.max(-1, Math.min(1, trend)) };
+}
+
+function calcVWAP(candles: CandleData[], period: number = 20): { vwap: number; signal: number } {
+  if (candles.length < period) return { vwap: 0, signal: 0 };
+  const slice = candles.slice(-period);
+  let cumVolumePrice = 0;
+  let cumVolume = 0;
+  for (const c of slice) {
+    const typicalPrice = (c.high + c.low + c.close) / 3;
+    cumVolumePrice += typicalPrice * c.volume;
+    cumVolume += c.volume;
+  }
+  const vwap = cumVolume > 0 ? cumVolumePrice / cumVolume : 0;
+  const price = candles[candles.length - 1].close;
+  const signal = vwap > 0 ? (price - vwap) / vwap : 0;
+  return { vwap, signal: Math.max(-1, Math.min(1, signal * 100)) }; // scale up
+}
+
+// ============================================================
 // Signal Generation
 // ============================================================
 
@@ -184,6 +310,64 @@ export function analyzeIndicators(
   const volSignal = calcVolumeSignal(candles);
   const volWeight = weights['volume'] ?? 1;
   signals.push({ name: 'Volume', signal: volSignal > 0 ? 1 : volSignal < 0 ? -1 : 0, strength: Math.abs(volSignal) });
+
+  // StochRSI
+  const stochRSI = calcStochRSI(closes);
+  if (stochRSI > 0.8) {
+    signals.push({ name: 'StochRSI', signal: -1, strength: (stochRSI - 0.8) / 0.2 });
+  } else if (stochRSI < 0.2) {
+    signals.push({ name: 'StochRSI', signal: 1, strength: (0.2 - stochRSI) / 0.2 });
+  } else {
+    signals.push({ name: 'StochRSI', signal: 0, strength: 0 });
+  }
+
+  // ADX
+  const adxResult = calcADX(candles);
+  if (adxResult.adx > 25) {
+    // Strong trend — follow +DI vs -DI
+    const adxStrength = Math.min((adxResult.adx - 25) / 25, 1);
+    if (adxResult.plusDI > adxResult.minusDI) {
+      signals.push({ name: 'ADX', signal: 1, strength: adxStrength });
+    } else {
+      signals.push({ name: 'ADX', signal: -1, strength: adxStrength });
+    }
+  } else if (adxResult.adx < 20) {
+    // Weak/ranging — avoid, slight neutral
+    signals.push({ name: 'ADX', signal: 0, strength: 0.1 });
+  } else {
+    signals.push({ name: 'ADX', signal: 0, strength: 0 });
+  }
+
+  // OBV
+  const obvResult = calcOBV(candles);
+  const priceChange = closes.length > 5
+    ? (closes[closes.length - 1] - closes[closes.length - 6]) / closes[closes.length - 6]
+    : 0;
+  if (obvResult.trend > 0.05 && priceChange > 0) {
+    // Rising OBV + rising price = bullish confirmation
+    signals.push({ name: 'OBV', signal: 1, strength: Math.min(Math.abs(obvResult.trend) * 5, 1) });
+  } else if (obvResult.trend < -0.05 && priceChange < 0) {
+    // Falling OBV + falling price = bearish confirmation
+    signals.push({ name: 'OBV', signal: -1, strength: Math.min(Math.abs(obvResult.trend) * 5, 1) });
+  } else if (obvResult.trend > 0.05 && priceChange < 0) {
+    // Divergence: OBV rising but price falling — potential reversal up
+    signals.push({ name: 'OBV', signal: 1, strength: Math.min(Math.abs(obvResult.trend) * 3, 0.7) });
+  } else if (obvResult.trend < -0.05 && priceChange > 0) {
+    // Divergence: OBV falling but price rising — potential reversal down
+    signals.push({ name: 'OBV', signal: -1, strength: Math.min(Math.abs(obvResult.trend) * 3, 0.7) });
+  } else {
+    signals.push({ name: 'OBV', signal: 0, strength: 0 });
+  }
+
+  // VWAP
+  const vwapResult = calcVWAP(candles);
+  if (vwapResult.signal > 0.005) {
+    signals.push({ name: 'VWAP', signal: 1, strength: Math.min(vwapResult.signal * 10, 1) });
+  } else if (vwapResult.signal < -0.005) {
+    signals.push({ name: 'VWAP', signal: -1, strength: Math.min(Math.abs(vwapResult.signal) * 10, 1) });
+  } else {
+    signals.push({ name: 'VWAP', signal: 0, strength: 0 });
+  }
 
   return signals;
 }
@@ -283,7 +467,7 @@ export function runBacktest(
   let balance = initialBalance;
   const trades: BacktestTrade[] = [];
   const indicatorPerformance: Record<string, { wins: number; losses: number; pnl: number }> = {};
-  const indicatorNames = ['RSI', 'MACD', 'EMA_50', 'EMA_200', 'Bollinger', 'Volume'];
+  const indicatorNames = ['RSI', 'MACD', 'EMA_50', 'EMA_200', 'Bollinger', 'Volume', 'StochRSI', 'ADX', 'OBV', 'VWAP'];
   for (const name of indicatorNames) {
     indicatorPerformance[name] = { wins: 0, losses: 0, pnl: 0 };
   }
@@ -371,6 +555,75 @@ export function runBacktest(
     winrate,
     profit_factor,
     indicator_performance: indicatorPerformance,
+  };
+}
+
+// ============================================================
+// Order Book Analysis
+// ============================================================
+
+export function analyzeOrderBook(
+  bids: Array<{ price: number; quantity: number; total: number }>,
+  asks: Array<{ price: number; quantity: number; total: number }>,
+  midPrice: number
+): IndicatorSignal {
+  // Calculate bid/ask volume imbalance
+  const totalBidVol = bids.reduce((sum, b) => sum + b.quantity, 0);
+  const totalAskVol = asks.reduce((sum, a) => sum + a.quantity, 0);
+  const totalVol = totalBidVol + totalAskVol;
+
+  let imbalance = 0;
+  if (totalVol > 0) {
+    imbalance = (totalBidVol - totalAskVol) / totalVol;
+  }
+
+  // Detect walls — large orders (>3x average) near price
+  let bidWallPressure = 0;
+  let askWallPressure = 0;
+
+  if (bids.length > 1) {
+    const avgBidQty = totalBidVol / bids.length;
+    const largeBids = bids.filter(b => b.quantity > avgBidQty * 3);
+    bidWallPressure = largeBids.reduce((sum, b) => {
+      const distance = (midPrice - b.price) / midPrice;
+      return sum + (b.quantity * Math.exp(-distance * 100)); // closer walls matter more
+    }, 0);
+  }
+
+  if (asks.length > 1) {
+    const avgAskQty = totalAskVol / asks.length;
+    const largeAsks = asks.filter(a => a.quantity > avgAskQty * 3);
+    askWallPressure = largeAsks.reduce((sum, a) => {
+      const distance = (a.price - midPrice) / midPrice;
+      return sum + (a.quantity * Math.exp(-distance * 100));
+    }, 0);
+  }
+
+  // Combine signals
+  const wallImbalance = bidWallPressure > 0 || askWallPressure > 0
+    ? (bidWallPressure - askWallPressure) / (bidWallPressure + askWallPressure)
+    : 0;
+
+  const combinedSignal = imbalance * 0.6 + wallImbalance * 0.4;
+
+  let signal: number;
+  let strength: number;
+
+  if (combinedSignal > 0.15) {
+    signal = 1;
+    strength = Math.min(combinedSignal / 0.5, 1);
+  } else if (combinedSignal < -0.15) {
+    signal = -1;
+    strength = Math.min(Math.abs(combinedSignal) / 0.5, 1);
+  } else {
+    signal = 0;
+    strength = 0;
+  }
+
+  return {
+    name: 'OrderBook',
+    signal,
+    strength,
   };
 }
 

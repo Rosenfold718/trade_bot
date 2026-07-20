@@ -1,26 +1,41 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import type { CandleData } from '@/lib/types';
+import type { CandleData, Trade } from '@/lib/types';
 
 interface TradingChartProps {
   data: CandleData[];
   symbol: string;
   timeframe: { label: string; interval: string };
+  openTrades?: Trade[];
 }
 
-export default function TradingChart({ data, symbol, timeframe }: TradingChartProps) {
+/** Adaptive price formatting: BTC ~1 decimal, PEPE ~7 decimals */
+function fmtPrice(price: number): string {
+  if (price >= 10000) return price.toFixed(1);
+  if (price >= 100) return price.toFixed(2);
+  if (price >= 1) return price.toFixed(3);
+  if (price >= 0.01) return price.toFixed(5);
+  return price.toFixed(7);
+}
+
+export default function TradingChart({ data, symbol, timeframe, openTrades }: TradingChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
   const candleSeriesRef = useRef<any>(null);
   const volumeSeriesRef = useRef<any>(null);
   const dataRef = useRef<CandleData[]>(data);
+  const openTradesRef = useRef<Trade[]>(openTrades ?? []);
+  const priceLinesRef = useRef<any[]>([]);
   const [mounted, setMounted] = useState(false);
 
-  // Always keep dataRef up to date
+  // Always keep refs up to date
   useEffect(() => {
     dataRef.current = data;
   }, [data]);
+  useEffect(() => {
+    openTradesRef.current = openTrades ?? [];
+  }, [openTrades]);
 
   // Mark as mounted (client-side only)
   useEffect(() => {
@@ -140,6 +155,49 @@ export default function TradingChart({ data, symbol, timeframe }: TradingChartPr
       candleSeriesRef.current = candleSeries;
       volumeSeriesRef.current = volumeSeries;
 
+      // Create price lines for open trades matching this symbol
+      const matchingTrades = (openTradesRef.current ?? []).filter(
+        (t) => t.symbol === symbol && t.status === 'open',
+      );
+      for (const trade of matchingTrades) {
+        // Entry line — white dashed
+        if (trade.entry_price != null) {
+          const entryLine = candleSeries.createPriceLine({
+            price: trade.entry_price,
+            color: '#ffffff',
+            lineWidth: 1,
+            lineStyle: 2, // dashed
+            axisLabelVisible: true,
+            title: `ENTRY $${fmtPrice(trade.entry_price)}`,
+          });
+          priceLinesRef.current.push(entryLine);
+        }
+        // TP line — green solid
+        if (trade.take_profit != null) {
+          const tpLine = candleSeries.createPriceLine({
+            price: trade.take_profit,
+            color: '#22c55e',
+            lineWidth: 1,
+            lineStyle: 0, // solid
+            axisLabelVisible: true,
+            title: `TP $${fmtPrice(trade.take_profit)}`,
+          });
+          priceLinesRef.current.push(tpLine);
+        }
+        // SL line — red solid
+        if (trade.stop_loss != null) {
+          const slLine = candleSeries.createPriceLine({
+            price: trade.stop_loss,
+            color: '#ef4444',
+            lineWidth: 1,
+            lineStyle: 0, // solid
+            axisLabelVisible: true,
+            title: `SL $${fmtPrice(trade.stop_loss)}`,
+          });
+          priceLinesRef.current.push(slLine);
+        }
+      }
+
       // Immediately apply any data we already have
       if (dataRef.current.length > 0) {
         applyData(candleSeries, volumeSeries, dataRef.current, chart);
@@ -150,6 +208,13 @@ export default function TradingChart({ data, symbol, timeframe }: TradingChartPr
 
     return () => {
       cancelled = true;
+      // Clean up price lines
+      if (candleSeriesRef.current) {
+        for (const line of priceLinesRef.current) {
+          try { candleSeriesRef.current.removePriceLine(line); } catch { /* already removed */ }
+        }
+      }
+      priceLinesRef.current = [];
       if (chartRef.current) {
         chartRef.current.remove();
         chartRef.current = null;

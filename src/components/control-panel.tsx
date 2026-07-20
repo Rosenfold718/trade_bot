@@ -64,6 +64,10 @@ export default function ControlPanel() {
         { id: 'ema200', indicator_name: 'EMA_200', weight: 1, calculated_winrate: null },
         { id: 'bollinger', indicator_name: 'Bollinger', weight: 1, calculated_winrate: null },
         { id: 'volume', indicator_name: 'Volume', weight: 1, calculated_winrate: null },
+        { id: 'stochrsi', indicator_name: 'StochRSI', weight: 1, calculated_winrate: null },
+        { id: 'adx', indicator_name: 'ADX', weight: 1, calculated_winrate: null },
+        { id: 'obv', indicator_name: 'OBV', weight: 1, calculated_winrate: null },
+        { id: 'vwap', indicator_name: 'VWAP', weight: 1, calculated_winrate: null },
       ]);
     } catch (err) {
       console.error('Reset error:', err);

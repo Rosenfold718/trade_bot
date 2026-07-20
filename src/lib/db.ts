@@ -37,6 +37,8 @@ const SCHEMA_SQL = `
     direction TEXT NOT NULL CHECK(direction IN ('long', 'short')),
     pnl REAL,
     status TEXT NOT NULL CHECK(status IN ('open', 'closed')) DEFAULT 'open',
+    stop_loss REAL,
+    take_profit REAL,
     opened_at TEXT NOT NULL DEFAULT (datetime('now')),
     closed_at TEXT
   );
@@ -67,7 +69,11 @@ const SCHEMA_SQL = `
     ('ema50', 'EMA_50', 1.0, NULL),
     ('ema200', 'EMA_200', 1.0, NULL),
     ('bollinger', 'Bollinger', 1.0, NULL),
-    ('volume', 'Volume', 1.0, NULL);
+    ('volume', 'Volume', 1.0, NULL),
+    ('stochrsi', 'StochRSI', 1.0, NULL),
+    ('adx', 'ADX', 1.0, NULL),
+    ('obv', 'OBV', 1.0, NULL),
+    ('vwap', 'VWAP', 1.0, NULL);
 `;
 
 let schemaInitialized = false;
@@ -142,15 +148,16 @@ export async function openTrade(
 ): Promise<void> {
   const id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   await db.execute(
-    `INSERT INTO trades (id, symbol, entry_price, amount, leverage, direction, status, opened_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'open', datetime('now'))`,
-    [id, symbol, entryPrice, amount, leverage, direction]
+    `INSERT INTO trades (id, symbol, entry_price, amount, leverage, direction, status, stop_loss, take_profit, opened_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, datetime('now'))`,
+    [id, symbol, entryPrice, amount, leverage, direction, stopLoss, takeProfit]
   );
 }
 
 export async function getOpenTrades(): Promise<Array<{
   id: string; symbol: string; entry_price: number; amount: number;
   leverage: number; direction: string; opened_at: string;
+  stop_loss: number | null; take_profit: number | null;
 }>> {
   const result = await db.execute('SELECT * FROM trades WHERE status = ?', ['open']);
   return result.rows.map(row => ({
@@ -161,6 +168,8 @@ export async function getOpenTrades(): Promise<Array<{
     leverage: Number(row.leverage),
     direction: row.direction as string,
     opened_at: row.opened_at as string,
+    stop_loss: row.stop_loss !== null ? Number(row.stop_loss) : null,
+    take_profit: row.take_profit !== null ? Number(row.take_profit) : null,
   }));
 }
 
@@ -190,6 +199,8 @@ export async function getRecentTrades(limit: number = 20) {
     direction: row.direction as 'long' | 'short',
     pnl: row.pnl !== null ? Number(row.pnl) : null,
     status: row.status as 'open' | 'closed',
+    stop_loss: row.stop_loss !== null ? Number(row.stop_loss) : null,
+    take_profit: row.take_profit !== null ? Number(row.take_profit) : null,
     opened_at: row.opened_at as string,
     closed_at: row.closed_at as string | null,
   }));

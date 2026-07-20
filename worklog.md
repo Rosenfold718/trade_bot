@@ -53,3 +53,35 @@ Stage Summary:
 - Files created: src/components/order-book.tsx
 - Files modified: src/lib/types.ts, src/app/page.tsx
 - Data source: Binance WebSocket wss://stream.binance.com:9443/ws/{symbol}@depth20@100ms
+
+---
+Task ID: 3-a
+Agent: full-stack-developer
+Task: Chart trade overlays + trade detail modal
+
+Work Log:
+- Modified chart.tsx to show entry/TP/SL price lines for open trades
+- Created trade-detail-modal.tsx with full chart and position markers
+- Integrated clickable trades in page.tsx
+
+Stage Summary:
+- Files modified: src/components/chart.tsx, src/app/page.tsx
+- Files created: src/components/trade-detail-modal.tsx
+
+---
+Task ID: 3-b
+Agent: full-stack-developer  
+Task: Enhanced trading engine + auto-trading loop
+
+Work Log:
+- Added StochRSI, ADX, OBV, VWAP indicators to trading engine
+- Added order book analysis function (analyzeOrderBook)
+- Enhanced auto-trade API with monitor-trades action and timeframe support
+- Added smart symbol skipping (avoids symbols with open trades)
+- Added auto-trading loop in page.tsx (30s cycle with monitor + auto-trade)
+- Enhanced analysis display in trading-dashboard.tsx (gauge, indicator bars, action)
+- Updated DB schema with 4 new indicator weights
+- Updated control-panel.tsx reset with new indicators
+
+Stage Summary:
+- Files modified: src/lib/trading-engine.ts, src/app/api/trader/route.ts, src/app/page.tsx, src/components/trading-dashboard.tsx, src/lib/db.ts, src/components/control-panel.tsx

@@ -59,6 +59,8 @@ export interface Trade {
   direction: 'long' | 'short';
   pnl: number | null;
   status: 'open' | 'closed';
+  stop_loss: number | null;
+  take_profit: number | null;
   opened_at: string;
   closed_at: string | null;
 }
