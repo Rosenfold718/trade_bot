@@ -513,7 +513,7 @@ function InlineTradeInfo({ focusedTradeId, symbol }: { focusedTradeId: string | 
   }
 
   return (
-    <div className="absolute top-3 right-3 z-10 w-52 bg-[#0d0d14]/95 backdrop-blur-md border border-white/10 rounded-lg overflow-hidden">
+    <div className="absolute top-3 right-3 z-20 w-52 bg-[#0d0d14]/95 backdrop-blur-md border border-white/10 rounded-lg overflow-hidden pointer-events-auto">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
         <div className="flex items-center gap-2">

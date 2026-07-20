@@ -155,8 +155,9 @@ export async function openTrade(
 }
 
 export async function getOpenTrades(): Promise<Array<{
-  id: string; symbol: string; entry_price: number; amount: number;
-  leverage: number; direction: string; opened_at: string;
+  id: string; symbol: string; entry_price: number; exit_price: number | null; amount: number;
+  leverage: number; direction: string; pnl: number | null; status: string;
+  opened_at: string; closed_at: string | null;
   stop_loss: number | null; take_profit: number | null;
 }>> {
   const result = await db.execute('SELECT * FROM trades WHERE status = ?', ['open']);
@@ -164,10 +165,14 @@ export async function getOpenTrades(): Promise<Array<{
     id: row.id as string,
     symbol: row.symbol as string,
     entry_price: Number(row.entry_price),
+    exit_price: null,
     amount: Number(row.amount),
     leverage: Number(row.leverage),
     direction: row.direction as string,
+    pnl: null,
+    status: 'open',
     opened_at: row.opened_at as string,
+    closed_at: null,
     stop_loss: row.stop_loss !== null ? Number(row.stop_loss) : null,
     take_profit: row.take_profit !== null ? Number(row.take_profit) : null,
   }));
