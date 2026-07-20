@@ -126,6 +126,24 @@ export interface BacktestSummary {
 // UI State Types
 // ============================================================
 
+// ============================================================
+// Order Book Types
+// ============================================================
+
+export interface OrderBookLevel {
+  price: number;
+  quantity: number;
+  total: number; // cumulative total from best bid/ask
+}
+
+export interface OrderBookData {
+  asks: OrderBookLevel[]; // sorted ascending (lowest ask = index 0)
+  bids: OrderBookLevel[]; // sorted descending (highest bid = index 0)
+  spread: number;
+  spreadPercent: number;
+  midPrice: number;
+}
+
 export interface CoinPrice {
   symbol: string;
   price: number;

@@ -6,6 +6,7 @@ import { useTerminalStore } from '@/lib/store';
 import CoinList from '@/components/coin-list';
 import TradingDashboard from '@/components/trading-dashboard';
 import ControlPanel from '@/components/control-panel';
+import OrderBook from '@/components/order-book';
 import type { CandleData, TraderState, Trade, IndicatorWeight, BacktestResult } from '@/lib/types';
 
 // Dynamic import with ssr: false — lightweight-charts requires browser DOM APIs
@@ -178,10 +179,12 @@ export default function Home() {
           <CoinList />
         </aside>
 
-        {/* Center — Chart + Trades Table */}
+        {/* Center — Chart + Order Book + Trades Table */}
         <main className="flex-1 flex flex-col overflow-hidden">
-          {/* Chart Area */}
-          <div className="flex-1 relative min-h-0">
+          {/* Chart + Order Book Row */}
+          <div className="flex-1 flex min-h-0">
+            {/* Chart Area */}
+            <div className="flex-1 relative min-h-0">
             {chartLoading && (
               <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#0d0d14]/60 backdrop-blur-sm">
                 <div className="flex items-center gap-2 text-xs text-white/50">
@@ -211,6 +214,12 @@ export default function Home() {
               ))}
             </div>
             <TradingChart data={candles} symbol={selectedSymbol} timeframe={timeframe} />
+            </div>
+
+            {/* Order Book */}
+            <div className="w-64 shrink-0 border-l border-white/5">
+              <OrderBook key={selectedSymbol} />
+            </div>
           </div>
 
           {/* Bottom Trades Table */}
