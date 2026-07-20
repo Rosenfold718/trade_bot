@@ -61,14 +61,22 @@ export default function Home() {
     initData();
   }, [initData]);
 
-  // Fetch klines when symbol changes
+  // Fetch klines directly from Binance client-side (Vercel serverless blocks api.binance.com)
   const fetchCandles = useCallback(async (symbol: string) => {
     setChartLoading(true);
     try {
-      const res = await fetch(`/api/klines?symbol=${symbol}`);
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setCandles(data as CandleData[]);
+      const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1h&limit=720`);
+      const raw = await res.json();
+      if (Array.isArray(raw) && raw.length > 0) {
+        const candles: CandleData[] = raw.map((k: (string | number)[]) => ({
+          time: Math.floor(Number(k[0]) / 1000),
+          open: parseFloat(String(k[1])),
+          high: parseFloat(String(k[2])),
+          low: parseFloat(String(k[3])),
+          close: parseFloat(String(k[4])),
+          volume: parseFloat(String(k[5])),
+        }));
+        setCandles(candles);
       }
     } catch (err) {
       console.error('Klines error:', err);
