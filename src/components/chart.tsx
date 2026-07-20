@@ -6,9 +6,10 @@ import type { CandleData } from '@/lib/types';
 interface TradingChartProps {
   data: CandleData[];
   symbol: string;
+  timeframe: { label: string; interval: string };
 }
 
-export default function TradingChart({ data, symbol }: TradingChartProps) {
+export default function TradingChart({ data, symbol, timeframe }: TradingChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
   const candleSeriesRef = useRef<any>(null);
@@ -165,11 +166,7 @@ export default function TradingChart({ data, symbol }: TradingChartProps) {
   }, [data, applyData]);
 
   return (
-    <div className="relative w-full h-full min-h-[300px]">
-      <div className="absolute top-3 left-3 z-10 px-2.5 py-1 rounded-md bg-[#1a1a2e]/90 backdrop-blur-sm border border-white/5">
-        <span className="text-sm font-semibold text-white/90">{symbol.replace('USDT', '')}</span>
-        <span className="text-xs text-white/40 ml-1.5">1H</span>
-      </div>
+    <div className="w-full h-full min-h-[300px]">
       <div ref={chartContainerRef} className="w-full h-full" />
     </div>
   );

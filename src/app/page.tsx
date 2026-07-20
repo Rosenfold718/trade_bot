@@ -21,6 +21,15 @@ const TradingChart = dynamic(() => import('@/components/chart'), {
   ),
 });
 
+const TIMEFRAMES = [
+  { label: '1m', interval: '1m', limit: 1000 },
+  { label: '5m', interval: '5m', limit: 1000 },
+  { label: '15m', interval: '15m', limit: 1000 },
+  { label: '1H', interval: '1h', limit: 720 },
+] as const;
+
+export type Timeframe = (typeof TIMEFRAMES)[number];
+
 export default function Home() {
   const {
     selectedSymbol,
@@ -38,6 +47,7 @@ export default function Home() {
 
   const [candles, setCandles] = useState<CandleData[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
+  const [timeframe, setTimeframe] = useState<Timeframe>(TIMEFRAMES[3]); // default 1H
   const initDone = useRef(false);
 
   // Initialize app data
@@ -62,10 +72,10 @@ export default function Home() {
   }, [initData]);
 
   // Fetch klines directly from Binance client-side (Vercel serverless blocks api.binance.com)
-  const fetchCandles = useCallback(async (symbol: string) => {
+  const fetchCandles = useCallback(async (symbol: string, tf: Timeframe) => {
     setChartLoading(true);
     try {
-      const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1h&limit=720`);
+      const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${tf.interval}&limit=${tf.limit}`);
       const raw = await res.json();
       if (Array.isArray(raw) && raw.length > 0) {
         const candles: CandleData[] = raw.map((k: (string | number)[]) => ({
@@ -85,9 +95,11 @@ export default function Home() {
     }
   }, []);
 
+  // Re-fetch when symbol or timeframe changes
   useEffect(() => {
-    fetchCandles(selectedSymbol);
-  }, [selectedSymbol, fetchCandles]);
+    setCandles([]);
+    fetchCandles(selectedSymbol, timeframe);
+  }, [selectedSymbol, timeframe, fetchCandles]);
 
   // Auto-refresh trades periodically
   useEffect(() => {
@@ -178,7 +190,27 @@ export default function Home() {
                 </div>
               </div>
             )}
-            <TradingChart data={candles} symbol={selectedSymbol} />
+            {/* Timeframe Selector */}
+            <div className="absolute top-3 left-3 z-10 flex items-center gap-1">
+              <div className="px-2.5 py-1 rounded-md bg-[#1a1a2e]/90 backdrop-blur-sm border border-white/5 mr-1">
+                <span className="text-sm font-semibold text-white/90">{selectedSymbol.replace('USDT', '')}</span>
+                <span className="text-xs text-white/40 ml-1.5">/USDT</span>
+              </div>
+              {TIMEFRAMES.map((tf) => (
+                <button
+                  key={tf.interval}
+                  onClick={() => setTimeframe(tf)}
+                  className={`px-2 py-1 rounded-md text-[11px] font-mono font-medium transition-all duration-150 border
+                    ${timeframe.interval === tf.interval
+                      ? 'bg-white/10 text-white/90 border-white/15'
+                      : 'bg-[#1a1a2e]/70 text-white/40 border-white/5 hover:bg-white/5 hover:text-white/60'
+                    }`}
+                >
+                  {tf.label}
+                </button>
+              ))}
+            </div>
+            <TradingChart data={candles} symbol={selectedSymbol} timeframe={timeframe} />
           </div>
 
           {/* Bottom Trades Table */}

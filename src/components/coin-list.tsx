@@ -1,8 +1,7 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTerminalStore } from '@/lib/store';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
 import { Search } from 'lucide-react';
 import { TOP_50_SYMBOLS } from '@/lib/types';
@@ -93,7 +92,7 @@ export default function CoinList() {
           />
         </div>
       </div>
-      <ScrollArea className="flex-1">
+      <div className="flex-1 overflow-y-auto coin-list-scroll">
         <div className="p-1.5 space-y-0.5">
           {filteredCoins.map((coin) => {
             const isSelected = coin.symbol === selectedSymbol;
@@ -140,7 +139,7 @@ export default function CoinList() {
             </div>
           )}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }
