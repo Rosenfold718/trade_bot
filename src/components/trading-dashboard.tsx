@@ -56,7 +56,7 @@ function SignalGauge({ score }: { score: number }) {
       ? 'from-red-500 to-red-400'
       : 'from-yellow-500 to-yellow-400';
 
-  const label = clamped > 2 ? 'BULLISH' : clamped < -2 ? 'BEARISH' : 'NEUTRAL';
+  const label = clamped > 2 ? 'РЫНОК ВВЕРХ' : clamped < -2 ? 'РЫНОК ВНИЗ' : 'НЕЙТРАЛЬНО';
   const labelColor = clamped > 2 ? 'text-green-400' : clamped < -2 ? 'text-red-400' : 'text-yellow-400';
 
   const needleAngle = -90 + (clamped / 10) * 90;
@@ -166,17 +166,17 @@ function RecommendedAction({ score }: { score: number }) {
   let borderColor: string;
 
   if (score > 3) {
-    action = 'BUY';
+    action = 'ПОКУПКА';
     color = 'text-green-400';
     bgColor = 'bg-green-500/10';
     borderColor = 'border-green-500/30';
   } else if (score < -3) {
-    action = 'SELL';
+    action = 'ПРОДАЖА';
     color = 'text-red-400';
     bgColor = 'bg-red-500/10';
     borderColor = 'border-red-500/30';
   } else {
-    action = 'WAIT';
+    action = 'ОЖИДАНИЕ';
     color = 'text-yellow-400';
     bgColor = 'bg-yellow-500/10';
     borderColor = 'border-yellow-500/30';
@@ -189,7 +189,7 @@ function RecommendedAction({ score }: { score: number }) {
         <span className={cn('text-sm font-bold font-mono', color)}>{action}</span>
       </div>
       <Badge variant="outline" className={cn('text-[10px] font-mono px-2 py-0.5', color, bgColor, borderColor)}>
-        {confidence.toFixed(0)}% confidence
+        {confidence.toFixed(0)}% уверенность
       </Badge>
     </div>
   );
@@ -290,7 +290,7 @@ export default function TradingDashboard() {
                 </Badge>
               )}
               <span className="text-[10px] text-white/30 font-mono">
-                Raw score: {currentAnalysis.score.toFixed(2)}
+                Сырой балл: {currentAnalysis.score.toFixed(2)}
               </span>
             </div>
             <div className="h-px bg-white/5" />

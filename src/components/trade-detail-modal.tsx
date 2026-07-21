@@ -317,7 +317,7 @@ export default function TradeDetailModal({ trade, onClose }: TradeDetailModalPro
                 ? 'bg-white/5 text-white/40 border-white/10'
                 : 'bg-yellow-500/10 text-yellow-400/80 border-yellow-500/20'
             }">
-              {isClosed ? 'CLOSED' : 'OPEN'}
+              {isClosed ? 'ЗАКР' : 'ОТКР'}
             </span>
           </div>
           <button

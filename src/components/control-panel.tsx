@@ -176,7 +176,7 @@ export default function ControlPanel() {
             <div className="flex items-center gap-2 text-[10px] font-mono text-white/30">
               <span>Всего: ${totalBalance.toFixed(0)}</span>
               <span>·</span>
-              <span>{totalOpen} open</span>
+              <span>{totalOpen} откр.</span>
             </div>
           </CardTitle>
         </CardHeader>
@@ -211,7 +211,7 @@ export default function ControlPanel() {
                   </div>
                   <div className="text-[10px] font-mono text-white/60">${s.balance.toFixed(0)}</div>
                   {s.openCount > 0 && (
-                    <div className="text-[8px] font-mono text-yellow-400/60">{s.openCount} open</div>
+                    <div className="text-[8px] font-mono text-yellow-400/60">{s.openCount} откр.</div>
                   )}
                 </div>
               ))}

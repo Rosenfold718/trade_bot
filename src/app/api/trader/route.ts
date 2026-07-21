@@ -2,18 +2,20 @@ import { NextRequest, NextResponse } from 'next/server';
 import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, openTrade, closeTrade, updateStopLoss, updateBalance, repayDebt } from '@/lib/db';
 import { fetchKlines, makeStrategyDecision, fetchTopSymbols } from '@/lib/trading-engine';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     await initDB();
+    const strategyId = request.nextUrl.searchParams.get('strategyId') || 'momentum';
     const [state, weights, openTrades, recentTrades] = await Promise.all([
-      getTraderState('momentum'),
+      getTraderState(strategyId),
       getIndicatorWeights(),
-      getOpenTrades('momentum'),
-      getRecentTrades(20, 'momentum'),
+      getOpenTrades(strategyId),
+      getRecentTrades(20, strategyId),
     ]);
     return NextResponse.json({ state, weights, openTrades, recentTrades });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
+    console.error('[trader GET] Error:', message);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
@@ -273,6 +275,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
+    console.error('[trader POST] Error:', message);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

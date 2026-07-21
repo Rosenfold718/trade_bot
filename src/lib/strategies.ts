@@ -1,5 +1,5 @@
 // ============================================================
-// Multi-Strategy Trading System — Strategy Definitions
+// Мультисигнатурная торговая система — Определения стратегий
 // ============================================================
 
 export interface StrategyConfig {
@@ -10,32 +10,32 @@ export interface StrategyConfig {
   bgColor: string;
   borderColor: string;
 
-  // Indicator visibility for chart
+  // Видимость индикаторов на графике
   chartIndicators: Record<string, { visible: boolean; color?: string }>;
 
-  // Trading parameters
+  // Торговые параметры
   maxLeverage: number;
   riskRewardRatio: number;    // TP = SL * this
-  tradeSizePercent: number;   // % of balance per trade
+  tradeSizePercent: number;   // % от баланса на сделку
   maxOpenTrades: number;
 
-  // Engine parameters
+  // Параметры движка
   scoreThreshold: number;
-  adxMin: number | null;      // null = no ADX filter
+  adxMin: number | null;      // null = без фильтра ADX
   mtfEnabled: boolean;
   timeFilterEnabled: boolean;
-  timeFilterStart: number;    // hour in Moscow time (0-23)
+  timeFilterStart: number;    // час по московскому времени (0-23)
   timeFilterEnd: number;
 }
 
 export const STRATEGIES: StrategyConfig[] = [
   // ──────────────────────────────────────────────────────────────
-  // Strategy 1: Momentum Pro
+  // Стратегия 1: Импульс Pro
   // ──────────────────────────────────────────────────────────────
   {
     id: 'momentum',
-    name: 'Momentum Pro',
-    description: 'Aggressive momentum following with all 10 indicators. Requires strong trend (ADX > 20) and multi-timeframe confirmation.',
+    name: 'Импульс Pro',
+    description: 'Агрессивное следование за трендом с 10 индикаторами. Требует сильного тренда (ADX > 20) и подтверждения на нескольких таймфреймах.',
     color: 'text-amber-400',
     bgColor: 'bg-amber-500/10',
     borderColor: 'border-amber-500/30',
@@ -62,12 +62,12 @@ export const STRATEGIES: StrategyConfig[] = [
   },
 
   // ──────────────────────────────────────────────────────────────
-  // Strategy 2: Mean Reversion
+  // Стратегия 2: Возврат к среднему
   // ──────────────────────────────────────────────────────────────
   {
     id: 'mean-reversion',
-    name: 'Mean Reversion',
-    description: 'Fades overextended moves using RSI, Bollinger Bands and StochRSI. Best in ranging markets. Time-filtered (10:00–23:00 MSK).',
+    name: 'Возврат к среднему',
+    description: 'Торговля против перепроданности/перекупленности через RSI, Полосы Боллинджера и StochRSI. Лучше работает в боковике. Временной фильтр (10:00–23:00 МСК).',
     color: 'text-emerald-400',
     bgColor: 'bg-emerald-500/10',
     borderColor: 'border-emerald-500/30',
@@ -95,12 +95,12 @@ export const STRATEGIES: StrategyConfig[] = [
   },
 
   // ──────────────────────────────────────────────────────────────
-  // Strategy 3: Trend Pullback
+  // Стратегия 3: Тренд на откатах
   // ──────────────────────────────────────────────────────────────
   {
     id: 'trend-pullback',
-    name: 'Trend Pullback',
-    description: 'Enters on pullbacks to EMA21 in established trends. Requires ADX > 25 for strong trend confirmation.',
+    name: 'Тренд на откатах',
+    description: 'Вход на откатах к EMA21 в устоявшемся тренде. Требует ADX > 25 для подтверждения сильного тренда.',
     color: 'text-cyan-400',
     bgColor: 'bg-cyan-500/10',
     borderColor: 'border-cyan-500/30',

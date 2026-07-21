@@ -356,10 +356,10 @@ export default function Home() {
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <div className={`w-2 h-2 rounded-full ${autoTrading ? 'bg-green-400 animate-pulse' : 'bg-green-400/40'}`} />
-            <span className="text-sm font-bold text-white/90 tracking-tight">TRADE BOT</span>
+            <span className="text-sm font-bold text-white/90 tracking-tight">ТРЕЙД-БОТ</span>
             {autoTrading && (
               <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/25 animate-pulse">
-                AUTO LIVE
+                АВТО LIVE
               </span>
             )}
           </div>
@@ -409,7 +409,7 @@ export default function Home() {
                 <div className={cn('text-xs font-semibold', isActive ? s.color : 'text-zinc-400')}>{s.name}</div>
                 {openCount > 0 && (
                   <span className="text-[9px] font-mono text-yellow-400/70 bg-yellow-500/10 px-1.5 py-0.5 rounded-full">
-                    {openCount} open
+                    {openCount} откр.
                   </span>
                 )}
               </div>
@@ -643,7 +643,7 @@ function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
                     ? 'bg-yellow-500/10 text-yellow-400/80 border border-yellow-500/20'
                     : 'bg-white/5 text-white/40 border border-white/10'
                   )}>
-                    {isOpen ? 'OPEN' : 'CLOSED'}
+                    {isOpen ? 'ОТКР' : 'ЗАКР'}
                   </span>
                 </td>
               </tr>
@@ -661,11 +661,11 @@ function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
             </span>
           )}
           <span className={cn('text-[10px] font-mono', totalOpenPnl >= 0 ? 'text-green-400/70' : 'text-red-400/70')}>
-            Unrealized: {totalOpenPnl >= 0 ? '+' : ''}${totalOpenPnl.toFixed(2)}
+            Нереализ.: {totalOpenPnl >= 0 ? '+' : ''}${totalOpenPnl.toFixed(2)}
           </span>
         </div>
         <span className={cn('text-[10px] font-mono font-semibold', totalRealizedPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
-          Realized: {totalRealizedPnl >= 0 ? '+' : ''}${totalRealizedPnl.toFixed(2)}
+          Реализ.: {totalRealizedPnl >= 0 ? '+' : ''}${totalRealizedPnl.toFixed(2)}
         </span>
       </div>
     </div>
@@ -845,7 +845,7 @@ function DraggableTradePanel({ focusedTradeId, symbol }: { focusedTradeId: strin
           ? 'bg-yellow-500/10 text-yellow-400/80 border border-yellow-500/20'
           : 'bg-white/5 text-white/40 border border-white/10'
         )}>
-          {isOpen ? 'OPEN' : 'CLOSED'}
+          {isOpen ? 'ОТКР' : 'ЗАКР'}
         </span>
       </div>
 
