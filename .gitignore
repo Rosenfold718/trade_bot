@@ -32,10 +32,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
-
 
 # typescript
 *.tsbuildinfo
@@ -50,5 +50,34 @@ test
 prompt
 
 server.log
-# Skills directory
-/skills/tool-results/
+
+# Skills directory (not needed for deployment)
+/skills/
+/tool-results/
+
+# Database files (local only)
+/db/*.db
+/db/*.db-journal
+/db/*.db-wal
+/db/*.db-shm
+
+# Download directory
+/download/
+
+# Examples
+/examples/
+
+# Mini-services (run separately)
+/mini-services/
+
+# Caddy
+Caddyfile
+
+# Z-scripts (dev environment only)
+.zscripts/
+
+# Worklog
+worklog.md
+
+# Bun
+bun.lock
