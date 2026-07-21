@@ -24,13 +24,14 @@ export async function POST(request: NextRequest) {
   try {
     await initDB();
     const body = await request.json();
-    const { action, strategyId: rawStrategyId, symbol, timeframe, ...rest } = body as {
+    const { action, strategyId: rawStrategyId, timeframe, ...rest } = body as {
       action: string; strategyId?: string; symbol?: string; timeframe?: string;
     };
     const strategyId = rawStrategyId || 'momentum';
 
     if (action === 'analyze') {
-      if (!symbol) return NextResponse.json({ error: 'Symbol required' }, { status: 400 });
+      const sym = rest.symbol as string | undefined;
+      if (!sym) return NextResponse.json({ error: 'Symbol required' }, { status: 400 });
 
       const state = await getTraderState(strategyId);
       const weightsArr = await getIndicatorWeights();
@@ -48,7 +49,7 @@ export async function POST(request: NextRequest) {
       };
       const limit = limitMap[interval] || 1440;
 
-      const candles = await fetchKlines(symbol, interval, limit);
+      const candles = await fetchKlines(sym, interval, limit);
       if (candles.length < 50) {
         return NextResponse.json({ error: 'Not enough candle data' }, { status: 400 });
       }
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest) {
         idleMinutes = Math.floor((Date.now() - new Date(lastTrade.opened_at).getTime()) / 60000);
       }
 
-      const decision = makeStrategyDecision(strategyId, symbol, candles, idleMinutes);
+      const decision = makeStrategyDecision(strategyId, sym, candles, idleMinutes);
 
       return NextResponse.json({
         decision,

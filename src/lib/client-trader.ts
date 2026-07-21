@@ -75,20 +75,39 @@ export async function findBestSignal(
   // Shuffle and check more symbols for better signal detection
   const checkSymbols = available.sort(() => Math.random() - 0.5).slice(0, 10);
 
+  // Time filter: check if within trading hours (Moscow time)
+  if (strategy.timeFilterEnabled) {
+    const mskHour = new Date().toLocaleTimeString('en-US', { timeZone: 'Europe/Moscow', hour: 'numeric', hour12: false }).padStart(2, '0');
+    const hour = parseInt(mskHour, 10);
+    if (hour < strategy.timeFilterStart || hour > strategy.timeFilterEnd) {
+      console.log(`[findBestSignal][${strategyId}] Skipped: outside trading hours (${hour}h, allowed ${strategy.timeFilterStart}-${strategy.timeFilterEnd})`);
+      return null;
+    }
+  }
+
   let best: { decision: TradingDecision; price: number; symbol: string } | null = null;
   let bestScore = 0;
+  let noneCount = 0;
+  let mtfRejected = 0;
 
   for (const sym of checkSymbols) {
     try {
       const candles = await fetchCandlesClient(sym, interval, limit);
       if (candles.length < 50) continue;
       const decision = makeStrategyDecision(strategyId, sym, candles, 0);
-      if (decision.direction === 'none') continue;
+      if (decision.direction === 'none') {
+        noneCount++;
+        continue;
+      }
 
-      // Volume spike check: current volume > 2× average
+      // Volume confirmation: prefer above-average volume but don't require spike
+      // (the old 2x filter was too strict — rejected almost everything)
       const avgVol = candles.slice(-20).reduce((s, c) => s + c.volume, 0) / Math.min(20, candles.length);
       const currentVol = candles[candles.length - 1].volume;
-      if (avgVol > 0 && currentVol < avgVol * 2) continue; // No volume spike — skip
+      // Volume bonus: if >1.2x average, boost score slightly
+      if (avgVol > 0 && currentVol > avgVol * 1.2) {
+        decision.score *= 1.15;
+      }
 
       // ============================================================
       // Multi-timeframe filter — 4H EMA 50 trend must align (if enabled)
@@ -101,8 +120,8 @@ export async function findBestSignal(
             const h4price = h4candles[h4candles.length - 1].close;
             if (!isNaN(ema50)) {
               const h4Bullish = h4price > ema50;
-              if (decision.direction === 'long' && !h4Bullish) continue;
-              if (decision.direction === 'short' && h4Bullish) continue;
+              if (decision.direction === 'long' && !h4Bullish) { mtfRejected++; continue; }
+              if (decision.direction === 'short' && h4Bullish) { mtfRejected++; continue; }
             }
           }
         } catch { /* 4H fetch failed — allow trade without MTF filter */ }
@@ -116,6 +135,8 @@ export async function findBestSignal(
       continue;
     }
   }
+
+  console.log(`[findBestSignal][${strategyId}] Checked ${checkSymbols.length}, none=${noneCount}, mtf_rejected=${mtfRejected}, best=${best?.symbol ?? 'null'} score=${bestScore.toFixed(2)}`);
 
   return best;
 }

@@ -100,7 +100,7 @@ export const STRATEGIES: StrategyConfig[] = [
   {
     id: 'trend-pullback',
     name: 'Тренд на откатах',
-    description: 'Вход на откатах к EMA21 в устоявшемся тренде. Требует ADX > 25 для подтверждения сильного тренда.',
+    description: 'Вход на откатах к EMA21 в устоявшемся тренде. Требует ADX > 20 для подтверждения тренда.',
     color: 'text-cyan-400',
     bgColor: 'bg-cyan-500/10',
     borderColor: 'border-cyan-500/30',
@@ -119,7 +119,7 @@ export const STRATEGIES: StrategyConfig[] = [
     tradeSizePercent: 0.10,
     maxOpenTrades: 5,
     scoreThreshold: 0.12,
-    adxMin: 25,
+    adxMin: 20,
     mtfEnabled: true,
     timeFilterEnabled: false,
     timeFilterStart: 0,

@@ -560,9 +560,9 @@ function makeMomentumDecision(
   const absShortScore = Math.abs(shortScore);
   const maxScore = Math.max(absLongScore, absShortScore);
 
-  // Confluence: require ≥5 indicators to agree
+  // Confluence: require ≥4 indicators to agree (relaxed from 5)
   const bestCount = Math.max(longCount, shortCount);
-  if (bestCount < 5) {
+  if (bestCount < 4) {
     return { symbol, direction: 'none', score: maxScore, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
   }
 
@@ -686,11 +686,11 @@ function makeMeanReversionDecision(
     return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
   }
 
-  // Check mean reversion specific entry conditions
-  // LONG: RSI < 35 AND price ≤ BB lower AND StochRSI < 0.25
-  const longEntry = rsiLong && bbLong && longCount >= 2;
-  // SHORT: RSI > 65 AND price ≥ BB upper AND StochRSI > 0.75
-  const shortEntry = rsiShort && bbShort && shortCount >= 2;
+  // Check mean reversion entry conditions (2 of 3 required, relaxed from all 3)
+  // LONG: at least 2 of {RSI < 35, price ≤ BB lower, StochRSI < 0.25}
+  const longEntry = longCount >= 2 && (rsiLong || bbLong || stochLong);
+  // SHORT: at least 2 of {RSI > 65, price ≥ BB upper, StochRSI > 0.75}
+  const shortEntry = shortCount >= 2 && (rsiShort || bbShort || stochShort);
 
   let direction: 'long' | 'short' | 'none' = 'none';
   let score = 0;
@@ -777,9 +777,9 @@ function makeTrendPullbackDecision(
 
   const trendDir = isUptrend ? 1 : -1;
 
-  // Check pullback to EMA21 (within 0.5%)
+  // Check pullback to EMA21 (within 1.5%, relaxed from 0.5%)
   const ema21Dist = Math.abs(price - ema21) / ema21;
-  const isNearEma21 = ema21Dist <= 0.005;
+  const isNearEma21 = ema21Dist <= 0.015;
 
   // Indicator signals
   // EMA9 signal: trend direction
