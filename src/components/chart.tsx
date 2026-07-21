@@ -151,6 +151,18 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
         layout: { background: { type: ColorType.Solid, color: '#0d0d14' }, textColor: '#8a8a9a', fontFamily: 'Inter, sans-serif', fontSize: 11 },
         grid: { vertLines: { color: 'rgba(255,255,255,0.04)' }, horzLines: { color: 'rgba(255,255,255,0.04)' } },
         crosshair: { mode: 0, vertLine: { color: 'rgba(255,255,255,0.2)', width: 1, style: 2, labelBackgroundColor: '#1e1e2e' }, horzLine: { color: 'rgba(255,255,255,0.2)', width: 1, style: 2, labelBackgroundColor: '#1e1e2e' } },
+        localization: {
+          locale: 'ru-RU',
+          timeFormatter: (time: import('lightweight-charts').Time) => {
+            if (typeof time !== 'number') return String(time);
+            const d = new Date(time * 1000);
+            return d.toLocaleString('ru-RU', {
+              timeZone: 'Europe/Moscow',
+              day: '2-digit', month: '2-digit', year: '2-digit',
+              hour: '2-digit', minute: '2-digit',
+            });
+          },
+        },
         rightPriceScale: {
           borderColor: 'rgba(255,255,255,0.1)',
           scaleMargins: { top: 0.1, bottom: 0.25 },

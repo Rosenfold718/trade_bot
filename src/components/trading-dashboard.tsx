@@ -5,13 +5,7 @@ import { useTerminalStore } from '@/lib/store';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Wallet, TrendingUp, TrendingDown, CreditCard, Activity, Gauge, ArrowUpCircle, ArrowDownCircle, MinusCircle } from 'lucide-react';
-import type { Trade, IndicatorSignal } from '@/lib/types';
-
-function formatPrice(price: number): string {
-  if (price >= 1000) return `$${price.toFixed(2)}`;
-  if (price >= 1) return `$${price.toFixed(4)}`;
-  return `$${price.toPrecision(4)}`;
-}
+import type { IndicatorSignal } from '@/lib/types';
 
 function StatCard({
   label,
@@ -290,20 +284,6 @@ export default function TradingDashboard() {
         />
       </div>
 
-      {/* Open Trades */}
-      {openTrades.length > 0 && (
-        <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/5 rounded-xl">
-          <CardHeader className="p-3 pb-2">
-            <CardTitle className="text-xs uppercase tracking-wider text-white/50 font-medium">Открытые сделки</CardTitle>
-          </CardHeader>
-          <CardContent className="p-3 pt-0 space-y-2">
-            {openTrades.map((trade) => (
-              <TradeCard key={trade.id} trade={trade} type="open" />
-            ))}
-          </CardContent>
-        </Card>
-      )}
-
       {/* Detailed Analysis Panel */}
       {currentAnalysis && currentAnalysis.indicators.length > 0 && (
         <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/5 rounded-xl">
@@ -379,51 +359,8 @@ export default function TradingDashboard() {
         </CardContent>
       </Card>
 
-      {/* Recent Trades */}
-      {recentTrades.length > 0 && (
-        <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/5 rounded-xl">
-          <CardHeader className="p-3 pb-2">
-            <CardTitle className="text-xs uppercase tracking-wider text-white/50 font-medium">Последние сделки</CardTitle>
-          </CardHeader>
-          <CardContent className="p-3 pt-0 space-y-1.5 max-h-48 overflow-y-auto">
-            {recentTrades.slice(0, 10).map((trade) => (
-              <TradeCard key={trade.id} trade={trade} type="closed" />
-            ))}
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }
 
-function TradeCard({ trade, type }: { trade: Trade; type: 'open' | 'closed' }) {
-  const isLong = trade.direction === 'long';
-  const pnlColor = trade.pnl !== null ? (trade.pnl >= 0 ? 'text-green-400' : 'text-red-400') : '';
-
-  return (
-    <div className="flex items-center justify-between p-2 bg-white/[0.03] rounded-lg">
-      <div className="flex items-center gap-2">
-        <Badge
-          variant="outline"
-          className={`text-[9px] px-1.5 py-0 ${isLong ? 'border-green-500/30 text-green-400' : 'border-red-500/30 text-red-400'}`}
-        >
-          {trade.direction.toUpperCase()}
-        </Badge>
-        <div>
-          <div className="text-[10px] font-semibold text-white/80">{trade.symbol.replace('USDT', '')}</div>
-          <div className="text-[9px] text-white/35 font-mono">
-            {trade.leverage}x · ${trade.amount.toFixed(2)}
-          </div>
-        </div>
-      </div>
-      <div className="text-right">
-        {type === 'closed' && trade.pnl !== null && (
-          <div className={`text-[10px] font-mono font-bold ${pnlColor}`}>
-            {trade.pnl >= 0 ? '+' : ''}${trade.pnl.toFixed(2)}
-          </div>
-        )}
-        <div className="text-[9px] text-white/35 font-mono">{formatPrice(trade.entry_price)}</div>
-      </div>
-    </div>
-  );
-}
+function IndicatorRow({ indicator }: { indicator: IndicatorSignal }) {
