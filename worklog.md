@@ -54,3 +54,24 @@ Stage Summary:
 - Chart now automatically draws swing point markers and S/R levels
 - All features toggleable via indicator buttons (S/R уровни, Экстремумы)
 - Zero compilation errors, clean browser rendering
+---
+Task ID: 2
+Agent: Main
+Task: Redesign swing points as professional trendlines + fix S/R lines
+
+Work Log:
+- Discovered race condition: effect #4 (indicators) ran before chart was created (async import timing)
+- Added `chartReady` state variable, set after chart creation, used in effect deps
+- Fixed localStorage stale state blocking new indicator keys (sr, swings)
+- Replaced markers (broken in v5) with LineSeries connecting consecutive swing highs/lows
+- Fixed S/R: thin solid lines (lineStyle: 0), no axis labels (axisLabelVisible: false)
+- Merged effect #4 and #5 into single effect to avoid series cleanup race condition
+- Debugged with console.log chain: confirmed 87 swings (43H + 44L) detected, 7 series added
+- Discovered semi-transparent colors invisible on dark bg — used full opacity (#ef4444, #22c55e)
+
+Stage Summary:
+- Red lines connect swing highs, green lines connect swing lows (zigzag pattern)
+- S/R: thin solid horizontal lines, max 5 support + 5 resistance, no labels
+- Both toggleable via indicator buttons
+- VLM rating: 8/10 professional quality
+- Critical fix: `chartReady` state solves async chart creation race condition

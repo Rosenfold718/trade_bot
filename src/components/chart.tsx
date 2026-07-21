@@ -171,6 +171,7 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
   const srLinesRef = useRef<any[]>([]);
   const indicatorSeriesRef = useRef<Map<string, any>>(new Map());
   const [mounted, setMounted] = useState(false);
+  const [chartReady, setChartReady] = useState(false);
 
   useEffect(() => { dataRef.current = data; }, [data]);
   useEffect(() => { setMounted(true); }, []);
@@ -261,12 +262,14 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
       chartRef.current = chart;
       candleSeriesRef.current = cs;
       volumeSeriesRef.current = vs;
+      setChartReady(true);
 
       if (dataRef.current.length > 0) applyData(cs, vs, dataRef.current, chart);
     }).catch(err => console.error('[Chart] load error:', err));
 
     return () => {
       cancelled = true;
+      setChartReady(false);
       priceLinesRef.current = [];
       srLinesRef.current = [];
       indicatorSeriesRef.current.clear();
@@ -327,7 +330,7 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
   }, [openTrades, recentTrades, symbol]);
 
   // ============================================================
-  // 4. Technical indicators — re-runs when data or visibility changes
+  // 4. Technical indicators + Swing Trendlines + S/R Levels
   // ============================================================
   useEffect(() => {
     const chart = chartRef.current;
@@ -339,10 +342,17 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
     import('lightweight-charts').then(({ LineSeries }) => {
       if (cancelled) return;
 
+      // --- Remove all previous indicator & swing series ---
       for (const [, series] of indicatorSeriesRef.current) {
         try { chart.removeSeries(series); } catch { /* ok */ }
       }
       indicatorSeriesRef.current.clear();
+
+      // --- Remove S/R price lines ---
+      for (const line of srLinesRef.current) {
+        try { cs.removePriceLine(line); } catch { /* ok */ }
+      }
+      srLinesRef.current = [];
 
       const priceFmt = getPriceFormat(data);
 
@@ -368,6 +378,7 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
         }
       };
 
+      // --- Standard indicators ---
       if (indicators.sma7?.visible) addIndicatorLine('sma7', calcSMA(data, 7), indicators.sma7.color, indicators.sma7.lineWidth);
       if (indicators.sma25?.visible) addIndicatorLine('sma25', calcSMA(data, 25), indicators.sma25.color, indicators.sma25.lineWidth);
       if (indicators.sma99?.visible) addIndicatorLine('sma99', calcSMA(data, 99), indicators.sma99.color, indicators.sma99.lineWidth);
@@ -378,67 +389,71 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
         addIndicatorLine('bb-upper', bb.upper, indicators.bb.color, indicators.bb.lineWidth, 2);
         addIndicatorLine('bb-lower', bb.lower, indicators.bb.color, indicators.bb.lineWidth, 2);
       }
+
+      // --- Swing Trendlines ---
+      const swings = detectSwingPoints(data, 5);
+
+      if (indicators.swings?.visible) {
+        const highs = swings.filter(s => s.type === 'high');
+        const lows = swings.filter(s => s.type === 'low');
+
+        if (highs.length >= 2) {
+          try {
+            const series = chart.addSeries(LineSeries, {
+              color: '#ef4444',
+              lineWidth: 1,
+              lineStyle: 0,
+              priceLineVisible: false,
+              lastValueVisible: false,
+              crosshairMarkerVisible: false,
+              ...(priceFmt ? { priceFormat: priceFmt } : {}),
+            });
+            series.setData(highs.map(s => ({ time: s.time as import('lightweight-charts').Time, value: s.price })));
+            indicatorSeriesRef.current.set('swing-highs', series);
+          } catch { /* ok */ }
+        }
+        if (lows.length >= 2) {
+          try {
+            const series = chart.addSeries(LineSeries, {
+              color: '#22c55e',
+              lineWidth: 1,
+              lineStyle: 0,
+              priceLineVisible: false,
+              lastValueVisible: false,
+              crosshairMarkerVisible: false,
+              ...(priceFmt ? { priceFormat: priceFmt } : {}),
+            });
+            series.setData(lows.map(s => ({ time: s.time as import('lightweight-charts').Time, value: s.price })));
+            indicatorSeriesRef.current.set('swing-lows', series);
+          } catch { /* ok */ }
+        }
+      }
+
+      // --- S/R horizontal levels ---
+      if (indicators.sr?.visible) {
+        const levels = clusterSRLevels(swings, 0.5);
+        const supportLevels = levels.filter(l => l.type === 'support').slice(0, 5);
+        const resistanceLevels = levels.filter(l => l.type === 'resistance').slice(0, 5);
+
+        for (const lvl of [...supportLevels, ...resistanceLevels]) {
+          try {
+            const isSupport = lvl.type === 'support';
+            const line = cs.createPriceLine({
+              price: lvl.price,
+              color: isSupport ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)',
+              lineWidth: 1,
+              lineStyle: 0,
+              axisLabelVisible: false,
+              title: '',
+            });
+            srLinesRef.current.push(line);
+          } catch { /* ok */ }
+        }
+      }
     });
 
     return () => { cancelled = true; };
-  }, [data, indicators, symbol]);
-
-  // ============================================================
-  // 5. Support / Resistance levels & Swing Point markers
-  // ============================================================
-  useEffect(() => {
-    const cs = candleSeriesRef.current;
-    if (!cs || data.length < 50) return;
-
-    // Clear old S/R price lines
-    for (const line of srLinesRef.current) {
-      try { cs.removePriceLine(line); } catch { /* ok */ }
-    }
-    srLinesRef.current = [];
-
-    // Clear old markers
-    try { (cs as any).setMarkers([]); } catch { /* v5 compat */ }
-
-    const swings = detectSwingPoints(data, 5);
-
-    // --- Swing point markers ---
-    if (indicators.swings?.visible && swings.length > 0) {
-      const markers: Array<{ time: any; position: any; color: string; shape: any; text: string; size: number }> = [];
-      for (const s of swings) {
-        markers.push({
-          time: s.time as import('lightweight-charts').Time,
-          position: s.type === 'high' ? 'aboveBar' : 'belowBar',
-          color: s.type === 'high' ? 'rgba(239,68,68,0.7)' : 'rgba(34,197,94,0.7)',
-          shape: s.type === 'high' ? 'arrowDown' : 'arrowUp',
-          text: s.type === 'high' ? 'H' : 'L',
-          size: 1,
-        });
-      }
-      try { (cs as any).setMarkers(markers); } catch { /* v5 compat */ }
-    }
-
-    // --- Support / Resistance levels ---
-    if (indicators.sr?.visible) {
-      const levels = clusterSRLevels(swings, 0.5);
-      const supportLevels = levels.filter(l => l.type === 'support').slice(0, 5);
-      const resistanceLevels = levels.filter(l => l.type === 'resistance').slice(0, 5);
-
-      for (const lvl of [...supportLevels, ...resistanceLevels]) {
-        try {
-          const isSupport = lvl.type === 'support';
-          const line = cs.createPriceLine({
-            price: lvl.price,
-            color: isSupport ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.6)',
-            lineWidth: Math.max(1, Math.round(lvl.strength * 2.5)),
-            lineStyle: 2, // dashed
-            axisLabelVisible: true,
-            title: `${isSupport ? 'S' : 'R'} (${lvl.touches})`,
-          });
-          srLinesRef.current.push(line);
-        } catch { /* ok */ }
-      }
-    }
-  }, [data, indicators, symbol]);
+  }, [data, indicators, symbol, chartReady]);
 
   return (
     <div className="w-full h-full min-h-[300px]">
