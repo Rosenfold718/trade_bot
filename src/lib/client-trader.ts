@@ -1,4 +1,5 @@
 import type { CandleData, TradingDecision, Trade, IndicatorSignal } from './types';
+import { TOP_50_SYMBOLS } from './types';
 import { makeTradingDecision, analyzeIndicators } from './trading-engine';
 
 // ============================================================
@@ -64,7 +65,8 @@ export async function findBestSignal(
   interval: string = '1h',
   limit: number = 720,
 ): Promise<{ decision: TradingDecision; price: number; symbol: string } | null> {
-  const symbols = await fetchTopSymbolsClient();
+  // Only trade symbols that are in the coin list (TOP_50_SYMBOLS)
+  const symbols = TOP_50_SYMBOLS;
   const available = symbols.filter(s => !openTradeSymbols.has(s));
   // Shuffle and check more symbols for better signal detection
   const checkSymbols = available.sort(() => Math.random() - 0.5).slice(0, 20);

@@ -35,6 +35,7 @@ export type Timeframe = (typeof TIMEFRAMES)[number];
 export default function Home() {
   const {
     selectedSymbol,
+    setSelectedSymbol,
     coins,
     traderState,
     setTraderState,
