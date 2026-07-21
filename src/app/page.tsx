@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { useTerminalStore } from '@/lib/store';
+import { STRATEGIES, getStrategy } from '@/lib/strategies';
+import { cn } from '@/lib/utils';
 import CoinList from '@/components/coin-list';
 import TradingDashboard from '@/components/trading-dashboard';
 import ControlPanel from '@/components/control-panel';
@@ -31,6 +33,34 @@ const TIMEFRAMES = [
 
 export type Timeframe = (typeof TIMEFRAMES)[number];
 
+// Merge strategy chartIndicators with DEFAULT_INDICATORS to produce full config
+function mergeStrategyIndicators(strategyId: string): Record<string, IndicatorConfig> {
+  const strategy = getStrategy(strategyId);
+  const base = { ...DEFAULT_INDICATORS };
+  if (strategy) {
+    for (const [key, cfg] of Object.entries(strategy.chartIndicators)) {
+      if (base[key]) {
+        base[key] = {
+          ...base[key],
+          visible: cfg.visible,
+          ...(cfg.color ? { color: cfg.color } : {}),
+        };
+      }
+    }
+  }
+  // Also add bb-middle if the strategy defines it
+  if (strategy?.chartIndicators['bb-middle'] && !base['bb-middle']) {
+    base['bb-middle'] = {
+      id: 'bb-middle',
+      label: 'BB mid',
+      color: strategy.chartIndicators['bb-middle'].color ?? '#6ee7b7',
+      lineWidth: 1,
+      visible: strategy.chartIndicators['bb-middle'].visible,
+    };
+  }
+  return base;
+}
+
 export default function Home() {
   const {
     selectedSymbol,
@@ -49,23 +79,53 @@ export default function Home() {
     autoTrading,
     setAutoTrading,
     addLog,
+    activeStrategy,
+    setActiveStrategy,
+    strategyStates,
+    setStrategyTraderState,
+    setStrategyOpenTrades,
+    setStrategyRecentTrades,
   } = useTerminalStore();
+
+  const strategy = getStrategy(activeStrategy);
 
   const [candles, setCandles] = useState<CandleData[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
   const [timeframe, setTimeframe] = useState<Timeframe>(TIMEFRAMES[3]);
   const [focusedTradeId, setFocusedTradeId] = useState<string | null>(null);
 
-  // Indicator state — lifted from chart
+  // Indicator state — derived from active strategy, with localStorage override
   const [indicators, setIndicators] = useState<Record<string, IndicatorConfig>>(() => {
+    const base = mergeStrategyIndicators('momentum');
     if (typeof window !== 'undefined') {
       try {
         const saved = localStorage.getItem('chart-indicators');
-        if (saved) return { ...DEFAULT_INDICATORS, ...JSON.parse(saved) };
+        if (saved) return { ...base, ...JSON.parse(saved) };
       } catch { /* ignore */ }
     }
-    return { ...DEFAULT_INDICATORS };
+    return base;
   });
+
+  // When strategy changes, reset indicators to strategy defaults (keep localStorage overrides)
+  useEffect(() => {
+    const base = mergeStrategyIndicators(activeStrategy);
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('chart-indicators');
+        if (saved) {
+          const overrides: Record<string, Partial<IndicatorConfig>> = JSON.parse(saved);
+          // Only apply overrides for indicators that exist in the new strategy's config
+          for (const key of Object.keys(overrides)) {
+            if (base[key]) {
+              base[key] = { ...base[key], ...overrides[key] };
+            }
+          }
+          return setIndicators(base);
+        }
+      } catch { /* ignore */ }
+    }
+    setIndicators(base);
+  }, [activeStrategy]);
 
   const toggleIndicator = useCallback((id: string) => {
     setIndicators(prev => ({ ...prev, [id]: { ...prev[id], visible: !prev[id].visible } }));
@@ -76,26 +136,40 @@ export default function Home() {
   }, [indicators]);
 
   const initDone = useRef(false);
-  const weightsRef = useRef(weights);
   const openTradesRef = useRef(openTrades);
-  weightsRef.current = weights;
   openTradesRef.current = openTrades;
 
   const initData = useCallback(async () => {
     if (initDone.current) return;
     initDone.current = true;
     try {
-      const res = await fetch('/api/init');
-      const data = await res.json();
-      if (data.state) setTraderState(data.state as TraderState);
-      if (data.weights) setWeights(data.weights as IndicatorWeight[]);
-      if (data.openTrades) setOpenTrades(data.openTrades as Trade[]);
-      if (data.recentTrades) setRecentTrades(data.recentTrades as Trade[]);
+      // Fetch all 3 strategies in parallel
+      const results = await Promise.all(
+        STRATEGIES.map(async (s) => {
+          try {
+            const res = await fetch(`/api/init?strategyId=${s.id}`);
+            const data = await res.json();
+            return { strategyId: s.id, data };
+          } catch {
+            return { strategyId: s.id, data: {} };
+          }
+        })
+      );
+
+      for (const { strategyId, data } of results) {
+        if (data.state) setStrategyTraderState(strategyId, data.state as TraderState);
+        if (data.openTrades) setStrategyOpenTrades(strategyId, data.openTrades as Trade[]);
+        if (data.recentTrades) setStrategyRecentTrades(strategyId, data.recentTrades as Trade[]);
+      }
+
+      // Also set the global weights (shared across strategies)
+      const firstData = results[0]?.data;
+      if (firstData?.weights) setWeights(firstData.weights as IndicatorWeight[]);
     } catch (err) {
       console.error('Init error:', err);
       initDone.current = false;
     }
-  }, [setTraderState, setWeights, setOpenTrades, setRecentTrades]);
+  }, [setWeights, setStrategyTraderState, setStrategyOpenTrades, setStrategyRecentTrades]);
 
   useEffect(() => { initData(); }, [initData]);
 
@@ -127,10 +201,11 @@ export default function Home() {
     fetchCandles(selectedSymbol, timeframe);
   }, [selectedSymbol, timeframe, fetchCandles]);
 
+  // Poll active strategy state
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
-        const res = await fetch('/api/trader');
+        const res = await fetch(`/api/trader?strategyId=${activeStrategy}`);
         const data = await res.json();
         if (data.state) setTraderState(data.state as TraderState);
         if (data.openTrades) setOpenTrades(data.openTrades as Trade[]);
@@ -138,9 +213,9 @@ export default function Home() {
       } catch { /* silent */ }
     }, 15000);
     return () => clearInterval(interval);
-  }, [setTraderState, setOpenTrades, setRecentTrades]);
+  }, [setTraderState, setOpenTrades, setRecentTrades, activeStrategy]);
 
-  // Auto-trading loop
+  // Auto-trading loop — runs for ALL strategies in parallel
   useEffect(() => {
     if (!autoTrading) return;
     let cancelled = false;
@@ -148,72 +223,108 @@ export default function Home() {
     const runCycle = async () => {
       if (cancelled) return;
       try {
-        const wMap: Record<string, number> = {};
-        for (const w of weightsRef.current) wMap[w.indicator_name] = w.weight;
-        const balance = traderState?.balance ?? 100;
         const { runAutoTradeCycle } = await import('@/lib/client-trader');
-        const result = await runAutoTradeCycle(openTradesRef.current, wMap, timeframe.interval, balance);
+
+        // Run cycle for all strategies in parallel
+        const results = await Promise.all(
+          STRATEGIES.map(async (s) => {
+            const ss = strategyStates[s.id];
+            const sOpenTrades = ss?.openTrades ?? [];
+            const sTraderState = ss?.traderState;
+            const balance = sTraderState?.balance ?? 100;
+
+            try {
+              const result = await runAutoTradeCycle(sOpenTrades, s.id, timeframe.interval, balance);
+              return { strategyId: s.id, result };
+            } catch (err) {
+              return { strategyId: s.id, result: { message: `Error: ${err instanceof Error ? err.message : 'unknown'}`, action: 'idle' as const, closedTrades: [], trailingUpdates: [] } };
+            }
+          })
+        );
+
         if (cancelled) return;
-        console.log('[AutoTrade]', result.message);
-        addLog(result.message, result.action === 'new-trade' ? 'trade' : 'info');
 
-        for (const ct of result.closedTrades) {
-          const closeRes = await fetch('/api/trader', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'close-trade', tradeId: ct.tradeId, exitPrice: ct.exitPrice }),
-          });
-          const closeData = await closeRes.json();
-          if (closeData.success) {
-            addLog(`Закрыта ${ct.symbol}: ${ct.reason} | PnL: ${ct.pnl >= 0 ? '+' : ''}$${ct.pnl.toFixed(2)}`, ct.pnl >= 0 ? 'trade' : 'error');
+        for (const { strategyId, result } of results) {
+          const r = result as {
+            action: string;
+            message: string;
+            closedTrades: Array<{ tradeId: string; symbol: string; direction: string; pnl: number; reason: string; exitPrice: number }>;
+            trailingUpdates: Array<{ tradeId: string; newStopLoss: number; reason: string }>;
+            newTrade?: { symbol: string; direction: string; price: number; leverage: number; stopLoss: number; takeProfit: number; amount: number; strategyId: string };
+          };
+
+          console.log(`[AutoTrade][${strategyId}]`, r.message);
+          addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] ${r.message}`, r.action === 'new-trade' ? 'trade' : 'info');
+
+          // Process closed trades
+          for (const ct of r.closedTrades) {
+            try {
+              const closeRes = await fetch('/api/trader', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'close-trade', tradeId: ct.tradeId, exitPrice: ct.exitPrice, strategyId }),
+              });
+              const closeData = await closeRes.json();
+              if (closeData.success) {
+                addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Закрыта ${ct.symbol}: ${ct.reason} | PnL: ${ct.pnl >= 0 ? '+' : ''}$${ct.pnl.toFixed(2)}`, ct.pnl >= 0 ? 'trade' : 'error');
+              }
+            } catch { /* silent */ }
           }
-        }
 
-        // Apply trailing stop updates
-        for (const tu of result.trailingUpdates ?? []) {
+          // Apply trailing stop updates
+          for (const tu of r.trailingUpdates ?? []) {
+            try {
+              await fetch('/api/trader', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'update-sl', tradeId: tu.tradeId, newStopLoss: tu.newStopLoss, strategyId }),
+              });
+              addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Trailing SL: ${tu.reason}`, 'info');
+            } catch { /* silent */ }
+          }
+
+          // Open new trade
+          if (r.newTrade) {
+            const nt = r.newTrade;
+            try {
+              const openRes = await fetch('/api/trader', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'open-trade',
+                  symbol: nt.symbol, entryPrice: nt.price, amount: nt.amount,
+                  leverage: nt.leverage, direction: nt.direction,
+                  stopLoss: nt.stopLoss, takeProfit: nt.takeProfit,
+                  strategyId,
+                }),
+              });
+              const openData = await openRes.json();
+              if (openData.success) {
+                addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Открыта ${nt.direction.toUpperCase()} ${nt.symbol.replace('USDT', '')} @ $${nt.price.toFixed(2)} | ${nt.leverage}x | $${nt.amount.toFixed(2)}`, 'trade');
+              } else {
+                addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Ошибка открытия: ${openData.error || 'unknown'}`, 'error');
+              }
+            } catch (err) {
+              addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Ошибка сети: ${err instanceof Error ? err.message : 'unknown'}`, 'error');
+            }
+          }
+
+          // Refresh this strategy's state
           try {
-            await fetch('/api/trader', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: 'update-sl', tradeId: tu.tradeId, newStopLoss: tu.newStopLoss }),
-            });
-            addLog(`Trailing SL ${tu.reason}: ${tu.tradeId.slice(0, 8)}`, 'info');
+            const res = await fetch(`/api/trader?strategyId=${strategyId}`);
+            const data = await res.json();
+            if (data.state) setStrategyTraderState(strategyId, data.state as TraderState);
+            if (data.openTrades) setStrategyOpenTrades(strategyId, data.openTrades as Trade[]);
+            if (data.recentTrades) setStrategyRecentTrades(strategyId, data.recentTrades as Trade[]);
           } catch { /* silent */ }
         }
-
-        if (result.newTrade) {
-          const nt = result.newTrade;
-          const openRes = await fetch('/api/trader', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'open-trade',
-              symbol: nt.symbol, entryPrice: nt.price, amount: nt.amount,
-              leverage: nt.leverage, direction: nt.direction,
-              stopLoss: nt.stopLoss, takeProfit: nt.takeProfit,
-            }),
-          });
-          const openData = await openRes.json();
-          if (openData.success) {
-            addLog(`Открыта ${nt.direction.toUpperCase()} ${nt.symbol.replace('USDT', '')} @ $${nt.price.toFixed(2)} | ${nt.leverage}x | $${nt.amount.toFixed(2)}`, 'trade');
-          } else {
-            addLog(`Ошибка открытия: ${openData.error || 'unknown'}`, 'error');
-          }
-        }
-
-        const res = await fetch('/api/trader');
-        const data = await res.json();
-        if (cancelled) return;
-        if (data.state) setTraderState(data.state as TraderState);
-        if (data.openTrades) setOpenTrades(data.openTrades as Trade[]);
-        if (data.recentTrades) setRecentTrades(data.recentTrades as Trade[]);
       } catch (err) {
         console.error('[AutoTrade] Cycle error:', err);
         addLog(`Ошибка цикла: ${err instanceof Error ? err.message : 'unknown'}`, 'error');
       }
     };
 
-    addLog('Авто-трейдинг запущен', 'trade');
+    addLog('Авто-трейдинг запущен (3 стратегии)', 'trade');
     runCycle();
     const interval = setInterval(runCycle, 30000);
     return () => {
@@ -221,24 +332,22 @@ export default function Home() {
       clearInterval(interval);
       addLog('Авто-трейдинг остановлен', 'info');
     };
-  }, [autoTrading, timeframe.interval, setTraderState, setOpenTrades, setRecentTrades, addLog, traderState?.balance]);
+  }, [autoTrading, timeframe.interval, setTraderState, setOpenTrades, setRecentTrades, addLog, strategyStates, setStrategyTraderState, setStrategyOpenTrades, setStrategyRecentTrades]);
 
-  // Analyze on symbol change
+  // Analyze on symbol change — uses active strategy
   useEffect(() => {
     if (candles.length < 50) return;
     let cancelled = false;
     const analyze = async () => {
       try {
-        const wMap: Record<string, number> = {};
-        for (const w of weightsRef.current) wMap[w.indicator_name] = w.weight;
         const { analyzeSymbol } = await import('@/lib/client-trader');
-        const decision = await analyzeSymbol(selectedSymbol, timeframe.interval, timeframe.limit, wMap);
+        const decision = await analyzeSymbol(selectedSymbol, timeframe.interval, timeframe.limit, activeStrategy);
         if (!cancelled && decision) setCurrentAnalysis(decision);
       } catch { /* silent */ }
     };
     const timeout = setTimeout(analyze, 300);
     return () => { cancelled = true; clearTimeout(timeout); };
-  }, [selectedSymbol, candles.length, timeframe, setCurrentAnalysis]);
+  }, [selectedSymbol, candles.length, timeframe, setCurrentAnalysis, activeStrategy]);
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-[#0a0a0f]">
@@ -265,7 +374,7 @@ export default function Home() {
             <div className="flex items-center gap-4 text-xs font-mono">
               <div className="flex items-center gap-1.5">
                 <span className="text-white/35">Баланс</span>
-                <span className="text-white/90 font-bold">${traderState.balance.toFixed(2)}</span>
+                <span className={cn('font-bold', strategy?.color ?? 'text-white/90')}>${traderState.balance.toFixed(2)}</span>
               </div>
               {traderState.debt_to_repay > 0 && (
                 <div className="flex items-center gap-1.5">
@@ -277,6 +386,43 @@ export default function Home() {
           )}
         </div>
       </header>
+
+      {/* Strategy Selector */}
+      <div className="shrink-0 px-3 py-1.5 border-b border-white/5 bg-[#0d0d14]/80 flex gap-2">
+        {STRATEGIES.map(s => {
+          const ss = strategyStates[s.id];
+          const balance = ss?.traderState?.balance ?? 0;
+          const openCount = ss?.openTrades?.length ?? 0;
+          const isActive = activeStrategy === s.id;
+          return (
+            <button
+              key={s.id}
+              onClick={() => setActiveStrategy(s.id)}
+              className={cn(
+                'flex-1 rounded-lg border px-3 py-1.5 text-left transition-all duration-200',
+                isActive
+                  ? `${s.borderColor} ${s.bgColor}`
+                  : 'border-white/5 bg-white/[0.02] hover:bg-white/5',
+              )}
+            >
+              <div className="flex items-center justify-between">
+                <div className={cn('text-xs font-semibold', isActive ? s.color : 'text-zinc-400')}>{s.name}</div>
+                {openCount > 0 && (
+                  <span className="text-[9px] font-mono text-yellow-400/70 bg-yellow-500/10 px-1.5 py-0.5 rounded-full">
+                    {openCount} open
+                  </span>
+                )}
+              </div>
+              <div className={cn('text-[10px] mt-0.5 truncate', isActive ? 'text-zinc-400' : 'text-zinc-600')}>
+                {s.description.split('.')[0]}
+              </div>
+              <div className={cn('text-[10px] mt-0.5 font-mono', isActive ? 'text-zinc-300' : 'text-zinc-600')}>
+                ${balance.toFixed(2)}
+              </div>
+            </button>
+          );
+        })}
+      </div>
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
@@ -310,27 +456,39 @@ export default function Home() {
                   <button
                     key={tf.interval}
                     onClick={() => setTimeframe(tf)}
-                    className={`px-2 py-1 rounded-md text-[11px] font-mono font-medium transition-all duration-150 border shrink-0
-                      ${timeframe.interval === tf.interval
+                    className={cn(
+                      'px-2 py-1 rounded-md text-[11px] font-mono font-medium transition-all duration-150 border shrink-0',
+                      timeframe.interval === tf.interval
                         ? 'bg-white/10 text-white/90 border-white/15'
-                        : 'bg-[#1a1a2e]/70 text-white/40 border-white/5 hover:bg-white/5 hover:text-white/60'
-                      }`}
+                        : 'bg-[#1a1a2e]/70 text-white/40 border-white/5 hover:bg-white/5 hover:text-white/60',
+                    )}
                   >
                     {tf.label}
                   </button>
                 ))}
                 {/* Separator */}
                 <div className="w-px h-4 bg-white/10 mx-0.5 shrink-0" />
-                {/* Indicator toggles */}
-                {Object.values(indicators).map(ind => (
+                {/* Strategy name badge */}
+                {strategy && (
+                  <div className={cn('px-1.5 py-1 rounded-md text-[9px] font-mono font-bold border shrink-0', strategy.bgColor, strategy.borderColor, strategy.color)}>
+                    {strategy.name}
+                  </div>
+                )}
+                {/* Indicator toggles — only show indicators defined in the strategy */}
+                {Object.entries(indicators).filter(([, cfg]) => {
+                  // Show indicators that are in the strategy's chartIndicators or always shown
+                  if (!strategy) return true;
+                  return strategy.chartIndicators[cfg.id] !== undefined;
+                }).map(([key, ind]) => (
                   <button
                     key={ind.id}
                     onClick={() => toggleIndicator(ind.id)}
-                    className={`px-1.5 py-1 rounded-md text-[9px] font-mono font-medium border transition-all duration-150 shrink-0 ${
+                    className={cn(
+                      'px-1.5 py-1 rounded-md text-[9px] font-mono font-medium border transition-all duration-150 shrink-0',
                       ind.visible
                         ? 'border-white/20 bg-white/10 text-white/80'
-                        : 'border-white/5 bg-white/[0.02] text-white/25 hover:text-white/40'
-                    }`}
+                        : 'border-white/5 bg-white/[0.02] text-white/25 hover:text-white/40',
+                    )}
                   >
                     <span className="inline-block w-1.5 h-1.5 rounded-full mr-1 align-middle" style={{ backgroundColor: ind.visible ? ind.color : 'rgba(255,255,255,0.15)' }} />
                     {ind.label}
@@ -373,7 +531,7 @@ export default function Home() {
 }
 
 // ============================================================
-// TradesTable with live PnL
+// TradesTable with live PnL and total PnL row
 // ============================================================
 
 function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
@@ -400,6 +558,13 @@ function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
     }
     return total;
   }, [openTrades, coins]);
+
+  // Calculate total realized PnL from recent (closed) trades
+  const totalRealizedPnl = useMemo(() => {
+    return recentTrades
+      .filter(t => t.status === 'closed' && t.pnl !== null)
+      .reduce((sum, t) => sum + (t.pnl ?? 0), 0);
+  }, [recentTrades]);
 
   if (allTrades.length === 0) {
     return (
@@ -452,7 +617,7 @@ function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
                   {trade.symbol.replace('USDT', '')}
                 </td>
                 <td className="py-1.5 px-2">
-                  <span className={`font-mono font-bold ${isLong ? 'text-green-400' : 'text-red-400'}`}>
+                  <span className={cn('font-mono font-bold', isLong ? 'text-green-400' : 'text-red-400')}>
                     {isLong ? 'LONG' : 'SHORT'}
                   </span>
                 </td>
@@ -468,19 +633,16 @@ function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
                 </td>
                 <td className="py-1.5 px-2 text-right font-mono text-white/50">{trade.leverage ?? '—'}x</td>
                 <td className="py-1.5 px-2 text-right font-mono text-white/60">${typeof trade.amount === 'number' ? trade.amount.toFixed(2) : '—'}</td>
-                <td className={`py-1.5 px-2 text-right font-mono font-bold ${
-                  displayPnl == null ? 'text-white/30' : displayPnl >= 0 ? 'text-green-400' : 'text-red-400'
-                }`}>
+                <td className={cn('py-1.5 px-2 text-right font-mono font-bold', displayPnl == null ? 'text-white/30' : displayPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
                   {displayPnl != null && typeof displayPnl === 'number'
                     ? `${displayPnl >= 0 ? '+' : ''}$${displayPnl.toFixed(2)}`
                     : '—'}
                 </td>
                 <td className="py-1.5 px-2 text-center">
-                  <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${
-                    isOpen
-                      ? 'bg-yellow-500/10 text-yellow-400/80 border border-yellow-500/20'
-                      : 'bg-white/5 text-white/40 border border-white/10'
-                  }`}>
+                  <span className={cn('text-[9px] font-mono px-1.5 py-0.5 rounded', isOpen
+                    ? 'bg-yellow-500/10 text-yellow-400/80 border border-yellow-500/20'
+                    : 'bg-white/5 text-white/40 border border-white/10'
+                  )}>
                     {isOpen ? 'OPEN' : 'CLOSED'}
                   </span>
                 </td>
@@ -490,17 +652,22 @@ function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
         </tbody>
       </table>
       </div>
-      {/* Total Open PnL Summary */}
-      {openTrades.length > 0 && (
-        <div className="shrink-0 border-t border-white/10 bg-[#0d0d14] px-3 py-1.5 flex items-center justify-between">
-          <span className="text-[10px] text-white/40 font-mono">
-            Открыто: {openTrades.length}
-          </span>
-          <span className={`text-xs font-mono font-bold ${totalOpenPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-            PnL: {totalOpenPnl >= 0 ? '+' : ''}${totalOpenPnl.toFixed(2)}
+      {/* Summary footer */}
+      <div className="shrink-0 border-t border-white/10 bg-[#0d0d14] px-3 py-1.5 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          {openTrades.length > 0 && (
+            <span className="text-[10px] text-white/40 font-mono">
+              Открыто: {openTrades.length}
+            </span>
+          )}
+          <span className={cn('text-[10px] font-mono', totalOpenPnl >= 0 ? 'text-green-400/70' : 'text-red-400/70')}>
+            Unrealized: {totalOpenPnl >= 0 ? '+' : ''}${totalOpenPnl.toFixed(2)}
           </span>
         </div>
-      )}
+        <span className={cn('text-[10px] font-mono font-semibold', totalRealizedPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
+          Realized: {totalRealizedPnl >= 0 ? '+' : ''}${totalRealizedPnl.toFixed(2)}
+        </span>
+      </div>
     </div>
   );
 }
@@ -516,7 +683,7 @@ function ActivityLog() {
   return (
     <div className="border-t border-white/5 p-3">
       <div className="text-xs uppercase tracking-wider text-white/40 font-medium mb-2 flex items-center gap-1.5">
-        <div className={`w-1.5 h-1.5 rounded-full ${activityLog[0]?.type === 'trade' ? 'bg-green-400' : activityLog[0]?.type === 'error' ? 'bg-red-400' : 'bg-white/30'}`} />
+        <div className={cn('w-1.5 h-1.5 rounded-full', activityLog[0]?.type === 'trade' ? 'bg-green-400' : activityLog[0]?.type === 'error' ? 'bg-red-400' : 'bg-white/30')} />
         Лог активности
       </div>
       <div className="max-h-40 overflow-y-auto space-y-0.5 pr-1 custom-scrollbar">
@@ -667,18 +834,17 @@ function DraggableTradePanel({ focusedTradeId, symbol }: { focusedTradeId: strin
         onMouseDown={handleMouseDown}
       >
         <div className="flex items-center gap-2">
-          <span className={`text-xs font-bold ${isLong ? 'text-green-400' : 'text-red-400'}`}>
+          <span className={cn('text-xs font-bold', isLong ? 'text-green-400' : 'text-red-400')}>
             {isLong ? '▲ LONG' : '▼ SHORT'}
           </span>
           <span className="text-xs font-semibold text-white/90">
             {activeTrade.symbol.replace('USDT', '')}
           </span>
         </div>
-        <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${
-          isOpen
-            ? 'bg-yellow-500/10 text-yellow-400/80 border border-yellow-500/20'
-            : 'bg-white/5 text-white/40 border border-white/10'
-        }`}>
+        <span className={cn('text-[9px] font-mono px-1.5 py-0.5 rounded', isOpen
+          ? 'bg-yellow-500/10 text-yellow-400/80 border border-yellow-500/20'
+          : 'bg-white/5 text-white/40 border border-white/10'
+        )}>
           {isOpen ? 'OPEN' : 'CLOSED'}
         </span>
       </div>
@@ -687,7 +853,7 @@ function DraggableTradePanel({ focusedTradeId, symbol }: { focusedTradeId: strin
       <div className="px-3 py-2 space-y-1.5">
         <div className="flex items-center justify-between">
           <span className="text-[10px] text-white/40">PnL</span>
-          <span className={`text-xs font-mono font-bold ${livePnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+          <span className={cn('text-xs font-mono font-bold', livePnl >= 0 ? 'text-green-400' : 'text-red-400')}>
             {livePnl >= 0 ? '+' : ''}{livePnl.toFixed(2)}$
           </span>
         </div>

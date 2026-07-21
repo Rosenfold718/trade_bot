@@ -2,6 +2,8 @@
 
 import { useMemo } from 'react';
 import { useTerminalStore } from '@/lib/store';
+import { getStrategy } from '@/lib/strategies';
+import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Wallet, TrendingUp, TrendingDown, CreditCard, Activity, Gauge, ArrowUpCircle, ArrowDownCircle, MinusCircle } from 'lucide-react';
@@ -31,7 +33,7 @@ function StatCard({
       <CardContent className="p-3.5">
         <div className="flex items-center justify-between mb-1.5">
           <span className="text-[10px] uppercase tracking-wider text-white/40 font-medium">{label}</span>
-          <Icon className={`h-3.5 w-3.5 ${color}`} />
+          <Icon className={cn('h-3.5 w-3.5', color)} />
         </div>
         <div className="text-lg font-bold text-white/95 font-mono">{value}</div>
         {subValue && <div className="text-[10px] text-white/40 mt-0.5 font-mono">{subValue}</div>}
@@ -45,11 +47,9 @@ function StatCard({
 // ============================================================
 
 function SignalGauge({ score }: { score: number }) {
-  // Clamp score to -10..10, map to 0..100%
   const clamped = Math.max(-10, Math.min(10, score));
   const percentage = ((clamped + 10) / 20) * 100;
 
-  // Color based on direction
   const color = clamped > 2
     ? 'from-green-500 to-green-400'
     : clamped < -2
@@ -59,39 +59,15 @@ function SignalGauge({ score }: { score: number }) {
   const label = clamped > 2 ? 'BULLISH' : clamped < -2 ? 'BEARISH' : 'NEUTRAL';
   const labelColor = clamped > 2 ? 'text-green-400' : clamped < -2 ? 'text-red-400' : 'text-yellow-400';
 
-  // Needle position
-  const needleAngle = -90 + (clamped / 10) * 90; // -90 to +90 degrees
+  const needleAngle = -90 + (clamped / 10) * 90;
 
   return (
     <div className="space-y-2">
-      {/* Gauge Arc */}
       <div className="relative h-20 flex items-end justify-center overflow-hidden">
         <svg viewBox="0 0 200 110" className="w-full h-full">
-          {/* Background arc */}
-          <path
-            d="M 20 100 A 80 80 0 0 1 180 100"
-            fill="none"
-            stroke="rgba(255,255,255,0.06)"
-            strokeWidth="10"
-            strokeLinecap="round"
-          />
-          {/* Filled arc (left half - red zone) */}
-          <path
-            d="M 20 100 A 80 80 0 0 1 100 20"
-            fill="none"
-            stroke="rgba(239,68,68,0.2)"
-            strokeWidth="10"
-            strokeLinecap="round"
-          />
-          {/* Filled arc (right half - green zone) */}
-          <path
-            d="M 100 20 A 80 80 0 0 1 180 100"
-            fill="none"
-            stroke="rgba(34,197,94,0.2)"
-            strokeWidth="10"
-            strokeLinecap="round"
-          />
-          {/* Active segment */}
+          <path d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="10" strokeLinecap="round" />
+          <path d="M 20 100 A 80 80 0 0 1 100 20" fill="none" stroke="rgba(239,68,68,0.2)" strokeWidth="10" strokeLinecap="round" />
+          <path d="M 100 20 A 80 80 0 0 1 180 100" fill="none" stroke="rgba(34,197,94,0.2)" strokeWidth="10" strokeLinecap="round" />
           {Math.abs(clamped) > 0.5 && (
             <path
               d="M 20 100 A 80 80 0 0 1 180 100"
@@ -111,23 +87,19 @@ function SignalGauge({ score }: { score: number }) {
               <stop offset="100%" stopColor="#22c55e" />
             </linearGradient>
           </defs>
-          {/* Center line marker */}
           <line x1="100" y1="18" x2="100" y2="28" stroke="rgba(255,255,255,0.2)" strokeWidth="1" />
-          {/* Needle */}
           <g transform={`rotate(${needleAngle}, 100, 100)`}>
             <line x1="100" y1="100" x2="100" y2="35" stroke="white" strokeWidth="2" strokeLinecap="round" className="transition-transform duration-700 ease-out" />
             <circle cx="100" cy="100" r="4" fill="white" />
           </g>
-          {/* Labels */}
           <text x="15" y="112" fill="rgba(239,68,68,0.6)" fontSize="8" fontFamily="monospace">-10</text>
           <text x="92" y="15" fill="rgba(255,255,255,0.3)" fontSize="8" fontFamily="monospace">0</text>
           <text x="178" y="112" fill="rgba(34,197,94,0.6)" fontSize="8" fontFamily="monospace">+10</text>
         </svg>
       </div>
-      {/* Score text */}
       <div className="text-center">
         <div className="text-2xl font-bold font-mono text-white/95">{clamped > 0 ? '+' : ''}{clamped.toFixed(1)}</div>
-        <span className={`text-[10px] font-mono font-bold tracking-wider ${labelColor}`}>{label}</span>
+        <span className={cn('text-[10px] font-mono font-bold tracking-wider', labelColor)}>{label}</span>
       </div>
     </div>
   );
@@ -146,7 +118,6 @@ function IndicatorRow({ indicator }: { indicator: IndicatorSignal }) {
         <span className="text-[10px] text-white/50 font-mono">{indicator.name}</span>
       </div>
       <div className="flex-1 flex items-center gap-1.5">
-        {/* Signal icon */}
         <div className="w-4 shrink-0 flex justify-center">
           {indicator.signal > 0 ? (
             <ArrowUpCircle className="w-3.5 h-3.5 text-green-400" />
@@ -156,15 +127,15 @@ function IndicatorRow({ indicator }: { indicator: IndicatorSignal }) {
             <MinusCircle className="w-3.5 h-3.5 text-white/20" />
           )}
         </div>
-        {/* Bar background */}
         <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden relative">
           {indicator.signal !== 0 && (
             <div
-              className={`absolute top-0 h-full rounded-full transition-all duration-500 ${
+              className={cn(
+                'absolute top-0 h-full rounded-full transition-all duration-500',
                 indicator.signal > 0
                   ? 'bg-gradient-to-r from-green-500/60 to-green-400'
-                  : 'bg-gradient-to-l from-red-500/60 to-red-400 right-0'
-              }`}
+                  : 'bg-gradient-to-l from-red-500/60 to-red-400 right-0',
+              )}
               style={{
                 width: `${barWidth}%`,
                 left: indicator.signal < 0 ? 'auto' : 0,
@@ -173,7 +144,6 @@ function IndicatorRow({ indicator }: { indicator: IndicatorSignal }) {
             />
           )}
         </div>
-        {/* Strength value */}
         <span className="text-[9px] font-mono text-white/30 w-7 text-right shrink-0">
           {(indicator.strength * 100).toFixed(0)}%
         </span>
@@ -186,7 +156,7 @@ function IndicatorRow({ indicator }: { indicator: IndicatorSignal }) {
 // Recommended Action Badge
 // ============================================================
 
-function RecommendedAction({ score, indicators }: { score: number; indicators: IndicatorSignal[] }) {
+function RecommendedAction({ score }: { score: number }) {
   const absScore = Math.abs(score);
   const confidence = Math.min(100, (absScore / 10) * 100);
 
@@ -215,13 +185,10 @@ function RecommendedAction({ score, indicators }: { score: number; indicators: I
   return (
     <div className="flex items-center justify-between">
       <div className="flex items-center gap-2">
-        <Gauge className={`w-3.5 h-3.5 ${color}`} />
-        <span className={`text-sm font-bold font-mono ${color}`}>{action}</span>
+        <Gauge className={cn('w-3.5 h-3.5', color)} />
+        <span className={cn('text-sm font-bold font-mono', color)}>{action}</span>
       </div>
-      <Badge
-        variant="outline"
-        className={`text-[10px] font-mono px-2 py-0.5 ${color} ${bgColor} ${borderColor}`}
-      >
+      <Badge variant="outline" className={cn('text-[10px] font-mono px-2 py-0.5', color, bgColor, borderColor)}>
         {confidence.toFixed(0)}% confidence
       </Badge>
     </div>
@@ -229,18 +196,17 @@ function RecommendedAction({ score, indicators }: { score: number; indicators: I
 }
 
 export default function TradingDashboard() {
-  const { traderState, openTrades, recentTrades, weights, currentAnalysis } =
+  const { traderState, openTrades, recentTrades, weights, currentAnalysis, activeStrategy } =
     useTerminalStore();
 
-  // Calculate overall score from indicators
+  const strategy = getStrategy(activeStrategy);
+
   const overallScore = useMemo(() => {
     if (!currentAnalysis || !currentAnalysis.indicators.length) return 0;
     let score = 0;
     for (const ind of currentAnalysis.indicators) {
       score += ind.signal * ind.strength;
     }
-    // Normalize: max possible = number of indicators (each up to 1.0)
-    // Scale to -10..+10
     const maxPossible = currentAnalysis.indicators.length;
     return maxPossible > 0 ? (score / maxPossible) * 10 : 0;
   }, [currentAnalysis]);
@@ -261,13 +227,22 @@ export default function TradingDashboard() {
 
   return (
     <div className="p-3 space-y-3">
+      {/* Strategy badge */}
+      {strategy && (
+        <div className={cn('flex items-center gap-2 px-3 py-1.5 rounded-lg border', strategy.bgColor, strategy.borderColor)}>
+          <div className={cn('w-1.5 h-1.5 rounded-full', strategy.color.replace('text-', 'bg-'))} />
+          <span className={cn('text-[10px] font-bold font-mono', strategy.color)}>{strategy.name}</span>
+          <span className="text-[9px] text-white/30 ml-auto font-mono">{strategy.maxLeverage}x · 1:{strategy.riskRewardRatio}</span>
+        </div>
+      )}
+
       {/* Balance Stats */}
       <div className="grid grid-cols-2 gap-2">
         <StatCard
           label="Баланс"
           value={`$${traderState.balance.toFixed(2)}`}
           icon={Wallet}
-          color="text-blue-400"
+          color={strategy?.color ?? 'text-white/70'}
           subValue={traderState.borrowed_funds > 0 ? `Кредит: $${traderState.borrowed_funds.toFixed(2)}` : undefined}
         />
         <StatCard
@@ -299,13 +274,8 @@ export default function TradingDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 pt-0 space-y-3">
-            {/* Overall Score Gauge */}
             <SignalGauge score={overallScore} />
-
-            {/* Recommended Action */}
-            <RecommendedAction score={overallScore} indicators={currentAnalysis.indicators} />
-
-            {/* Direction & Leverage */}
+            <RecommendedAction score={overallScore} />
             <div className="flex items-center gap-2">
               {currentAnalysis.direction !== 'none' && (
                 <Badge
@@ -323,11 +293,7 @@ export default function TradingDashboard() {
                 Raw score: {currentAnalysis.score.toFixed(2)}
               </span>
             </div>
-
-            {/* Separator */}
             <div className="h-px bg-white/5" />
-
-            {/* Individual Indicators */}
             <div className="space-y-0.5">
               <div className="text-[9px] uppercase tracking-wider text-white/30 font-medium mb-1.5">Индикаторы</div>
               {currentAnalysis.indicators.map((ind) => (
@@ -351,9 +317,10 @@ export default function TradingDashboard() {
                 <div className="flex items-center gap-2">
                   <div className="w-16 h-1.5 bg-white/5 rounded-full overflow-hidden">
                     <div
-                      className={`h-full rounded-full transition-all duration-500 ${
-                        w.weight >= 1.5 ? 'bg-green-400' : w.weight >= 1 ? 'bg-blue-400' : 'bg-red-400'
-                      }`}
+                      className={cn(
+                        'h-full rounded-full transition-all duration-500',
+                        w.weight >= 1.5 ? 'bg-green-400' : w.weight >= 1 ? 'bg-amber-400' : 'bg-red-400',
+                      )}
                       style={{ width: `${Math.min(w.weight / 2.5 * 100, 100)}%` }}
                     />
                   </div>
@@ -364,7 +331,6 @@ export default function TradingDashboard() {
           </div>
         </CardContent>
       </Card>
-
     </div>
   );
 }

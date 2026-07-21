@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, openTrade, closeTrade, updateStopLoss, updateBalance, repayDebt } from '@/lib/db';
-import { fetchKlines, makeTradingDecision, fetchTopSymbols } from '@/lib/trading-engine';
+import { fetchKlines, makeStrategyDecision, fetchTopSymbols } from '@/lib/trading-engine';
 
 export async function GET() {
   try {
     await initDB();
     const [state, weights, openTrades, recentTrades] = await Promise.all([
-      getTraderState(),
+      getTraderState('momentum'),
       getIndicatorWeights(),
-      getOpenTrades(),
-      getRecentTrades(20),
+      getOpenTrades('momentum'),
+      getRecentTrades(20, 'momentum'),
     ]);
     return NextResponse.json({ state, weights, openTrades, recentTrades });
   } catch (err) {
@@ -22,12 +22,15 @@ export async function POST(request: NextRequest) {
   try {
     await initDB();
     const body = await request.json();
-    const { action, symbol, timeframe } = body as { action: string; symbol?: string; timeframe?: string };
+    const { action, strategyId: rawStrategyId, symbol, timeframe, ...rest } = body as {
+      action: string; strategyId?: string; symbol?: string; timeframe?: string;
+    };
+    const strategyId = rawStrategyId || 'momentum';
 
     if (action === 'analyze') {
       if (!symbol) return NextResponse.json({ error: 'Symbol required' }, { status: 400 });
 
-      const state = await getTraderState();
+      const state = await getTraderState(strategyId);
       const weightsArr = await getIndicatorWeights();
       const weights: Record<string, number> = {};
       for (const w of weightsArr) weights[w.indicator_name] = w.weight;
@@ -48,14 +51,14 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Not enough candle data' }, { status: 400 });
       }
 
-      const openTrades = await getOpenTrades();
+      const openTrades = await getOpenTrades(strategyId);
       const lastTrade = openTrades[0];
-      let idleMinutes = 30;
+      let idleMinutes = 0;
       if (lastTrade) {
         idleMinutes = Math.floor((Date.now() - new Date(lastTrade.opened_at).getTime()) / 60000);
       }
 
-      const decision = makeTradingDecision(symbol, candles, weights, idleMinutes);
+      const decision = makeStrategyDecision(strategyId, symbol, candles, idleMinutes);
 
       return NextResponse.json({
         decision,
@@ -65,27 +68,27 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'open-trade') {
-      const { symbol: sym, entryPrice, amount, leverage, direction, stopLoss, takeProfit } = body as {
+      const { symbol: sym, entryPrice, amount, leverage, direction, stopLoss, takeProfit } = rest as {
         symbol: string; entryPrice: number; amount: number; leverage: number;
         direction: 'long' | 'short'; stopLoss: number; takeProfit: number;
       };
 
       if (amount <= 0) return NextResponse.json({ error: 'Invalid amount' }, { status: 400 });
 
-      const state = await getTraderState();
+      const state = await getTraderState(strategyId);
       if (state.balance < amount) {
         return NextResponse.json({ error: 'Insufficient balance' }, { status: 400 });
       }
 
-      await openTrade(sym, entryPrice, amount, leverage, direction, stopLoss, takeProfit);
-      await updateBalance(state.balance - amount);
+      await openTrade(sym, entryPrice, amount, leverage, direction, stopLoss, takeProfit, strategyId);
+      await updateBalance(state.balance - amount, strategyId);
 
       return NextResponse.json({ success: true, message: `Opened ${direction} on ${sym}` });
     }
 
     if (action === 'close-trade') {
-      const { tradeId, exitPrice } = body as { tradeId: string; exitPrice: number };
-      const openTrades = await getOpenTrades();
+      const { tradeId, exitPrice } = rest as { tradeId: string; exitPrice: number };
+      const openTrades = await getOpenTrades(strategyId);
       const trade = openTrades.find(t => t.id === tradeId);
       if (!trade) return NextResponse.json({ error: 'Trade not found' }, { status: 404 });
 
@@ -96,29 +99,29 @@ export async function POST(request: NextRequest) {
 
       await closeTrade(tradeId, exitPrice, pnl);
 
-      const state = await getTraderState();
+      const state = await getTraderState(strategyId);
       let newBalance = state.balance + trade.amount + pnl;
 
       // Repay 10% of profitable trades
       if (pnl > 0 && state.debt_to_repay > 0) {
         const repayAmount = pnl * 0.1;
-        await repayDebt(repayAmount);
+        await repayDebt(repayAmount, strategyId);
         newBalance -= Math.min(repayAmount, state.debt_to_repay);
       }
 
-      await updateBalance(newBalance);
+      await updateBalance(newBalance, strategyId);
 
       return NextResponse.json({ success: true, pnl, newBalance });
     }
 
     if (action === 'update-sl') {
-      const { tradeId, newStopLoss } = body as { tradeId: string; newStopLoss: number };
+      const { tradeId, newStopLoss } = rest as { tradeId: string; newStopLoss: number };
       await updateStopLoss(tradeId, newStopLoss);
       return NextResponse.json({ success: true });
     }
 
     if (action === 'monitor-trades') {
-      const openTrades = await getOpenTrades();
+      const openTrades = await getOpenTrades(strategyId);
       const closedTrades: Array<{ tradeId: string; symbol: string; direction: string; pnl: number; reason: string }> = [];
 
       for (const trade of openTrades) {
@@ -160,16 +163,16 @@ export async function POST(request: NextRequest) {
 
             await closeTrade(trade.id, exitPrice, pnl);
 
-            const state = await getTraderState();
+            const state = await getTraderState(strategyId);
             let newBalance = state.balance + trade.amount + pnl;
 
             if (pnl > 0 && state.debt_to_repay > 0) {
               const repayAmount = pnl * 0.1;
-              await repayDebt(repayAmount);
+              await repayDebt(repayAmount, strategyId);
               newBalance -= Math.min(repayAmount, state.debt_to_repay);
             }
 
-            await updateBalance(newBalance);
+            await updateBalance(newBalance, strategyId);
 
             closedTrades.push({
               tradeId: trade.id,
@@ -187,8 +190,8 @@ export async function POST(request: NextRequest) {
 
       // Return updated state
       const [updatedState, updatedTrades] = await Promise.all([
-        getTraderState(),
-        getOpenTrades(),
+        getTraderState(strategyId),
+        getOpenTrades(strategyId),
       ]);
 
       return NextResponse.json({
@@ -202,21 +205,18 @@ export async function POST(request: NextRequest) {
     if (action === 'auto-trade') {
       const interval = timeframe || '1h';
       const symbols = await fetchTopSymbols();
-      const weightsArr = await getIndicatorWeights();
-      const weights: Record<string, number> = {};
-      for (const w of weightsArr) weights[w.indicator_name] = w.weight;
 
-      const openTrades = await getOpenTrades();
-      const state = await getTraderState();
-      if (openTrades.length >= 3) {
-        return NextResponse.json({ message: 'Max 3 open trades', openTrades });
+      const openTrades = await getOpenTrades(strategyId);
+      const state = await getTraderState(strategyId);
+      if (openTrades.length >= 10) {
+        return NextResponse.json({ message: 'Max open trades reached', openTrades });
       }
 
       // Skip symbols that already have open trades
       const openSymbols = new Set(openTrades.map(t => t.symbol));
       const availableSymbols = symbols.filter(s => !openSymbols.has(s));
 
-      let bestDecision: { decision: ReturnType<typeof makeTradingDecision>; price: number; symbol: string } | null = null;
+      let bestDecision: { decision: ReturnType<typeof makeStrategyDecision>; price: number; symbol: string } | null = null;
       let bestScore = 0;
 
       // Check up to 10 random symbols for signals
@@ -236,11 +236,11 @@ export async function POST(request: NextRequest) {
           const candles = await fetchKlines(sym, interval, limit);
           if (candles.length < 50) continue;
           const lastTrade = openTrades[0];
-          let idleMinutes = 30;
+          let idleMinutes = 0;
           if (lastTrade) {
             idleMinutes = Math.floor((Date.now() - new Date(lastTrade.opened_at).getTime()) / 60000);
           }
-          const decision = makeTradingDecision(sym, candles, weights, idleMinutes);
+          const decision = makeStrategyDecision(strategyId, sym, candles, idleMinutes);
           if (decision.direction !== 'none' && Math.abs(decision.score) > bestScore) {
             bestScore = Math.abs(decision.score);
             bestDecision = { decision, price: candles[candles.length - 1].close, symbol: sym };
@@ -260,8 +260,8 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ message: 'Insufficient balance for trade' });
       }
 
-      await openTrade(sym, price, tradeAmount, decision.leverage, decision.direction as 'long' | 'short', decision.stopLoss, decision.takeProfit);
-      await updateBalance(state.balance - tradeAmount);
+      await openTrade(sym, price, tradeAmount, decision.leverage, decision.direction as 'long' | 'short', decision.stopLoss, decision.takeProfit, strategyId);
+      await updateBalance(state.balance - tradeAmount, strategyId);
 
       return NextResponse.json({
         success: true,

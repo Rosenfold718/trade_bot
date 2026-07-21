@@ -1,3 +1,5 @@
+export type { StrategyConfig } from './strategies';
+
 // ============================================================
 // Binance API Types
 // ============================================================
@@ -42,6 +44,7 @@ export interface CandleData {
 
 export interface TraderState {
   id: string;
+  strategy_id: string;
   balance: number;
   borrowed_funds: number;
   debt_to_repay: number;
@@ -52,6 +55,7 @@ export interface TraderState {
 export interface Trade {
   id: string;
   symbol: string;
+  strategy_id: string;
   entry_price: number;
   exit_price: number | null;
   amount: number;

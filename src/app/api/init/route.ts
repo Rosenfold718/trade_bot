@@ -4,15 +4,23 @@ import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTr
 export async function GET() {
   try {
     await initDB();
-    const [state, weights, openTrades, recentTrades] = await Promise.all([
-      getTraderState(),
+
+    // Fetch state for all strategies
+    const strategies = ['momentum', 'mean-reversion', 'trend-pullback'];
+    const strategyStates: Record<string, Awaited<ReturnType<typeof getTraderState>>> = {};
+    for (const sid of strategies) {
+      strategyStates[sid] = await getTraderState(sid);
+    }
+
+    const [weights, openTrades, recentTrades] = await Promise.all([
       getIndicatorWeights(),
-      getOpenTrades(),
-      getRecentTrades(20),
+      getOpenTrades('momentum'),
+      getRecentTrades(20, 'momentum'),
     ]);
 
     return NextResponse.json({
-      state,
+      traderState: strategyStates['momentum'],
+      strategyStates,
       weights,
       openTrades,
       recentTrades,

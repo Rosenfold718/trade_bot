@@ -1,4 +1,5 @@
 import type { CandleData, IndicatorSignal, TradingDecision, BacktestTrade, BacktestSummary } from './types';
+import { getStrategy, type StrategyConfig } from './strategies';
 
 // ============================================================
 // Indicator Calculations
@@ -479,6 +480,395 @@ export function makeTradingDecision(
     takeProfit,
     indicators,
   };
+}
+
+// ============================================================
+// Multi-Strategy Decision Router
+// ============================================================
+
+function noDecision(symbol: string, candles: CandleData[]): TradingDecision {
+  return {
+    symbol,
+    direction: 'none',
+    score: 0,
+    leverage: 1,
+    stopLoss: 0,
+    takeProfit: 0,
+    indicators: [],
+  };
+}
+
+export function makeStrategyDecision(
+  strategyId: string,
+  symbol: string,
+  candles: CandleData[],
+  idleMinutes: number = 0,
+): TradingDecision {
+  const strategy = getStrategy(strategyId);
+  if (!strategy) return noDecision(symbol, candles);
+
+  switch (strategyId) {
+    case 'mean-reversion':
+      return makeMeanReversionDecision(symbol, candles, strategy, idleMinutes);
+    case 'trend-pullback':
+      return makeTrendPullbackDecision(symbol, candles, strategy, idleMinutes);
+    default:
+      return makeMomentumDecision(symbol, candles, strategy, idleMinutes);
+  }
+}
+
+// ============================================================
+// Strategy 1: Momentum Pro (adapted from makeTradingDecision)
+// ============================================================
+
+function makeMomentumDecision(
+  symbol: string,
+  candles: CandleData[],
+  strategy: StrategyConfig,
+  _idleMinutes: number = 0,
+): TradingDecision {
+  const indicators = analyzeIndicators(candles, {});
+  const closes = candles.map(c => c.close);
+  const price = closes[closes.length - 1];
+  const atr = calcATR(candles);
+
+  // ADX regime filter
+  if (strategy.adxMin !== null) {
+    const adxResult = calcADX(candles);
+    if (adxResult.adx < strategy.adxMin) {
+      return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
+    }
+  }
+
+  let longScore = 0;
+  let shortScore = 0;
+  let longCount = 0;
+  let shortCount = 0;
+
+  for (const ind of indicators) {
+    const w = 1; // all weights equal in strategy mode
+    if (ind.signal > 0) {
+      longScore += ind.strength * w;
+      longCount++;
+    } else if (ind.signal < 0) {
+      shortScore += ind.strength * w;
+      shortCount++;
+    }
+  }
+
+  const absLongScore = Math.abs(longScore);
+  const absShortScore = Math.abs(shortScore);
+  const maxScore = Math.max(absLongScore, absShortScore);
+
+  // Confluence: require ≥5 indicators to agree
+  const bestCount = Math.max(longCount, shortCount);
+  if (bestCount < 5) {
+    return { symbol, direction: 'none', score: maxScore, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
+  }
+
+  let direction: 'long' | 'short' | 'none' = 'none';
+  let score = 0;
+
+  if (absLongScore >= strategy.scoreThreshold && absLongScore >= absShortScore) {
+    direction = 'long';
+    score = longScore;
+  } else if (absShortScore >= strategy.scoreThreshold && absShortScore > absLongScore) {
+    direction = 'short';
+    score = shortScore;
+  }
+
+  const leverage = direction === 'none' ? 1 : Math.min(strategy.maxLeverage, Math.max(1, Math.round(maxScore * 3)));
+
+  const stopLossPercent = atr / price;
+  const takeProfitPercent = stopLossPercent * strategy.riskRewardRatio;
+
+  const stopLoss = direction === 'long'
+    ? price * (1 - stopLossPercent)
+    : price * (1 + stopLossPercent);
+  const takeProfit = direction === 'long'
+    ? price * (1 + takeProfitPercent)
+    : price * (1 - takeProfitPercent);
+
+  return { symbol, direction, score, leverage, stopLoss, takeProfit, indicators };
+}
+
+// ============================================================
+// Strategy 2: Mean Reversion
+// ============================================================
+
+function makeMeanReversionDecision(
+  symbol: string,
+  candles: CandleData[],
+  strategy: StrategyConfig,
+  _idleMinutes: number = 0,
+): TradingDecision {
+  if (candles.length < 50) return noDecision(symbol, candles);
+
+  const closes = candles.map(c => c.close);
+  const price = closes[closes.length - 1];
+  const atr = calcATR(candles);
+  const indicators: IndicatorSignal[] = [];
+
+  // Indicator 1: RSI(14)
+  const rsi = calcRSI(closes, 14);
+  const rsiLong = rsi < 35;
+  const rsiShort = rsi > 65;
+  const rsiStrength = rsiLong ? (35 - rsi) / 35 : rsiShort ? (rsi - 65) / 35 : 0;
+  indicators.push({
+    name: 'RSI',
+    signal: rsiLong ? 1 : rsiShort ? -1 : 0,
+    strength: rsiStrength,
+  });
+
+  // Indicator 2: Bollinger Bands(20, 2)
+  const bb = calcBollingerBands(closes, 20, 2);
+  const bbLong = price <= bb.lower;
+  const bbShort = price >= bb.upper;
+  const bbStrength = bbLong
+    ? Math.min((bb.middle - bb.lower) > 0 ? (bb.middle - price) / (bb.middle - bb.lower) : 0, 1)
+    : bbShort
+      ? Math.min((bb.upper - bb.middle) > 0 ? (price - bb.middle) / (bb.upper - bb.middle) : 0, 1)
+      : 0;
+  indicators.push({
+    name: 'Bollinger',
+    signal: bbLong ? 1 : bbShort ? -1 : 0,
+    strength: bbStrength,
+  });
+
+  // Indicator 3: StochRSI
+  const stochRSI = calcStochRSI(closes, 14, 14);
+  const stochLong = stochRSI < 0.25;
+  const stochShort = stochRSI > 0.75;
+  const stochStrength = stochLong ? (0.25 - stochRSI) / 0.25 : stochShort ? (stochRSI - 0.75) / 0.25 : 0;
+  indicators.push({
+    name: 'StochRSI',
+    signal: stochLong ? 1 : stochShort ? -1 : 0,
+    strength: stochStrength,
+  });
+
+  // Indicator 4: Volume confirmation
+  const volRatio = candles.length >= 20
+    ? candles[candles.length - 1].volume / (candles.slice(-20).reduce((s, c) => s + c.volume, 0) / 20)
+    : 0;
+  const volSpike = volRatio > 1.5;
+  const volStrength = volSpike ? Math.min((volRatio - 1.5) / 2, 1) : 0;
+  // Volume doesn't have a direction by itself — it amplifies the signal
+  indicators.push({
+    name: 'Volume',
+    signal: 0,
+    strength: volStrength,
+  });
+
+  // Count confluence for long and short
+  let longCount = 0;
+  let shortCount = 0;
+  let longScore = 0;
+  let shortScore = 0;
+
+  for (const ind of indicators) {
+    if (ind.signal > 0) {
+      longCount++;
+      longScore += ind.strength;
+    } else if (ind.signal < 0) {
+      shortCount++;
+      shortScore += ind.strength;
+    }
+  }
+
+  // Add volume as bonus if it agrees (volume spike = confirmation)
+  if (volSpike) {
+    longScore += volStrength * 0.5;
+    shortScore += volStrength * 0.5;
+  }
+
+  // Require ≥2 of 4 indicators to agree (volume excluded from count, it's a bonus)
+  if (longCount < 2 && shortCount < 2) {
+    return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
+  }
+
+  // Check mean reversion specific entry conditions
+  // LONG: RSI < 35 AND price ≤ BB lower AND StochRSI < 0.25
+  const longEntry = rsiLong && bbLong && longCount >= 2;
+  // SHORT: RSI > 65 AND price ≥ BB upper AND StochRSI > 0.75
+  const shortEntry = rsiShort && bbShort && shortCount >= 2;
+
+  let direction: 'long' | 'short' | 'none' = 'none';
+  let score = 0;
+
+  if (longEntry && longScore >= strategy.scoreThreshold) {
+    direction = 'long';
+    score = longScore;
+  } else if (shortEntry && shortScore >= strategy.scoreThreshold) {
+    direction = 'short';
+    score = shortScore;
+  }
+
+  if (direction === 'none') {
+    return { symbol, direction: 'none', score: Math.max(longScore, shortScore), leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
+  }
+
+  const leverage = Math.min(strategy.maxLeverage, Math.max(1, Math.round(score * 2)));
+  const stopLossPercent = atr / price;
+  const takeProfitPercent = stopLossPercent * strategy.riskRewardRatio;
+
+  const stopLoss = direction === 'long'
+    ? price * (1 - stopLossPercent)
+    : price * (1 + stopLossPercent);
+  const takeProfit = direction === 'long'
+    ? price * (1 + takeProfitPercent)
+    : price * (1 - takeProfitPercent);
+
+  return { symbol, direction, score, leverage, stopLoss, takeProfit, indicators };
+}
+
+// ============================================================
+// Strategy 3: Trend Pullback
+// ============================================================
+
+function makeTrendPullbackDecision(
+  symbol: string,
+  candles: CandleData[],
+  strategy: StrategyConfig,
+  _idleMinutes: number = 0,
+): TradingDecision {
+  if (candles.length < 100) return noDecision(symbol, candles);
+
+  const closes = candles.map(c => c.close);
+  const price = closes[closes.length - 1];
+  const atr = calcATR(candles);
+  const indicators: IndicatorSignal[] = [];
+
+  // Indicator 1: EMA9
+  const ema9Arr = ema(closes, 9);
+  const ema9 = ema9Arr[ema9Arr.length - 1];
+
+  // Indicator 2: EMA21
+  const ema21Arr = ema(closes, 21);
+  const ema21 = ema21Arr[ema21Arr.length - 1];
+
+  // Indicator 3: EMA99
+  const ema99Arr = ema(closes, 99);
+  const ema99 = ema99Arr[ema99Arr.length - 1];
+
+  // Indicator 4: ADX
+  const adxResult = calcADX(candles);
+
+  // ADX filter: require > 25 for strong trend
+  if (strategy.adxMin !== null && adxResult.adx < strategy.adxMin) {
+    indicators.push({ name: 'ADX', signal: 0, strength: 0 });
+    return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
+  }
+
+  // Determine trend direction
+  const isUptrend = !isNaN(ema9) && !isNaN(ema21) && ema9 > ema21 && price > ema21;
+  const isDowntrend = !isNaN(ema9) && !isNaN(ema21) && ema9 < ema21 && price < ema21;
+
+  if (!isUptrend && !isDowntrend) {
+    indicators.push(
+      { name: 'EMA9', signal: 0, strength: 0 },
+      { name: 'EMA21', signal: 0, strength: 0 },
+      { name: 'EMA99', signal: 0, strength: 0 },
+      { name: 'ADX', signal: 0, strength: 0 },
+      { name: 'OBV', signal: 0, strength: 0 },
+      { name: 'Volume', signal: 0, strength: 0 },
+    );
+    return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
+  }
+
+  const trendDir = isUptrend ? 1 : -1;
+
+  // Check pullback to EMA21 (within 0.5%)
+  const ema21Dist = Math.abs(price - ema21) / ema21;
+  const isNearEma21 = ema21Dist <= 0.005;
+
+  // Indicator signals
+  // EMA9 signal: trend direction
+  indicators.push({
+    name: 'EMA9',
+    signal: trendDir,
+    strength: Math.min(Math.abs(ema9 - ema21) / ema21 * 100, 1),
+  });
+
+  // EMA21 signal: trend direction
+  indicators.push({
+    name: 'EMA21',
+    signal: trendDir,
+    strength: Math.min(ema21Dist / 0.005, 1), // stronger when closer
+  });
+
+  // EMA99 signal: price vs EMA99 confirms bigger trend
+  const ema99Signal = !isNaN(ema99) ? (price > ema99 ? 1 : price < ema99 ? -1 : 0) : 0;
+  const ema99Strength = !isNaN(ema99) ? Math.min(Math.abs(price - ema99) / ema99 * 20, 1) : 0;
+  indicators.push({
+    name: 'EMA99',
+    signal: ema99Signal === trendDir ? trendDir : 0,
+    strength: ema99Signal === trendDir ? ema99Strength : 0,
+  });
+
+  // ADX signal: trend strength
+  indicators.push({
+    name: 'ADX',
+    signal: adxResult.plusDI > adxResult.minusDI ? 1 : -1,
+    strength: Math.min((adxResult.adx - 25) / 25, 1),
+  });
+
+  // OBV signal: volume trend
+  const obvResult = calcOBV(candles);
+  indicators.push({
+    name: 'OBV',
+    signal: obvResult.trend > 0.05 ? 1 : obvResult.trend < -0.05 ? -1 : 0,
+    strength: Math.min(Math.abs(obvResult.trend) * 5, 1),
+  });
+
+  // Volume signal: rising volume confirms
+  const volRatio = candles.length >= 20
+    ? candles[candles.length - 1].volume / (candles.slice(-20).reduce((s, c) => s + c.volume, 0) / 20)
+    : 0;
+  indicators.push({
+    name: 'Volume',
+    signal: volRatio > 1.2 ? trendDir : 0,
+    strength: volRatio > 1.2 ? Math.min((volRatio - 1.2) / 2, 1) : 0,
+  });
+
+  // Count confluence
+  let agreeCount = 0;
+  let score = 0;
+
+  for (const ind of indicators) {
+    if (ind.signal === trendDir) {
+      agreeCount++;
+      score += ind.strength;
+    }
+  }
+
+  // Require ≥3 of 6 indicators to agree
+  if (agreeCount < 3) {
+    return { symbol, direction: 'none', score, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
+  }
+
+  // Require pullback near EMA21
+  if (!isNearEma21) {
+    return { symbol, direction: 'none', score, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
+  }
+
+  // Score threshold check
+  if (score < strategy.scoreThreshold) {
+    return { symbol, direction: 'none', score, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
+  }
+
+  const direction: 'long' | 'short' = isUptrend ? 'long' : 'short';
+  const leverage = Math.min(strategy.maxLeverage, Math.max(1, Math.round(score * 2.5)));
+  const stopLossPercent = atr / price;
+  const takeProfitPercent = stopLossPercent * strategy.riskRewardRatio;
+
+  const stopLoss = direction === 'long'
+    ? price * (1 - stopLossPercent)
+    : price * (1 + stopLossPercent);
+  const takeProfit = direction === 'long'
+    ? price * (1 + takeProfitPercent)
+    : price * (1 - takeProfitPercent);
+
+  return { symbol, direction, score, leverage, stopLoss, takeProfit, indicators };
 }
 
 // ============================================================

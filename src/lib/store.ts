@@ -1,6 +1,12 @@
 import { create } from 'zustand';
 import type { CoinPrice, TraderState, Trade, IndicatorWeight, BacktestResult, TradingDecision } from '@/lib/types';
 
+interface StrategySnapshot {
+  traderState: TraderState | null;
+  openTrades: Trade[];
+  recentTrades: Trade[];
+}
+
 interface TerminalStore {
   // Coin prices
   coins: CoinPrice[];
@@ -11,7 +17,14 @@ interface TerminalStore {
   selectedSymbol: string;
   setSelectedSymbol: (symbol: string) => void;
 
-  // Trader state
+  // Strategy selection
+  activeStrategy: string;
+  setActiveStrategy: (id: string) => void;
+
+  // Per-strategy states (keyed by strategy id)
+  strategyStates: Record<string, StrategySnapshot>;
+
+  // Trader state — computed alias from strategyStates[activeStrategy]
   traderState: TraderState | null;
   setTraderState: (state: TraderState) => void;
 
@@ -19,13 +32,18 @@ interface TerminalStore {
   weights: IndicatorWeight[];
   setWeights: (weights: IndicatorWeight[]) => void;
 
-  // Open trades
+  // Open trades — computed alias from strategyStates[activeStrategy]
   openTrades: Trade[];
   setOpenTrades: (trades: Trade[]) => void;
 
-  // Recent trades
+  // Recent trades — computed alias from strategyStates[activeStrategy]
   recentTrades: Trade[];
   setRecentTrades: (trades: Trade[]) => void;
+
+  // Per-strategy setters
+  setStrategyTraderState: (strategyId: string, state: TraderState) => void;
+  setStrategyOpenTrades: (strategyId: string, trades: Trade[]) => void;
+  setStrategyRecentTrades: (strategyId: string, trades: Trade[]) => void;
 
   // Backtest results
   backtestResults: BacktestResult[];
@@ -86,17 +104,88 @@ export const useTerminalStore = create<TerminalStore>((set) => ({
   selectedSymbol: 'BTCUSDT',
   setSelectedSymbol: (symbol) => set({ selectedSymbol: symbol }),
 
+  // Strategy selection
+  activeStrategy: 'momentum',
+  setActiveStrategy: (id) => set((state) => {
+    const ss = state.strategyStates[id];
+    return {
+      activeStrategy: id,
+      traderState: ss?.traderState ?? null,
+      openTrades: ss?.openTrades ?? [],
+      recentTrades: ss?.recentTrades ?? [],
+    };
+  }),
+
+  // Per-strategy states
+  strategyStates: {},
+
+  // Trader state — also syncs into strategyStates[activeStrategy]
   traderState: null,
-  setTraderState: (traderState) => set({ traderState }),
+  setTraderState: (traderState) => set((state) => {
+    const id = state.activeStrategy;
+    return {
+      traderState,
+      strategyStates: {
+        ...state.strategyStates,
+        [id]: { ...state.strategyStates[id], traderState },
+      },
+    };
+  }),
 
   weights: [],
   setWeights: (weights) => set({ weights }),
 
+  // Open trades — also syncs into strategyStates[activeStrategy]
   openTrades: [],
-  setOpenTrades: (openTrades) => set({ openTrades }),
+  setOpenTrades: (openTrades) => set((state) => {
+    const id = state.activeStrategy;
+    return {
+      openTrades,
+      strategyStates: {
+        ...state.strategyStates,
+        [id]: { ...state.strategyStates[id], openTrades },
+      },
+    };
+  }),
 
+  // Recent trades — also syncs into strategyStates[activeStrategy]
   recentTrades: [],
-  setRecentTrades: (recentTrades) => set({ recentTrades }),
+  setRecentTrades: (recentTrades) => set((state) => {
+    const id = state.activeStrategy;
+    return {
+      recentTrades,
+      strategyStates: {
+        ...state.strategyStates,
+        [id]: { ...state.strategyStates[id], recentTrades },
+      },
+    };
+  }),
+
+  // Per-strategy setters — update strategyStates and sync if active
+  setStrategyTraderState: (strategyId, traderState) => set((state) => ({
+    strategyStates: {
+      ...state.strategyStates,
+      [strategyId]: { ...state.strategyStates[strategyId], traderState },
+    },
+    // If this is the active strategy, also update the alias
+    ...(state.activeStrategy === strategyId ? { traderState } : {}),
+  })),
+
+  setStrategyOpenTrades: (strategyId, openTrades) => set((state) => ({
+    strategyStates: {
+      ...state.strategyStates,
+      [strategyId]: { ...state.strategyStates[strategyId], openTrades },
+    },
+    ...(state.activeStrategy === strategyId ? { openTrades } : {}),
+  })),
+
+  setStrategyRecentTrades: (strategyId, recentTrades) => set((state) => ({
+    strategyStates: {
+      ...state.strategyStates,
+      [strategyId]: { ...state.strategyStates[strategyId], recentTrades },
+    },
+    ...(state.activeStrategy === strategyId ? { recentTrades } : {}),
+  })),
 
   backtestResults: [],
   setBacktestResults: (backtestResults) => set({ backtestResults }),

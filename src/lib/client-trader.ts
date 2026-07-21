@@ -1,6 +1,7 @@
-import type { CandleData, TradingDecision, Trade, IndicatorSignal } from './types';
+import type { CandleData, TradingDecision, Trade } from './types';
 import { TOP_50_SYMBOLS } from './types';
-import { makeTradingDecision, analyzeIndicators } from './trading-engine';
+import { makeStrategyDecision } from './trading-engine';
+import { getStrategy } from './strategies';
 
 // ============================================================
 // Client-side Binance data fetching (CORS works from browser)
@@ -47,11 +48,11 @@ export async function analyzeSymbol(
   symbol: string,
   interval: string,
   limit: number,
-  weights: Record<string, number>,
+  strategyId: string = 'momentum',
 ): Promise<TradingDecision | null> {
   const candles = await fetchCandlesClient(symbol, interval, limit);
   if (candles.length < 50) return null;
-  const decision = makeTradingDecision(symbol, candles, weights, 30);
+  const decision = makeStrategyDecision(strategyId, symbol, candles, 30);
   return decision;
 }
 
@@ -60,11 +61,14 @@ export async function analyzeSymbol(
 // ============================================================
 
 export async function findBestSignal(
-  weights: Record<string, number>,
   openTradeSymbols: Set<string>,
+  strategyId: string = 'momentum',
   interval: string = '1h',
   limit: number = 1440,
 ): Promise<{ decision: TradingDecision; price: number; symbol: string } | null> {
+  const strategy = getStrategy(strategyId);
+  if (!strategy) return null;
+
   // Only trade symbols that are in the coin list (TOP_50_SYMBOLS)
   const symbols = TOP_50_SYMBOLS;
   const available = symbols.filter(s => !openTradeSymbols.has(s));
@@ -78,32 +82,31 @@ export async function findBestSignal(
     try {
       const candles = await fetchCandlesClient(sym, interval, limit);
       if (candles.length < 50) continue;
-      const decision = makeTradingDecision(sym, candles, weights, 0);
+      const decision = makeStrategyDecision(strategyId, sym, candles, 0);
       if (decision.direction === 'none') continue;
 
-      // ============================================================
-      // POINT 4: Multi-timeframe filter — 4H EMA 50 trend must align
-      // ============================================================
-      try {
-        const h4candles = await fetchCandlesClient(sym, '4h', 200);
-        if (h4candles.length >= 50) {
-          const ema50 = calcEMA50(h4candles.map(c => c.close), 50);
-          const h4price = h4candles[h4candles.length - 1].close;
-          if (!isNaN(ema50)) {
-            const h4Bullish = h4price > ema50;
-            if (decision.direction === 'long' && !h4Bullish) continue;
-            if (decision.direction === 'short' && h4Bullish) continue;
-          }
-        }
-      } catch { /* 4H fetch failed — allow trade without MTF filter */ }
+      // Volume spike check: current volume > 2× average
+      const avgVol = candles.slice(-20).reduce((s, c) => s + c.volume, 0) / Math.min(20, candles.length);
+      const currentVol = candles[candles.length - 1].volume;
+      if (avgVol > 0 && currentVol < avgVol * 2) continue; // No volume spike — skip
 
       // ============================================================
-      // POINT 5: Order book imbalance must confirm direction
+      // Multi-timeframe filter — 4H EMA 50 trend must align (if enabled)
       // ============================================================
-      const imbalance = await fetchOrderBookImbalance(sym);
-      if (Math.abs(imbalance) < 0.05) continue; // No clear pressure — skip
-      if (decision.direction === 'long' && imbalance < 0) continue; // Bearish OB — skip long
-      if (decision.direction === 'short' && imbalance > 0) continue; // Bullish OB — skip short
+      if (strategy.mtfEnabled) {
+        try {
+          const h4candles = await fetchCandlesClient(sym, '4h', 200);
+          if (h4candles.length >= 50) {
+            const ema50 = calcEMA50(h4candles.map(c => c.close), 50);
+            const h4price = h4candles[h4candles.length - 1].close;
+            if (!isNaN(ema50)) {
+              const h4Bullish = h4price > ema50;
+              if (decision.direction === 'long' && !h4Bullish) continue;
+              if (decision.direction === 'short' && h4Bullish) continue;
+            }
+          }
+        } catch { /* 4H fetch failed — allow trade without MTF filter */ }
+      }
 
       if (Math.abs(decision.score) > bestScore) {
         bestScore = Math.abs(decision.score);
@@ -126,27 +129,6 @@ function calcEMA50(data: number[], period: number): number {
     ema = data[i] * k + ema * (1 - k);
   }
   return ema;
-}
-
-// ============================================================
-// POINT 5: Order book imbalance check
-// ============================================================
-
-async function fetchOrderBookImbalance(symbol: string): Promise<number> {
-  try {
-    const res = await fetch(`https://api.binance.com/api/v3/depth?symbol=${symbol}&limit=20`);
-    if (!res.ok) return 0;
-    const data = await res.json();
-    let bidVol = 0;
-    let askVol = 0;
-    for (const [price, qty] of data.bids as [string, string][]) bidVol += parseFloat(qty);
-    for (const [price, qty] of data.asks as [string, string][]) askVol += parseFloat(qty);
-    const total = bidVol + askVol;
-    if (total === 0) return 0;
-    return (bidVol - askVol) / total; // +0.3 = bid heavy, -0.3 = ask heavy
-  } catch {
-    return 0;
-  }
 }
 
 // ============================================================
@@ -232,18 +214,22 @@ export async function monitorTradesClient(openTrades: Trade[]): Promise<MonitorR
 
 export async function runAutoTradeCycle(
   openTrades: Trade[],
-  weights: Record<string, number>,
+  strategyId: string,
   interval: string,
   balance: number,
 ): Promise<{
     action: 'monitor' | 'new-trade' | 'idle';
     closedTrades: MonitorResult['closedTrades'];
     trailingUpdates: MonitorResult['trailingUpdates'];
-    newTrade?: { symbol: string; direction: string; price: number; leverage: number; stopLoss: number; takeProfit: number; amount: number };
+    newTrade?: { symbol: string; direction: string; price: number; leverage: number; stopLoss: number; takeProfit: number; amount: number; strategyId: string };
     message: string;
     scannedCount: number;
     bestScore: number;
   }> {
+  const strategy = getStrategy(strategyId);
+  const maxTrades = strategy?.maxOpenTrades ?? 10;
+  const tradeSizePct = strategy?.tradeSizePercent ?? 0.10;
+
   // Step 1: Monitor open trades
   const { closedTrades, trailingUpdates } = await monitorTradesClient(openTrades);
   const updatedOpenTrades = openTrades.filter(t => !closedTrades.some(c => c.tradeId === t.id));
@@ -262,9 +248,9 @@ export async function runAutoTradeCycle(
     };
   }
 
-  // Hard limit: max 10 concurrent open trades
-  if (updatedOpenTrades.length >= 10) {
-    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: `Лимит сделок: ${updatedOpenTrades.length}/10, жду закрытия...`, scannedCount: 0, bestScore: 0 };
+  // Hard limit: strategy-specific max concurrent open trades
+  if (updatedOpenTrades.length >= maxTrades) {
+    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: `Лимит сделок: ${updatedOpenTrades.length}/${maxTrades}, жду закрытия...`, scannedCount: 0, bestScore: 0 };
   }
 
   // Step 3: If balance too low, skip
@@ -276,13 +262,13 @@ export async function runAutoTradeCycle(
   const limitMap: Record<string, number> = { '1m': 1000, '5m': 1000, '15m': 1000, '1h': 1440, '4h': 500 };
   const limit = limitMap[interval] || 1440;
 
-  const best = await findBestSignal(weights, openSymbols, interval, limit);
+  const best = await findBestSignal(openSymbols, strategyId, interval, limit);
   if (!best || best.decision.direction === 'none') {
     return { action: 'idle', closedTrades: [], trailingUpdates: [], message: 'Сигналов не найдено, сканирую...', scannedCount: 10, bestScore: 0 };
   }
 
-  // Trade amount: scale with balance — 10% per trade, min $3, max $20
-  const tradeAmount = Math.max(3, Math.min(balance * 0.10, 20));
+  // Trade amount: scale with balance using strategy-specific %
+  const tradeAmount = Math.max(3, Math.min(balance * tradeSizePct, 20));
 
   return {
     action: 'new-trade',
@@ -296,6 +282,7 @@ export async function runAutoTradeCycle(
       stopLoss: best.decision.stopLoss,
       takeProfit: best.decision.takeProfit,
       amount: tradeAmount,
+      strategyId,
     },
     message: `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${best.symbol.replace('USDT', '')} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x | Score: ${best.decision.score.toFixed(2)}`,
     scannedCount: 10,

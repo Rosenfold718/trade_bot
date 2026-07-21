@@ -19,7 +19,7 @@ const SCHEMA_SQL = `
   DROP TABLE IF EXISTS trader_state;
 
   CREATE TABLE trader_state (
-    id TEXT PRIMARY KEY DEFAULT 'main',
+    id TEXT PRIMARY KEY,
     balance REAL NOT NULL DEFAULT 100,
     borrowed_funds REAL NOT NULL DEFAULT 0,
     debt_to_repay REAL NOT NULL DEFAULT 0,
@@ -30,6 +30,7 @@ const SCHEMA_SQL = `
   CREATE TABLE trades (
     id TEXT PRIMARY KEY,
     symbol TEXT NOT NULL,
+    strategy_id TEXT NOT NULL DEFAULT 'momentum',
     entry_price REAL NOT NULL,
     exit_price REAL,
     amount REAL NOT NULL,
@@ -61,7 +62,11 @@ const SCHEMA_SQL = `
   );
 
   INSERT OR IGNORE INTO trader_state (id, balance, borrowed_funds, debt_to_repay, is_active)
-  VALUES ('main', 100, 0, 0, 1);
+  VALUES ('momentum', 100, 0, 0, 1);
+  INSERT OR IGNORE INTO trader_state (id, balance, borrowed_funds, debt_to_repay, is_active)
+  VALUES ('mean-reversion', 100, 0, 0, 1);
+  INSERT OR IGNORE INTO trader_state (id, balance, borrowed_funds, debt_to_repay, is_active)
+  VALUES ('trend-pullback', 100, 0, 0, 1);
 
   INSERT OR IGNORE INTO indicator_weights (id, indicator_name, weight, calculated_winrate) VALUES
     ('rsi', 'RSI', 1.0, NULL),
@@ -95,12 +100,13 @@ export async function initDB(): Promise<void> {
 // Trader State
 // ============================================================
 
-export async function getTraderState() {
-  const result = await db.execute('SELECT * FROM trader_state WHERE id = ?', ['main']);
+export async function getTraderState(strategyId: string = 'momentum') {
+  const result = await db.execute('SELECT * FROM trader_state WHERE id = ?', [strategyId]);
   const row = result.rows[0];
-  if (!row) throw new Error('Trader state not found');
+  if (!row) throw new Error(`Trader state not found for strategy: ${strategyId}`);
   return {
     id: row.id as string,
+    strategy_id: strategyId,
     balance: Number(row.balance),
     borrowed_funds: Number(row.borrowed_funds),
     debt_to_repay: Number(row.debt_to_repay),
@@ -108,29 +114,29 @@ export async function getTraderState() {
   };
 }
 
-export async function updateBalance(newBalance: number): Promise<void> {
-  await db.execute('UPDATE trader_state SET balance = ?, updated_at = datetime(\'now\') WHERE id = ?', [newBalance, 'main']);
+export async function updateBalance(newBalance: number, strategyId: string = 'momentum'): Promise<void> {
+  await db.execute('UPDATE trader_state SET balance = ?, updated_at = datetime(\'now\') WHERE id = ?', [newBalance, strategyId]);
 }
 
-export async function addCredit(amount: number): Promise<void> {
+export async function addCredit(amount: number, strategyId: string = 'momentum'): Promise<void> {
   await db.execute(
     'UPDATE trader_state SET borrowed_funds = borrowed_funds + ?, balance = balance + ?, updated_at = datetime(\'now\') WHERE id = ?',
-    [amount, amount, 'main']
+    [amount, amount, strategyId]
   );
 }
 
-export async function repayDebt(amount: number): Promise<void> {
-  const state = await getTraderState();
+export async function repayDebt(amount: number, strategyId: string = 'momentum'): Promise<void> {
+  const state = await getTraderState(strategyId);
   const actualRepay = Math.min(amount, state.debt_to_repay);
   await db.execute(
     'UPDATE trader_state SET debt_to_repay = debt_to_repay - ?, balance = balance - ?, updated_at = datetime(\'now\') WHERE id = ?',
-    [actualRepay, actualRepay, 'main']
+    [actualRepay, actualRepay, strategyId]
   );
 }
 
-export async function resetTrader(): Promise<void> {
+export async function resetTrader(strategyId: string = 'momentum'): Promise<void> {
   await initDB();
-  console.log('✅ Trader reset complete');
+  console.log(`✅ Trader reset complete for strategy: ${strategyId}`);
 }
 
 // ============================================================
@@ -145,25 +151,31 @@ export async function openTrade(
   direction: 'long' | 'short',
   stopLoss: number,
   takeProfit: number,
+  strategyId: string = 'momentum',
 ): Promise<void> {
   const id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   await db.execute(
-    `INSERT INTO trades (id, symbol, entry_price, amount, leverage, direction, status, stop_loss, take_profit, opened_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, datetime('now'))`,
-    [id, symbol, entryPrice, amount, leverage, direction, stopLoss, takeProfit]
+    `INSERT INTO trades (id, symbol, strategy_id, entry_price, amount, leverage, direction, status, stop_loss, take_profit, opened_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, datetime('now'))`,
+    [id, symbol, strategyId, entryPrice, amount, leverage, direction, stopLoss, takeProfit]
   );
 }
 
-export async function getOpenTrades(): Promise<Array<{
-  id: string; symbol: string; entry_price: number; exit_price: number | null; amount: number;
+export async function getOpenTrades(strategyId?: string): Promise<Array<{
+  id: string; symbol: string; strategy_id: string; entry_price: number; exit_price: number | null; amount: number;
   leverage: number; direction: string; pnl: number | null; status: string;
   opened_at: string; closed_at: string | null;
   stop_loss: number | null; take_profit: number | null;
 }>> {
-  const result = await db.execute('SELECT * FROM trades WHERE status = ?', ['open']);
+  const sql = strategyId
+    ? 'SELECT * FROM trades WHERE status = ? AND strategy_id = ?'
+    : 'SELECT * FROM trades WHERE status = ?';
+  const params = strategyId ? ['open', strategyId] : ['open'];
+  const result = await db.execute(sql, params);
   return result.rows.map(row => ({
     id: row.id as string,
     symbol: row.symbol as string,
+    strategy_id: (row.strategy_id as string) ?? 'momentum',
     entry_price: Number(row.entry_price),
     exit_price: null,
     amount: Number(row.amount),
@@ -196,14 +208,16 @@ export async function updateStopLoss(tradeId: string, newStopLoss: number): Prom
   );
 }
 
-export async function getRecentTrades(limit: number = 20) {
-  const result = await db.execute(
-    'SELECT * FROM trades ORDER BY opened_at DESC LIMIT ?',
-    [limit]
-  );
+export async function getRecentTrades(limit: number = 20, strategyId?: string) {
+  const sql = strategyId
+    ? 'SELECT * FROM trades WHERE strategy_id = ? ORDER BY opened_at DESC LIMIT ?'
+    : 'SELECT * FROM trades ORDER BY opened_at DESC LIMIT ?';
+  const params = strategyId ? [strategyId, limit] : [limit];
+  const result = await db.execute(sql, params);
   return result.rows.map(row => ({
     id: row.id as string,
     symbol: row.symbol as string,
+    strategy_id: (row.strategy_id as string) ?? 'momentum',
     entry_price: Number(row.entry_price),
     exit_price: row.exit_price !== null ? Number(row.exit_price) : null,
     amount: Number(row.amount),
