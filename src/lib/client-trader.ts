@@ -166,7 +166,10 @@ export async function runAutoTradeCycle(
     };
   }
 
-  // No hard limit on open trades — risk is managed by deposit/balance allocation
+  // Hard limit: max 10 concurrent open trades
+  if (updatedOpenTrades.length >= 10) {
+    return { action: 'idle', closedTrades: [], message: `Лимит сделок: ${updatedOpenTrades.length}/10, жду закрытия...`, scannedCount: 0, bestScore: 0 };
+  }
 
   // Step 3: If balance too low, skip
   if (balance < 5) {

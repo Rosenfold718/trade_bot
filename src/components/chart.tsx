@@ -156,7 +156,24 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
           scaleMargins: { top: 0.1, bottom: 0.25 },
           ...(priceFmt ? { priceFormat: priceFmt } : {}),
         },
-        timeScale: { borderColor: 'rgba(255,255,255,0.1)', timeVisible: true, secondsVisible: false },
+        timeScale: {
+          borderColor: 'rgba(255,255,255,0.1)',
+          timeVisible: true,
+          secondsVisible: false,
+          tickMarkFormatter: (time: import('lightweight-charts').Time, type: import('lightweight-charts').TickMarkType) => {
+            if (typeof time !== 'number') return null;
+            const d = new Date(time * 1000);
+            const tz = 'Europe/Moscow';
+            // Year
+            if (type === 0) return d.toLocaleDateString('ru-RU', { timeZone: tz, year: 'numeric' });
+            // Month
+            if (type === 1) return d.toLocaleDateString('ru-RU', { timeZone: tz, month: 'short', year: '2-digit' });
+            // DayOfMonth
+            if (type === 2) return d.toLocaleDateString('ru-RU', { timeZone: tz, day: '2-digit', month: '2-digit' });
+            // Time without seconds (HH:MM)
+            return d.toLocaleTimeString('ru-RU', { timeZone: tz, hour: '2-digit', minute: '2-digit' });
+          },
+        },
         handleScroll: true, handleScale: true, autoSize: true,
       });
 
