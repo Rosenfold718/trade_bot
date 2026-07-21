@@ -30,4 +30,27 @@ Work Log:
 
 Stage Summary:
 - All 4 files modified: control-panel.tsx, trading-engine.ts, client-trader.ts, store.ts, page.tsx
-- Pushed to https://github.com/Rosenfold718/trade_bot
+- Pushed to https://github.com/Rosenfold718/trade_bot---
+Task ID: 1
+Agent: Main
+Task: Add automatic swing point detection and S/R level visualization on chart
+
+Work Log:
+- Added `detectSwingPoints()` function — scans candles with lookback=5 to find local highs/lows
+- Added `clusterSRLevels()` function — clusters nearby swing points (0.5% threshold) into S/R levels, requires ≥2 touches
+- Added `srLinesRef` for managing S/R price line lifecycle
+- Added useEffect #5 for S/R levels and swing markers:
+  - Swing highs: red arrow-down markers above candles, labeled "H"
+  - Swing lows: green arrow-up markers below candles, labeled "L"
+  - Support levels: green dashed price lines, labeled "S (n)" where n = touches
+  - Resistance levels: red dashed price lines, labeled "R (n)" where n = touches
+  - Line width scales with strength (more touches = thicker)
+  - Max 5 support + 5 resistance levels shown
+- Added `sr` and `swings` to DEFAULT_INDICATORS for toggle control
+- Added cleanup of srLinesRef in chart creation/removal effects
+- Verified in browser via VLM: S/R levels visible (e.g., "S(9) 58295.8"), no errors
+
+Stage Summary:
+- Chart now automatically draws swing point markers and S/R levels
+- All features toggleable via indicator buttons (S/R уровни, Экстремумы)
+- Zero compilation errors, clean browser rendering

@@ -18,6 +18,8 @@ export const DEFAULT_INDICATORS: Record<string, IndicatorConfig> = {
   ema12: { id: 'ema12', label: 'EMA 12', color: '#06b6d4', lineWidth: 1, visible: true },
   ema26: { id: 'ema26', label: 'EMA 26', color: '#ec4899', lineWidth: 1, visible: false },
   bb:    { id: 'bb',    label: 'BB 20',   color: 'rgba(148,163,184,0.5)', lineWidth: 1, visible: true },
+  sr:     { id: 'sr',     label: 'S/R уровни', color: '#eab308', lineWidth: 1, visible: true },
+  swings: { id: 'swings', label: 'Экстремумы', color: '#06b6d4', lineWidth: 1, visible: true },
 };
 
 interface TradingChartProps {
@@ -100,6 +102,62 @@ function calcBollingerBands(
 }
 
 // ============================================================
+// Swing Point Detection & S/R Level Clustering
+// ============================================================
+
+function detectSwingPoints(
+  candles: CandleData[], lookback: number = 5,
+): Array<{ time: number; price: number; type: 'high' | 'low' }> {
+  const swings: Array<{ time: number; price: number; type: 'high' | 'low' }> = [];
+  for (let i = lookback; i < candles.length - lookback; i++) {
+    let isHigh = true;
+    let isLow = true;
+    for (let j = i - lookback; j <= i + lookback; j++) {
+      if (j === i) continue;
+      if (candles[j].high >= candles[i].high) isHigh = false;
+      if (candles[j].low <= candles[i].low) isLow = false;
+      if (!isHigh && !isLow) break;
+    }
+    if (isHigh) swings.push({ time: candles[i].time, price: candles[i].high, type: 'high' });
+    if (isLow) swings.push({ time: candles[i].time, price: candles[i].low, type: 'low' });
+  }
+  return swings;
+}
+
+function clusterSRLevels(
+  swings: Array<{ time: number; price: number; type: 'high' | 'low' }>,
+  thresholdPct: number = 0.5,
+): Array<{ price: number; strength: number; type: 'support' | 'resistance'; touches: number }> {
+  const cluster = (prices: number[]) => {
+    const sorted = [...prices].sort((a, b) => a - b);
+    const clusters: Array<{ price: number; touches: number; sum: number }> = [];
+    for (const p of sorted) {
+      let found = false;
+      for (const c of clusters) {
+        if (c.price > 0 && Math.abs(p - c.price) / c.price * 100 < thresholdPct) {
+          c.sum += p;
+          c.touches++;
+          c.price = c.sum / c.touches;
+          found = true;
+          break;
+        }
+      }
+      if (!found) clusters.push({ price: p, touches: 1, sum: p });
+    }
+    return clusters;
+  };
+
+  const result: Array<{ price: number; strength: number; type: 'support' | 'resistance'; touches: number }> = [];
+  for (const c of cluster(swings.filter(s => s.type === 'high').map(s => s.price))) {
+    if (c.touches >= 2) result.push({ price: c.price, strength: Math.min(c.touches / 5, 1), type: 'resistance', touches: c.touches });
+  }
+  for (const c of cluster(swings.filter(s => s.type === 'low').map(s => s.price))) {
+    if (c.touches >= 2) result.push({ price: c.price, strength: Math.min(c.touches / 5, 1), type: 'support', touches: c.touches });
+  }
+  return result.sort((a, b) => b.touches - a.touches);
+}
+
+// ============================================================
 // Chart Component — no UI controls, pure chart
 // ============================================================
 
@@ -110,6 +168,7 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
   const volumeSeriesRef = useRef<any>(null);
   const dataRef = useRef<CandleData[]>(data);
   const priceLinesRef = useRef<any[]>([]);
+  const srLinesRef = useRef<any[]>([]);
   const indicatorSeriesRef = useRef<Map<string, any>>(new Map());
   const [mounted, setMounted] = useState(false);
 
@@ -140,6 +199,7 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
 
       if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; }
       priceLinesRef.current = [];
+      srLinesRef.current = [];
       indicatorSeriesRef.current.clear();
       candleSeriesRef.current = null;
       volumeSeriesRef.current = null;
@@ -208,6 +268,7 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
     return () => {
       cancelled = true;
       priceLinesRef.current = [];
+      srLinesRef.current = [];
       indicatorSeriesRef.current.clear();
       if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; }
       candleSeriesRef.current = null;
@@ -320,6 +381,63 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
     });
 
     return () => { cancelled = true; };
+  }, [data, indicators, symbol]);
+
+  // ============================================================
+  // 5. Support / Resistance levels & Swing Point markers
+  // ============================================================
+  useEffect(() => {
+    const cs = candleSeriesRef.current;
+    if (!cs || data.length < 50) return;
+
+    // Clear old S/R price lines
+    for (const line of srLinesRef.current) {
+      try { cs.removePriceLine(line); } catch { /* ok */ }
+    }
+    srLinesRef.current = [];
+
+    // Clear old markers
+    try { (cs as any).setMarkers([]); } catch { /* v5 compat */ }
+
+    const swings = detectSwingPoints(data, 5);
+
+    // --- Swing point markers ---
+    if (indicators.swings?.visible && swings.length > 0) {
+      const markers: Array<{ time: any; position: any; color: string; shape: any; text: string; size: number }> = [];
+      for (const s of swings) {
+        markers.push({
+          time: s.time as import('lightweight-charts').Time,
+          position: s.type === 'high' ? 'aboveBar' : 'belowBar',
+          color: s.type === 'high' ? 'rgba(239,68,68,0.7)' : 'rgba(34,197,94,0.7)',
+          shape: s.type === 'high' ? 'arrowDown' : 'arrowUp',
+          text: s.type === 'high' ? 'H' : 'L',
+          size: 1,
+        });
+      }
+      try { (cs as any).setMarkers(markers); } catch { /* v5 compat */ }
+    }
+
+    // --- Support / Resistance levels ---
+    if (indicators.sr?.visible) {
+      const levels = clusterSRLevels(swings, 0.5);
+      const supportLevels = levels.filter(l => l.type === 'support').slice(0, 5);
+      const resistanceLevels = levels.filter(l => l.type === 'resistance').slice(0, 5);
+
+      for (const lvl of [...supportLevels, ...resistanceLevels]) {
+        try {
+          const isSupport = lvl.type === 'support';
+          const line = cs.createPriceLine({
+            price: lvl.price,
+            color: isSupport ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.6)',
+            lineWidth: Math.max(1, Math.round(lvl.strength * 2.5)),
+            lineStyle: 2, // dashed
+            axisLabelVisible: true,
+            title: `${isSupport ? 'S' : 'R'} (${lvl.touches})`,
+          });
+          srLinesRef.current.push(line);
+        } catch { /* ok */ }
+      }
+    }
   }, [data, indicators, symbol]);
 
   return (
