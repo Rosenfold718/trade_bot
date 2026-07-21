@@ -80,4 +80,4 @@ Caddyfile
 worklog.md
 
 # Bun
-bun.lock
+bun.lock/upload/
