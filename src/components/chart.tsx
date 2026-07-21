@@ -3,19 +3,37 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { CandleData, Trade } from '@/lib/types';
 
+export interface IndicatorConfig {
+  id: string;
+  label: string;
+  color: string;
+  lineWidth: number;
+  visible: boolean;
+}
+
+export const DEFAULT_INDICATORS: Record<string, IndicatorConfig> = {
+  sma7:  { id: 'sma7',  label: 'SMA 7',  color: '#f59e0b', lineWidth: 1, visible: true },
+  sma25: { id: 'sma25', label: 'SMA 25', color: '#3b82f6', lineWidth: 1, visible: true },
+  sma99: { id: 'sma99', label: 'SMA 99', color: '#a855f7', lineWidth: 1, visible: false },
+  ema12: { id: 'ema12', label: 'EMA 12', color: '#06b6d4', lineWidth: 1, visible: true },
+  ema26: { id: 'ema26', label: 'EMA 26', color: '#ec4899', lineWidth: 1, visible: false },
+  bb:    { id: 'bb',    label: 'BB 20',   color: 'rgba(148,163,184,0.5)', lineWidth: 1, visible: true },
+};
+
 interface TradingChartProps {
   data: CandleData[];
   symbol: string;
   timeframe: { label: string; interval: string };
   openTrades?: Trade[];
   recentTrades?: Trade[];
+  indicators: Record<string, IndicatorConfig>;
 }
 
 // ============================================================
 // Helpers
 // ============================================================
 
-function fmtPrice(price: number): string {
+export function fmtPrice(price: number): string {
   if (price >= 10000) return price.toFixed(1);
   if (price >= 100) return price.toFixed(2);
   if (price >= 1) return price.toFixed(3);
@@ -82,31 +100,10 @@ function calcBollingerBands(
 }
 
 // ============================================================
-// Indicator config
+// Chart Component — no UI controls, pure chart
 // ============================================================
 
-interface IndicatorConfig {
-  id: string;
-  label: string;
-  color: string;
-  lineWidth: number;
-  visible: boolean;
-}
-
-const DEFAULT_INDICATORS: Record<string, IndicatorConfig> = {
-  sma7:  { id: 'sma7',  label: 'SMA 7',  color: '#f59e0b', lineWidth: 1, visible: true },
-  sma25: { id: 'sma25', label: 'SMA 25', color: '#3b82f6', lineWidth: 1, visible: true },
-  sma99: { id: 'sma99', label: 'SMA 99', color: '#a855f7', lineWidth: 1, visible: false },
-  ema12: { id: 'ema12', label: 'EMA 12', color: '#06b6d4', lineWidth: 1, visible: true },
-  ema26: { id: 'ema26', label: 'EMA 26', color: '#ec4899', lineWidth: 1, visible: false },
-  bb:    { id: 'bb',    label: 'BB 20',   color: 'rgba(148,163,184,0.5)', lineWidth: 1, visible: true },
-};
-
-// ============================================================
-// Chart Component
-// ============================================================
-
-export default function TradingChart({ data, symbol, timeframe, openTrades, recentTrades }: TradingChartProps) {
+export default function TradingChart({ data, symbol, timeframe, openTrades, recentTrades, indicators }: TradingChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
   const candleSeriesRef = useRef<any>(null);
@@ -115,27 +112,9 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
   const priceLinesRef = useRef<any[]>([]);
   const indicatorSeriesRef = useRef<Map<string, any>>(new Map());
   const [mounted, setMounted] = useState(false);
-  const [indicators, setIndicators] = useState<Record<string, IndicatorConfig>>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const saved = localStorage.getItem('chart-indicators');
-        if (saved) return { ...DEFAULT_INDICATORS, ...JSON.parse(saved) };
-      } catch { /* ignore */ }
-    }
-    return { ...DEFAULT_INDICATORS };
-  });
 
   useEffect(() => { dataRef.current = data; }, [data]);
   useEffect(() => { setMounted(true); }, []);
-
-  // Persist indicator visibility
-  useEffect(() => {
-    try { localStorage.setItem('chart-indicators', JSON.stringify(indicators)); } catch { /* ignore */ }
-  }, [indicators]);
-
-  const toggleIndicator = useCallback((id: string) => {
-    setIndicators(prev => ({ ...prev, [id]: { ...prev[id], visible: !prev[id].visible } }));
-  }, []);
 
   const applyData = useCallback((
     cs: any, vs: any, candles: CandleData[], chart: any,
@@ -165,7 +144,6 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
       candleSeriesRef.current = null;
       volumeSeriesRef.current = null;
 
-      // Dynamic price format based on candle data
       const priceFmt = getPriceFormat(dataRef.current);
 
       const chart = createChart(container, {
@@ -271,7 +249,6 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
     import('lightweight-charts').then(({ LineSeries }) => {
       if (cancelled) return;
 
-      // Remove all existing indicator series
       for (const [, series] of indicatorSeriesRef.current) {
         try { chart.removeSeries(series); } catch { /* ok */ }
       }
@@ -279,7 +256,6 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
 
       const priceFmt = getPriceFormat(data);
 
-      // Helper to add a line series
       const addIndicatorLine = (
         id: string, values: Array<{ time: number; value: number }>,
         color: string, lineWidth: number, lineStyle?: number,
@@ -302,27 +278,11 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
         }
       };
 
-      // SMA 7
-      if (indicators.sma7?.visible) {
-        addIndicatorLine('sma7', calcSMA(data, 7), indicators.sma7.color, indicators.sma7.lineWidth);
-      }
-      // SMA 25
-      if (indicators.sma25?.visible) {
-        addIndicatorLine('sma25', calcSMA(data, 25), indicators.sma25.color, indicators.sma25.lineWidth);
-      }
-      // SMA 99
-      if (indicators.sma99?.visible) {
-        addIndicatorLine('sma99', calcSMA(data, 99), indicators.sma99.color, indicators.sma99.lineWidth);
-      }
-      // EMA 12
-      if (indicators.ema12?.visible) {
-        addIndicatorLine('ema12', calcEMA(data, 12), indicators.ema12.color, indicators.ema12.lineWidth);
-      }
-      // EMA 26
-      if (indicators.ema26?.visible) {
-        addIndicatorLine('ema26', calcEMA(data, 26), indicators.ema26.color, indicators.ema26.lineWidth);
-      }
-      // Bollinger Bands
+      if (indicators.sma7?.visible) addIndicatorLine('sma7', calcSMA(data, 7), indicators.sma7.color, indicators.sma7.lineWidth);
+      if (indicators.sma25?.visible) addIndicatorLine('sma25', calcSMA(data, 25), indicators.sma25.color, indicators.sma25.lineWidth);
+      if (indicators.sma99?.visible) addIndicatorLine('sma99', calcSMA(data, 99), indicators.sma99.color, indicators.sma99.lineWidth);
+      if (indicators.ema12?.visible) addIndicatorLine('ema12', calcEMA(data, 12), indicators.ema12.color, indicators.ema12.lineWidth);
+      if (indicators.ema26?.visible) addIndicatorLine('ema26', calcEMA(data, 26), indicators.ema26.color, indicators.ema26.lineWidth);
       if (indicators.bb?.visible) {
         const bb = calcBollingerBands(data, 20, 2);
         addIndicatorLine('bb-upper', bb.upper, indicators.bb.color, indicators.bb.lineWidth, 2);
@@ -330,31 +290,11 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
       }
     });
 
-    return () => {
-      cancelled = true;
-      // Cleanup handled by chart removal on symbol change
-    };
+    return () => { cancelled = true; };
   }, [data, indicators, symbol]);
 
   return (
-    <div className="w-full h-full min-h-[300px] relative z-0">
-      {/* Indicator toggles */}
-      <div className="absolute bottom-2 left-3 z-10 flex items-center gap-1 flex-wrap">
-        {Object.values(indicators).map(ind => (
-          <button
-            key={ind.id}
-            onClick={() => toggleIndicator(ind.id)}
-            className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-medium border transition-all duration-150 ${
-              ind.visible
-                ? 'border-white/20 bg-white/10 text-white/80'
-                : 'border-white/5 bg-white/[0.02] text-white/25 hover:text-white/40'
-            }`}
-          >
-            <span className="inline-block w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: ind.visible ? ind.color : 'rgba(255,255,255,0.15)' }} />
-            {ind.label}
-          </button>
-        ))}
-      </div>
+    <div className="w-full h-full min-h-[300px]">
       <div ref={chartContainerRef} className="w-full h-full" />
     </div>
   );

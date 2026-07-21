@@ -1,16 +1,15 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { useTerminalStore } from '@/lib/store';
 import CoinList from '@/components/coin-list';
 import TradingDashboard from '@/components/trading-dashboard';
 import ControlPanel from '@/components/control-panel';
 import OrderBook from '@/components/order-book';
-// Trade details are shown inline on the chart when clicking a trade
-import type { CandleData, TraderState, Trade, IndicatorWeight, BacktestResult } from '@/lib/types';
+import { DEFAULT_INDICATORS, type IndicatorConfig } from '@/components/chart';
+import type { CandleData, TraderState, Trade, IndicatorWeight } from '@/lib/types';
 
-// Dynamic import with ssr: false — lightweight-charts requires browser DOM APIs
 const TradingChart = dynamic(() => import('@/components/chart'), {
   ssr: false,
   loading: () => (
@@ -54,16 +53,34 @@ export default function Home() {
 
   const [candles, setCandles] = useState<CandleData[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
-  const [timeframe, setTimeframe] = useState<Timeframe>(TIMEFRAMES[3]); // default 1H
-  // Track which trade is focused (for inline info panel)
+  const [timeframe, setTimeframe] = useState<Timeframe>(TIMEFRAMES[3]);
   const [focusedTradeId, setFocusedTradeId] = useState<string | null>(null);
+
+  // Indicator state — lifted from chart
+  const [indicators, setIndicators] = useState<Record<string, IndicatorConfig>>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('chart-indicators');
+        if (saved) return { ...DEFAULT_INDICATORS, ...JSON.parse(saved) };
+      } catch { /* ignore */ }
+    }
+    return { ...DEFAULT_INDICATORS };
+  });
+
+  const toggleIndicator = useCallback((id: string) => {
+    setIndicators(prev => ({ ...prev, [id]: { ...prev[id], visible: !prev[id].visible } }));
+  }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem('chart-indicators', JSON.stringify(indicators)); } catch { /* ignore */ }
+  }, [indicators]);
+
   const initDone = useRef(false);
   const weightsRef = useRef(weights);
   const openTradesRef = useRef(openTrades);
   weightsRef.current = weights;
   openTradesRef.current = openTrades;
 
-  // Initialize app data
   const initData = useCallback(async () => {
     if (initDone.current) return;
     initDone.current = true;
@@ -80,18 +97,15 @@ export default function Home() {
     }
   }, [setTraderState, setWeights, setOpenTrades, setRecentTrades]);
 
-  useEffect(() => {
-    initData();
-  }, [initData]);
+  useEffect(() => { initData(); }, [initData]);
 
-  // Fetch klines directly from Binance client-side (Vercel serverless blocks api.binance.com)
   const fetchCandles = useCallback(async (symbol: string, tf: Timeframe) => {
     setChartLoading(true);
     try {
       const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${tf.interval}&limit=${tf.limit}`);
       const raw = await res.json();
       if (Array.isArray(raw) && raw.length > 0) {
-        const candles: CandleData[] = raw.map((k: (string | number)[]) => ({
+        const c: CandleData[] = raw.map((k: (string | number)[]) => ({
           time: Math.floor(Number(k[0]) / 1000),
           open: parseFloat(String(k[1])),
           high: parseFloat(String(k[2])),
@@ -99,7 +113,7 @@ export default function Home() {
           close: parseFloat(String(k[4])),
           volume: parseFloat(String(k[5])),
         }));
-        setCandles(candles);
+        setCandles(c);
       }
     } catch (err) {
       console.error('Klines error:', err);
@@ -108,13 +122,11 @@ export default function Home() {
     }
   }, []);
 
-  // Re-fetch when symbol or timeframe changes
   useEffect(() => {
     setCandles([]);
     fetchCandles(selectedSymbol, timeframe);
   }, [selectedSymbol, timeframe, fetchCandles]);
 
-  // Auto-refresh trades periodically
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
@@ -123,37 +135,28 @@ export default function Home() {
         if (data.state) setTraderState(data.state as TraderState);
         if (data.openTrades) setOpenTrades(data.openTrades as Trade[]);
         if (data.recentTrades) setRecentTrades(data.recentTrades as Trade[]);
-      } catch {
-        // silent
-      }
+      } catch { /* silent */ }
     }, 15000);
     return () => clearInterval(interval);
   }, [setTraderState, setOpenTrades, setRecentTrades]);
 
-  // Auto-trading loop: fully client-side (Binance CORS works from browser)
+  // Auto-trading loop
   useEffect(() => {
     if (!autoTrading) return;
-
     let cancelled = false;
 
     const runCycle = async () => {
       if (cancelled) return;
       try {
-        // Build weights map
         const wMap: Record<string, number> = {};
         for (const w of weightsRef.current) wMap[w.indicator_name] = w.weight;
-
         const balance = traderState?.balance ?? 100;
-
-        // Run full cycle client-side
         const { runAutoTradeCycle } = await import('@/lib/client-trader');
         const result = await runAutoTradeCycle(openTradesRef.current, wMap, timeframe.interval, balance);
-
         if (cancelled) return;
         console.log('[AutoTrade]', result.message);
         addLog(result.message, result.action === 'new-trade' ? 'trade' : 'info');
 
-        // Step 1: Close trades that hit TP/SL
         for (const ct of result.closedTrades) {
           const closeRes = await fetch('/api/trader', {
             method: 'POST',
@@ -166,7 +169,6 @@ export default function Home() {
           }
         }
 
-        // Step 2: Open new trade if signal found
         if (result.newTrade) {
           const nt = result.newTrade;
           const openRes = await fetch('/api/trader', {
@@ -174,13 +176,9 @@ export default function Home() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               action: 'open-trade',
-              symbol: nt.symbol,
-              entryPrice: nt.price,
-              amount: nt.amount,
-              leverage: nt.leverage,
-              direction: nt.direction,
-              stopLoss: nt.stopLoss,
-              takeProfit: nt.takeProfit,
+              symbol: nt.symbol, entryPrice: nt.price, amount: nt.amount,
+              leverage: nt.leverage, direction: nt.direction,
+              stopLoss: nt.stopLoss, takeProfit: nt.takeProfit,
             }),
           });
           const openData = await openRes.json();
@@ -191,7 +189,6 @@ export default function Home() {
           }
         }
 
-        // Step 3: Refresh state from DB
         const res = await fetch('/api/trader');
         const data = await res.json();
         if (cancelled) return;
@@ -205,10 +202,8 @@ export default function Home() {
     };
 
     addLog('Авто-трейдинг запущен', 'trade');
-    // Run immediately, then every 30 seconds
     runCycle();
     const interval = setInterval(runCycle, 30000);
-
     return () => {
       cancelled = true;
       clearInterval(interval);
@@ -216,7 +211,7 @@ export default function Home() {
     };
   }, [autoTrading, timeframe.interval, setTraderState, setOpenTrades, setRecentTrades, addLog, traderState?.balance]);
 
-  // Analyze on symbol change — fully client-side
+  // Analyze on symbol change
   useEffect(() => {
     if (candles.length < 50) return;
     let cancelled = false;
@@ -226,12 +221,8 @@ export default function Home() {
         for (const w of weightsRef.current) wMap[w.indicator_name] = w.weight;
         const { analyzeSymbol } = await import('@/lib/client-trader');
         const decision = await analyzeSymbol(selectedSymbol, timeframe.interval, timeframe.limit, wMap);
-        if (!cancelled && decision) {
-          setCurrentAnalysis(decision);
-        }
-      } catch {
-        // silent
-      }
+        if (!cancelled && decision) setCurrentAnalysis(decision);
+      } catch { /* silent */ }
     };
     const timeout = setTimeout(analyze, 300);
     return () => { cancelled = true; clearTimeout(timeout); };
@@ -277,7 +268,7 @@ export default function Home() {
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Panel — Coin List */}
+        {/* Left Panel */}
         <aside className="w-52 shrink-0 overflow-hidden">
           <CoinList />
         </aside>
@@ -287,38 +278,58 @@ export default function Home() {
           {/* Chart + Order Book Row */}
           <div className="flex-1 flex min-h-0">
             {/* Chart Area */}
-            <div className="flex-1 relative min-h-0">
-            {chartLoading && (
-              <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#0d0d14]/60 backdrop-blur-sm">
-                <div className="flex items-center gap-2 text-xs text-white/50">
-                  <div className="w-3 h-3 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
-                  Загрузка графика...
+            <div className="flex-1 relative min-h-0 overflow-hidden" id="chart-area">
+              {chartLoading && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#0d0d14]/60 backdrop-blur-sm">
+                  <div className="flex items-center gap-2 text-xs text-white/50">
+                    <div className="w-3 h-3 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+                    Загрузка графика...
+                  </div>
                 </div>
-              </div>
-            )}
-            {/* Timeframe Selector */}
-            <div className="absolute top-3 left-3 z-10 flex items-center gap-1">
-              <div className="px-2.5 py-1 rounded-md bg-[#1a1a2e]/90 backdrop-blur-sm border border-white/5 mr-1">
-                <span className="text-sm font-semibold text-white/90">{selectedSymbol.replace('USDT', '')}</span>
-                <span className="text-xs text-white/40 ml-1.5">/USDT</span>
-              </div>
-              {TIMEFRAMES.map((tf) => (
-                <button
-                  key={tf.interval}
-                  onClick={() => setTimeframe(tf)}
-                  className={`px-2 py-1 rounded-md text-[11px] font-mono font-medium transition-all duration-150 border
-                    ${timeframe.interval === tf.interval
-                      ? 'bg-white/10 text-white/90 border-white/15'
-                      : 'bg-[#1a1a2e]/70 text-white/40 border-white/5 hover:bg-white/5 hover:text-white/60'
+              )}
+
+              {/* Top bar: Symbol + Timeframes + Indicators */}
+              <div className="absolute top-3 left-3 z-10 flex items-center gap-1 flex-wrap max-w-[calc(100%-2rem)]">
+                <div className="px-2.5 py-1 rounded-md bg-[#1a1a2e]/90 backdrop-blur-sm border border-white/5 mr-1 shrink-0">
+                  <span className="text-sm font-semibold text-white/90">{selectedSymbol.replace('USDT', '')}</span>
+                  <span className="text-xs text-white/40 ml-1.5">/USDT</span>
+                </div>
+                {TIMEFRAMES.map((tf) => (
+                  <button
+                    key={tf.interval}
+                    onClick={() => setTimeframe(tf)}
+                    className={`px-2 py-1 rounded-md text-[11px] font-mono font-medium transition-all duration-150 border shrink-0
+                      ${timeframe.interval === tf.interval
+                        ? 'bg-white/10 text-white/90 border-white/15'
+                        : 'bg-[#1a1a2e]/70 text-white/40 border-white/5 hover:bg-white/5 hover:text-white/60'
+                      }`}
+                  >
+                    {tf.label}
+                  </button>
+                ))}
+                {/* Separator */}
+                <div className="w-px h-4 bg-white/10 mx-0.5 shrink-0" />
+                {/* Indicator toggles */}
+                {Object.values(indicators).map(ind => (
+                  <button
+                    key={ind.id}
+                    onClick={() => toggleIndicator(ind.id)}
+                    className={`px-1.5 py-1 rounded-md text-[9px] font-mono font-medium border transition-all duration-150 shrink-0 ${
+                      ind.visible
+                        ? 'border-white/20 bg-white/10 text-white/80'
+                        : 'border-white/5 bg-white/[0.02] text-white/25 hover:text-white/40'
                     }`}
-                >
-                  {tf.label}
-                </button>
-              ))}
-            </div>
-            <TradingChart data={candles} symbol={selectedSymbol} timeframe={timeframe} openTrades={openTrades} recentTrades={recentTrades} />
-            {/* Inline trade info panel — overlaid on chart */}
-            <InlineTradeInfo focusedTradeId={focusedTradeId} symbol={selectedSymbol} />
+                  >
+                    <span className="inline-block w-1.5 h-1.5 rounded-full mr-1 align-middle" style={{ backgroundColor: ind.visible ? ind.color : 'rgba(255,255,255,0.15)' }} />
+                    {ind.label}
+                  </button>
+                ))}
+              </div>
+
+              <TradingChart data={candles} symbol={selectedSymbol} timeframe={timeframe} openTrades={openTrades} recentTrades={recentTrades} indicators={indicators} />
+
+              {/* Draggable inline trade info panel */}
+              <DraggableTradePanel focusedTradeId={focusedTradeId} symbol={selectedSymbol} />
             </div>
 
             {/* Order Book */}
@@ -329,14 +340,14 @@ export default function Home() {
 
           {/* Bottom Trades Table */}
           <div className="h-44 border-t border-white/5 bg-[#0d0d14] shrink-0 overflow-auto">
-            <TradesTable openTrades={openTrades} recentTrades={recentTrades} onSelectTrade={(trade) => {
-            setSelectedSymbol(trade.symbol);
-            setFocusedTradeId(trade.id);
-          }} />
+            <TradesTable openTrades={openTrades} recentTrades={recentTrades} coins={coins} onSelectTrade={(trade) => {
+              setSelectedSymbol(trade.symbol);
+              setFocusedTradeId(trade.id);
+            }} />
           </div>
         </main>
 
-        {/* Right Panel — Dashboard + Controls */}
+        {/* Right Panel */}
         <aside className="w-72 shrink-0 overflow-y-auto border-l border-white/5">
           <TradingDashboard />
           <ActivityLog />
@@ -349,8 +360,19 @@ export default function Home() {
   );
 }
 
-function TradesTable({ openTrades, recentTrades, onSelectTrade }: { openTrades: Trade[]; recentTrades: Trade[]; onSelectTrade: (trade: Trade) => void }) {
-  const allTrades = [...openTrades, ...recentTrades.filter(t => t.status === 'closed')].slice(0, 30);
+// ============================================================
+// TradesTable with live PnL
+// ============================================================
+
+function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
+  openTrades: Trade[]; recentTrades: Trade[]; coins: Array<{ symbol: string; price: number }>;
+  onSelectTrade: (trade: Trade) => void;
+}) {
+  const allTrades = useMemo(
+    () => [...openTrades, ...recentTrades.filter(t => t.status === 'closed')].slice(0, 30),
+    [openTrades, recentTrades],
+  );
+
   if (allTrades.length === 0) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -377,7 +399,20 @@ function TradesTable({ openTrades, recentTrades, onSelectTrade }: { openTrades: 
         <tbody>
           {allTrades.map((trade) => {
             const isLong = trade.direction === 'long';
-            const pnl = trade.pnl;
+            const isOpen = trade.status === 'open';
+
+            // Calculate live PnL for open trades
+            let displayPnl = trade.pnl;
+            if (isOpen) {
+              const livePrice = coins.find(c => c.symbol === trade.symbol)?.price;
+              if (livePrice && livePrice > 0) {
+                const priceChange = isLong
+                  ? (livePrice - trade.entry_price) / trade.entry_price
+                  : (trade.entry_price - livePrice) / trade.entry_price;
+                displayPnl = trade.amount * priceChange * trade.leverage;
+              }
+            }
+
             return (
               <tr
                 key={trade.id}
@@ -405,17 +440,19 @@ function TradesTable({ openTrades, recentTrades, onSelectTrade }: { openTrades: 
                 <td className="py-1.5 px-2 text-right font-mono text-white/50">{trade.leverage ?? '—'}x</td>
                 <td className="py-1.5 px-2 text-right font-mono text-white/60">${typeof trade.amount === 'number' ? trade.amount.toFixed(2) : '—'}</td>
                 <td className={`py-1.5 px-2 text-right font-mono font-bold ${
-                  pnl == null ? 'text-white/30' : pnl >= 0 ? 'text-green-400' : 'text-red-400'
+                  displayPnl == null ? 'text-white/30' : displayPnl >= 0 ? 'text-green-400' : 'text-red-400'
                 }`}>
-                  {pnl != null && typeof pnl === 'number' ? `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}` : '—'}
+                  {displayPnl != null && typeof displayPnl === 'number'
+                    ? `${displayPnl >= 0 ? '+' : ''}$${displayPnl.toFixed(2)}`
+                    : '—'}
                 </td>
                 <td className="py-1.5 px-2 text-center">
                   <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${
-                    trade.status === 'open'
+                    isOpen
                       ? 'bg-yellow-500/10 text-yellow-400/80 border border-yellow-500/20'
                       : 'bg-white/5 text-white/40 border border-white/10'
                   }`}>
-                    {trade.status === 'open' ? 'OPEN' : 'CLOSED'}
+                    {isOpen ? 'OPEN' : 'CLOSED'}
                   </span>
                 </td>
               </tr>
@@ -426,6 +463,10 @@ function TradesTable({ openTrades, recentTrades, onSelectTrade }: { openTrades: 
     </div>
   );
 }
+
+// ============================================================
+// Activity Log
+// ============================================================
 
 function ActivityLog() {
   const { activityLog } = useTerminalStore();
@@ -455,7 +496,11 @@ function ActivityLog() {
   );
 }
 
-function fmtPriceInline(price: number): string {
+// ============================================================
+// Price formatter
+// ============================================================
+
+function fmtP(price: number): string {
   if (price >= 10000) return price.toFixed(1);
   if (price >= 100) return price.toFixed(2);
   if (price >= 1) return price.toFixed(3);
@@ -463,27 +508,80 @@ function fmtPriceInline(price: number): string {
   return price.toFixed(7);
 }
 
-function InlineTradeInfo({ focusedTradeId, symbol }: { focusedTradeId: string | null; symbol: string }) {
+// ============================================================
+// Draggable Trade Info Panel
+// ============================================================
+
+function DraggableTradePanel({ focusedTradeId, symbol }: { focusedTradeId: string | null; symbol: string }) {
   const { openTrades, recentTrades, coins } = useTerminalStore();
+  const panelRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ startX: number; startY: number; startLeft: number; startTop: number } | null>(null);
+  const containerRef = useRef<HTMLElement | null>(null);
 
-  // Find the focused trade
-  const allTrades = [...openTrades, ...recentTrades];
+  const [pos, setPos] = useState({ x: 8, y: 36 });
+  const [isDragging, setIsDragging] = useState(false);
+
+  // Get container ref
+  useEffect(() => {
+    containerRef.current = document.getElementById('chart-area');
+  }, []);
+
+  // Find the active trade — all hooks above early return
+  const allTrades = useMemo(() => [...openTrades, ...recentTrades], [openTrades, recentTrades]);
   const trade = focusedTradeId ? allTrades.find(t => t.id === focusedTradeId) : null;
-
-  // If no focused trade but there are open trades on this symbol, show the first one
   const symbolTrades = openTrades.filter(t => t.symbol === symbol && t.status === 'open');
   const activeTrade = trade ?? (symbolTrades.length > 0 ? symbolTrades[0] : null);
 
+  // Drag handlers (before early return)
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+    dragRef.current = { startX: e.clientX, startY: e.clientY, startLeft: pos.x, startTop: pos.y };
+  }, [pos]);
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!dragRef.current || !containerRef.current) return;
+      const dx = e.clientX - dragRef.current.startX;
+      const dy = e.clientY - dragRef.current.startY;
+
+      const container = containerRef.current;
+      const rect = container.getBoundingClientRect();
+      const panelW = panelRef.current?.offsetWidth ?? 208;
+      const panelH = panelRef.current?.offsetHeight ?? 200;
+
+      const maxX = rect.width - panelW - 4;
+      const maxY = rect.height - panelH - 4;
+      const newX = Math.max(4, Math.min(maxX, dragRef.current.startLeft - dx));
+      const newY = Math.max(4, Math.min(maxY, dragRef.current.startTop + dy));
+
+      setPos({ x: newX, y: newY });
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+      dragRef.current = null;
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging]);
+
+  // Early return after all hooks
   if (!activeTrade) return null;
 
   const isLong = activeTrade.direction === 'long';
   const isOpen = activeTrade.status === 'open';
 
-  // Live price from coins WebSocket
   const coinData = coins.find(c => c.symbol === activeTrade.symbol);
   const livePrice = coinData?.price ?? (activeTrade.exit_price ?? activeTrade.entry_price ?? 0);
 
-  // Live PnL
   let livePnl = 0;
   if (isOpen && livePrice > 0) {
     const priceChange = isLong
@@ -494,7 +592,6 @@ function InlineTradeInfo({ focusedTradeId, symbol }: { focusedTradeId: string | 
     livePnl = activeTrade.pnl;
   }
 
-  // Duration
   const openTime = new Date(activeTrade.opened_at).getTime();
   const endTime = activeTrade.closed_at ? new Date(activeTrade.closed_at).getTime() : Date.now();
   const diffMin = Math.floor((endTime - openTime) / 60000);
@@ -502,7 +599,6 @@ function InlineTradeInfo({ focusedTradeId, symbol }: { focusedTradeId: string | 
   const mins = diffMin % 60;
   const durationStr = hours > 0 ? `${hours}ч ${mins}м` : `${mins}м`;
 
-  // Distance to TP/SL
   let distTP = 0, distSL = 0;
   if (isOpen) {
     distTP = isLong
@@ -514,9 +610,21 @@ function InlineTradeInfo({ focusedTradeId, symbol }: { focusedTradeId: string | 
   }
 
   return (
-    <div className="absolute top-3 right-3 z-20 w-52 bg-[#0d0d14]/95 backdrop-blur-md border border-white/10 rounded-lg overflow-hidden pointer-events-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
+    <div
+      ref={panelRef}
+      className="absolute z-20 w-52 bg-[#0d0d14]/95 backdrop-blur-md border border-white/10 rounded-lg overflow-hidden"
+      style={{
+        top: pos.y,
+        right: pos.x,
+        cursor: isDragging ? 'grabbing' : 'default',
+        userSelect: isDragging ? 'none' : 'auto',
+      }}
+    >
+      {/* Draggable header */}
+      <div
+        className="flex items-center justify-between px-3 py-2 border-b border-white/5 cursor-grab active:cursor-grabbing"
+        onMouseDown={handleMouseDown}
+      >
         <div className="flex items-center gap-2">
           <span className={`text-xs font-bold ${isLong ? 'text-green-400' : 'text-red-400'}`}>
             {isLong ? '▲ LONG' : '▼ SHORT'}
@@ -534,9 +642,8 @@ function InlineTradeInfo({ focusedTradeId, symbol }: { focusedTradeId: string | 
         </span>
       </div>
 
-      {/* Rows */}
+      {/* Content */}
       <div className="px-3 py-2 space-y-1.5">
-        {/* Live PnL */}
         <div className="flex items-center justify-between">
           <span className="text-[10px] text-white/40">PnL</span>
           <span className={`text-xs font-mono font-bold ${livePnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
@@ -545,22 +652,22 @@ function InlineTradeInfo({ focusedTradeId, symbol }: { focusedTradeId: string | 
         </div>
         <div className="flex items-center justify-between">
           <span className="text-[10px] text-white/40">Текущая цена</span>
-          <span className="text-[10px] font-mono text-white/70">${fmtPriceInline(livePrice)}</span>
+          <span className="text-[10px] font-mono text-white/70">${fmtP(livePrice)}</span>
         </div>
         <div className="flex items-center justify-between">
           <span className="text-[10px] text-white/40">Вход</span>
-          <span className="text-[10px] font-mono text-white/60">${fmtPriceInline(activeTrade.entry_price)}</span>
+          <span className="text-[10px] font-mono text-white/60">${fmtP(activeTrade.entry_price)}</span>
         </div>
         {isOpen && activeTrade.take_profit != null && (
           <div className="flex items-center justify-between">
             <span className="text-[10px] text-green-400/60">TP ({distTP >= 0 ? '+' : ''}{distTP.toFixed(1)}%)</span>
-            <span className="text-[10px] font-mono text-green-400/80">${fmtPriceInline(activeTrade.take_profit)}</span>
+            <span className="text-[10px] font-mono text-green-400/80">${fmtP(activeTrade.take_profit)}</span>
           </div>
         )}
         {isOpen && activeTrade.stop_loss != null && (
           <div className="flex items-center justify-between">
             <span className="text-[10px] text-red-400/60">SL ({distSL <= 0 ? '' : '+'}{distSL.toFixed(1)}%)</span>
-            <span className="text-[10px] font-mono text-red-400/80">${fmtPriceInline(activeTrade.stop_loss)}</span>
+            <span className="text-[10px] font-mono text-red-400/80">${fmtP(activeTrade.stop_loss)}</span>
           </div>
         )}
         <div className="flex items-center justify-between">

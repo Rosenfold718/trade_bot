@@ -69,7 +69,7 @@ export async function findBestSignal(
   const symbols = TOP_50_SYMBOLS;
   const available = symbols.filter(s => !openTradeSymbols.has(s));
   // Shuffle and check more symbols for better signal detection
-  const checkSymbols = available.sort(() => Math.random() - 0.5).slice(0, 20);
+  const checkSymbols = available.sort(() => Math.random() - 0.5).slice(0, 10);
 
   let best: { decision: TradingDecision; price: number; symbol: string } | null = null;
   let bestScore = 0;
@@ -179,7 +179,7 @@ export async function runAutoTradeCycle(
 
   const best = await findBestSignal(weights, openSymbols, interval, limit);
   if (!best || best.decision.direction === 'none') {
-    return { action: 'idle', closedTrades: [], message: 'Сигналов не найдено, сканирую...', scannedCount: 20, bestScore: 0 };
+    return { action: 'idle', closedTrades: [], message: 'Сигналов не найдено, сканирую...', scannedCount: 10, bestScore: 0 };
   }
 
   // Trade amount: scale with balance — 10% per trade, min $3, max $20
@@ -198,7 +198,7 @@ export async function runAutoTradeCycle(
       amount: tradeAmount,
     },
     message: `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${best.symbol.replace('USDT', '')} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x | Score: ${best.decision.score.toFixed(2)}`,
-    scannedCount: 20,
+    scannedCount: 10,
     bestScore: Math.abs(best.decision.score),
   };
 }
