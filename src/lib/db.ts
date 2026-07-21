@@ -1,7 +1,7 @@
 import { createClient, type Client } from '@libsql/client';
 
-const TURSO_URL = process.env.TURSO_DATABASE_URL || 'libsql://trade-rosenfold718.aws-ap-northeast-1.turso.io';
-const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN || 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MTU5ODM4MTQsImlhdCI6MTc4NDQ0NzgxNCwiaWQiOiIwMTlmNzk2MC02ZjAxLTdjMGItYjMwOS1kZTAxYzA3MDYzYTAiLCJraWQiOiJxYXJ0VlRNdGJpazJHbTUxUkZkWURUVkg5TXMwQnZObkx3THBiRkFuRFZBIiwicmlkIjoiNzE5MzdkMjUtNmYyYi00MzZmLTgyMDctOGRhZjQ3YzhmNDE5In0.fhSQ5C5OpQmXizpNPZc9DFRNICHBNNmmT5DySujkpXW1xsupvhpsy-yTU84dmNz62Rd1Ur4gsL_itAVebTArDA';
+const TURSO_URL = process.env.TURSO_DATABASE_URL!;
+const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN!;
 
 export const db: Client = createClient({
   url: TURSO_URL,
