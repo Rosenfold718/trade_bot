@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, openTrade, closeTrade, updateBalance, repayDebt } from '@/lib/db';
+import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, openTrade, closeTrade, updateStopLoss, updateBalance, repayDebt } from '@/lib/db';
 import { fetchKlines, makeTradingDecision, fetchTopSymbols } from '@/lib/trading-engine';
 
 export async function GET() {
@@ -109,6 +109,12 @@ export async function POST(request: NextRequest) {
       await updateBalance(newBalance);
 
       return NextResponse.json({ success: true, pnl, newBalance });
+    }
+
+    if (action === 'update-sl') {
+      const { tradeId, newStopLoss } = body as { tradeId: string; newStopLoss: number };
+      await updateStopLoss(tradeId, newStopLoss);
+      return NextResponse.json({ success: true });
     }
 
     if (action === 'monitor-trades') {

@@ -387,23 +387,63 @@ export function makeTradingDecision(
   const price = closes[closes.length - 1];
   const atr = calcATR(candles);
 
+  // ============================================================
+  // POINT 1: ADX regime filter — skip if market is ranging (ADX < 20)
+  // ============================================================
+  const adxResult = calcADX(candles);
+  if (adxResult.adx < 20) {
+    // Market is choppy/ranging — don't trade
+    return {
+      symbol,
+      direction: 'none',
+      score: 0,
+      leverage: 1,
+      stopLoss: 0,
+      takeProfit: 0,
+      indicators,
+    };
+  }
+
   let longScore = 0;
   let shortScore = 0;
+  let longCount = 0;  // POINT 3: count agreeing indicators
+  let shortCount = 0;
 
   for (const ind of indicators) {
     const w = weights[ind.name] ?? 1;
     if (ind.signal > 0) {
       longScore += ind.strength * w;
+      longCount++;
     } else if (ind.signal < 0) {
       shortScore += ind.strength * w;
+      shortCount++;
     }
   }
 
-  const OPEN_THRESHOLD = 0.15; // Aggressive threshold — trade often
+  const OPEN_THRESHOLD = 0.15;
   const absLongScore = Math.abs(longScore);
   const absShortScore = Math.abs(shortScore);
   const maxScore = Math.max(absLongScore, absShortScore);
 
+  // ============================================================
+  // POINT 3: Confluence filter — require ≥5 indicators to agree
+  // ============================================================
+  const bestCount = Math.max(longCount, shortCount);
+  if (bestCount < 5) {
+    return {
+      symbol,
+      direction: 'none',
+      score: maxScore,
+      leverage: 1,
+      stopLoss: 0,
+      takeProfit: 0,
+      indicators,
+    };
+  }
+
+  // ============================================================
+  // POINT 2: Removed sub-threshold fallback — only trade with real signals
+  // ============================================================
   let direction: 'long' | 'short' | 'none' = 'none';
   let score = 0;
 
@@ -413,24 +453,15 @@ export function makeTradingDecision(
   } else if (absShortScore >= OPEN_THRESHOLD && absShortScore > absLongScore) {
     direction = 'short';
     score = shortScore;
-  } else if (maxScore > 0.02) {
-    // Sub-threshold fallback: still trade if there's any directional bias
-    // (avoids infinite idle when market is slightly directional)
-    if (absLongScore >= absShortScore) {
-      direction = 'long';
-      score = longScore;
-    } else {
-      direction = 'short';
-      score = shortScore;
-    }
   }
+  // No more fallback at score > 0.02
 
   // Leverage based on signal strength (1x to 10x), lower for weak signals
   const leverage = direction === 'none' ? 1 : Math.min(10, Math.max(1, Math.round(maxScore * 3)));
 
   // Stop loss and take profit based on ATR
-  const stopLossPercent = atr / price; // e.g., 0.02 for 2%
-  const takeProfitPercent = stopLossPercent * 2; // 1:2 risk/reward
+  const stopLossPercent = atr / price;
+  const takeProfitPercent = stopLossPercent * 2.5; // Improved: 1:2.5 risk/reward
 
   const stopLoss = direction === 'long'
     ? price * (1 - stopLossPercent)

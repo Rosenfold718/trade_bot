@@ -169,6 +169,18 @@ export default function Home() {
           }
         }
 
+        // Apply trailing stop updates
+        for (const tu of result.trailingUpdates ?? []) {
+          try {
+            await fetch('/api/trader', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'update-sl', tradeId: tu.tradeId, newStopLoss: tu.newStopLoss }),
+            });
+            addLog(`Trailing SL ${tu.reason}: ${tu.tradeId.slice(0, 8)}`, 'info');
+          } catch { /* silent */ }
+        }
+
         if (result.newTrade) {
           const nt = result.newTrade;
           const openRes = await fetch('/api/trader', {
@@ -373,6 +385,22 @@ function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
     [openTrades, recentTrades],
   );
 
+  // Calculate total unrealized PnL for open trades
+  const totalOpenPnl = useMemo(() => {
+    let total = 0;
+    for (const trade of openTrades) {
+      if (trade.status !== 'open') continue;
+      const livePrice = coins.find(c => c.symbol === trade.symbol)?.price;
+      if (!livePrice || livePrice <= 0) continue;
+      const isLong = trade.direction === 'long';
+      const priceChange = isLong
+        ? (livePrice - trade.entry_price) / trade.entry_price
+        : (trade.entry_price - livePrice) / trade.entry_price;
+      total += trade.amount * priceChange * trade.leverage;
+    }
+    return total;
+  }, [openTrades, coins]);
+
   if (allTrades.length === 0) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -382,21 +410,22 @@ function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
   }
 
   return (
-    <div className="h-full overflow-auto">
-      <table className="w-full text-[11px]">
-        <thead className="sticky top-0 bg-[#0d0d14] z-10">
-          <tr className="text-white/35 border-b border-white/5">
-            <th className="text-left font-medium py-2 px-3">Символ</th>
-            <th className="text-left font-medium py-2 px-2">Напр.</th>
-            <th className="text-right font-medium py-2 px-2">Вход</th>
-            <th className="text-right font-medium py-2 px-2">Выход</th>
-            <th className="text-right font-medium py-2 px-2">Плечо</th>
-            <th className="text-right font-medium py-2 px-2">Объем</th>
-            <th className="text-right font-medium py-2 px-2">PnL</th>
-            <th className="text-center font-medium py-2 px-2">Статус</th>
-          </tr>
-        </thead>
-        <tbody>
+    <div className="h-full flex flex-col">
+      <div className="flex-1 overflow-auto">
+        <table className="w-full text-[11px]">
+          <thead className="sticky top-0 bg-[#0d0d14] z-10">
+            <tr className="text-white/35 border-b border-white/5">
+              <th className="text-left font-medium py-2 px-3">Символ</th>
+              <th className="text-left font-medium py-2 px-2">Напр.</th>
+              <th className="text-right font-medium py-2 px-2">Вход</th>
+              <th className="text-right font-medium py-2 px-2">Выход</th>
+              <th className="text-right font-medium py-2 px-2">Плечо</th>
+              <th className="text-right font-medium py-2 px-2">Объем</th>
+              <th className="text-right font-medium py-2 px-2">PnL</th>
+              <th className="text-center font-medium py-2 px-2">Статус</th>
+            </tr>
+          </thead>
+          <tbody>
           {allTrades.map((trade) => {
             const isLong = trade.direction === 'long';
             const isOpen = trade.status === 'open';
@@ -460,6 +489,18 @@ function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
           })}
         </tbody>
       </table>
+      </div>
+      {/* Total Open PnL Summary */}
+      {openTrades.length > 0 && (
+        <div className="shrink-0 border-t border-white/10 bg-[#0d0d14] px-3 py-1.5 flex items-center justify-between">
+          <span className="text-[10px] text-white/40 font-mono">
+            Открыто: {openTrades.length}
+          </span>
+          <span className={`text-xs font-mono font-bold ${totalOpenPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+            PnL: {totalOpenPnl >= 0 ? '+' : ''}${totalOpenPnl.toFixed(2)}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

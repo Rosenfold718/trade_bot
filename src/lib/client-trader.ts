@@ -79,7 +79,33 @@ export async function findBestSignal(
       const candles = await fetchCandlesClient(sym, interval, limit);
       if (candles.length < 50) continue;
       const decision = makeTradingDecision(sym, candles, weights, 0);
-      if (decision.direction !== 'none' && Math.abs(decision.score) > bestScore) {
+      if (decision.direction === 'none') continue;
+
+      // ============================================================
+      // POINT 4: Multi-timeframe filter — 4H EMA 50 trend must align
+      // ============================================================
+      try {
+        const h4candles = await fetchCandlesClient(sym, '4h', 200);
+        if (h4candles.length >= 50) {
+          const ema50 = calcEMA50(h4candles.map(c => c.close), 50);
+          const h4price = h4candles[h4candles.length - 1].close;
+          if (!isNaN(ema50)) {
+            const h4Bullish = h4price > ema50;
+            if (decision.direction === 'long' && !h4Bullish) continue;
+            if (decision.direction === 'short' && h4Bullish) continue;
+          }
+        }
+      } catch { /* 4H fetch failed — allow trade without MTF filter */ }
+
+      // ============================================================
+      // POINT 5: Order book imbalance must confirm direction
+      // ============================================================
+      const imbalance = await fetchOrderBookImbalance(sym);
+      if (Math.abs(imbalance) < 0.05) continue; // No clear pressure — skip
+      if (decision.direction === 'long' && imbalance < 0) continue; // Bearish OB — skip long
+      if (decision.direction === 'short' && imbalance > 0) continue; // Bullish OB — skip short
+
+      if (Math.abs(decision.score) > bestScore) {
         bestScore = Math.abs(decision.score);
         best = { decision, price: candles[candles.length - 1].close, symbol: sym };
       }
@@ -91,16 +117,50 @@ export async function findBestSignal(
   return best;
 }
 
+// Simple EMA 50 calculation for MTF filter
+function calcEMA50(data: number[], period: number): number {
+  if (data.length < period) return NaN;
+  const k = 2 / (period + 1);
+  let ema = data.slice(0, period).reduce((s, v) => s + v, 0) / period;
+  for (let i = period; i < data.length; i++) {
+    ema = data[i] * k + ema * (1 - k);
+  }
+  return ema;
+}
+
+// ============================================================
+// POINT 5: Order book imbalance check
+// ============================================================
+
+async function fetchOrderBookImbalance(symbol: string): Promise<number> {
+  try {
+    const res = await fetch(`https://api.binance.com/api/v3/depth?symbol=${symbol}&limit=20`);
+    if (!res.ok) return 0;
+    const data = await res.json();
+    let bidVol = 0;
+    let askVol = 0;
+    for (const [price, qty] of data.bids as [string, string][]) bidVol += parseFloat(qty);
+    for (const [price, qty] of data.asks as [string, string][]) askVol += parseFloat(qty);
+    const total = bidVol + askVol;
+    if (total === 0) return 0;
+    return (bidVol - askVol) / total; // +0.3 = bid heavy, -0.3 = ask heavy
+  } catch {
+    return 0;
+  }
+}
+
 // ============================================================
 // Client-side TP/SL monitoring
 // ============================================================
 
 export interface MonitorResult {
   closedTrades: Array<{ tradeId: string; symbol: string; direction: string; pnl: number; reason: string; exitPrice: number }>;
+  trailingUpdates: Array<{ tradeId: string; newStopLoss: number; reason: string }>;
 }
 
 export async function monitorTradesClient(openTrades: Trade[]): Promise<MonitorResult> {
   const closedTrades: MonitorResult['closedTrades'] = [];
+  const trailingUpdates: MonitorResult['trailingUpdates'] = [];
 
   for (const trade of openTrades) {
     try {
@@ -120,6 +180,37 @@ export async function monitorTradesClient(openTrades: Trade[]): Promise<MonitorR
         shouldClose = true; reason = 'SL hit';
       }
 
+      // ============================================================
+      // POINT 6: Trailing stop logic
+      // ============================================================
+      if (!shouldClose && trade.stop_loss && trade.entry_price) {
+        const initialSlDistance = Math.abs(trade.entry_price - trade.stop_loss);
+        const isLong = trade.direction === 'long';
+        const favorableMove = isLong
+          ? currentPrice - trade.entry_price
+          : trade.entry_price - currentPrice;
+
+        if (favorableMove >= initialSlDistance) {
+          // Price moved ≥1× SL distance in our favor — trail to breakeven
+          const breakevenSL = isLong
+            ? trade.entry_price * 1.001 // tiny buffer above entry
+            : trade.entry_price * 0.999;
+          if ((isLong && breakevenSL > (trade.stop_loss ?? 0)) ||
+              (!isLong && breakevenSL < (trade.stop_loss ?? Infinity))) {
+            trailingUpdates.push({ tradeId: trade.id, newStopLoss: breakevenSL, reason: 'Trailing to breakeven' });
+          }
+        } else if (favorableMove >= initialSlDistance * 2) {
+          // Price moved ≥2× SL distance — trail to +1× from entry
+          const trailedSL = isLong
+            ? trade.entry_price + initialSlDistance
+            : trade.entry_price - initialSlDistance;
+          if ((isLong && trailedSL > (trade.stop_loss ?? 0)) ||
+              (!isLong && trailedSL < (trade.stop_loss ?? Infinity))) {
+            trailingUpdates.push({ tradeId: trade.id, newStopLoss: trailedSL, reason: 'Trailing lock profit' });
+          }
+        }
+      }
+
       if (shouldClose) {
         const priceChange = trade.direction === 'long'
           ? (currentPrice - trade.entry_price) / trade.entry_price
@@ -132,7 +223,7 @@ export async function monitorTradesClient(openTrades: Trade[]): Promise<MonitorR
     }
   }
 
-  return { closedTrades };
+  return { closedTrades, trailingUpdates };
 }
 
 // ============================================================
@@ -147,20 +238,25 @@ export async function runAutoTradeCycle(
 ): Promise<{
     action: 'monitor' | 'new-trade' | 'idle';
     closedTrades: MonitorResult['closedTrades'];
+    trailingUpdates: MonitorResult['trailingUpdates'];
     newTrade?: { symbol: string; direction: string; price: number; leverage: number; stopLoss: number; takeProfit: number; amount: number };
     message: string;
     scannedCount: number;
     bestScore: number;
   }> {
   // Step 1: Monitor open trades
-  const { closedTrades } = await monitorTradesClient(openTrades);
+  const { closedTrades, trailingUpdates } = await monitorTradesClient(openTrades);
   const updatedOpenTrades = openTrades.filter(t => !closedTrades.some(c => c.tradeId === t.id));
 
-  if (closedTrades.length > 0) {
+  if (closedTrades.length > 0 || trailingUpdates.length > 0) {
+    const parts: string[] = [];
+    if (closedTrades.length > 0) parts.push(`Closed ${closedTrades.length} trade(s): ${closedTrades.map(c => `${c.symbol} (${c.reason})`).join(', ')}`);
+    if (trailingUpdates.length > 0) parts.push(`Trailing SL: ${trailingUpdates.length} trade(s)`);
     return {
       action: 'monitor',
       closedTrades,
-      message: `Closed ${closedTrades.length} trade(s): ${closedTrades.map(c => `${c.symbol} (${c.reason})`).join(', ')}`,
+      trailingUpdates,
+      message: parts.join(' | '),
       scannedCount: 0,
       bestScore: 0,
     };
@@ -168,12 +264,12 @@ export async function runAutoTradeCycle(
 
   // Hard limit: max 10 concurrent open trades
   if (updatedOpenTrades.length >= 10) {
-    return { action: 'idle', closedTrades: [], message: `Лимит сделок: ${updatedOpenTrades.length}/10, жду закрытия...`, scannedCount: 0, bestScore: 0 };
+    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: `Лимит сделок: ${updatedOpenTrades.length}/10, жду закрытия...`, scannedCount: 0, bestScore: 0 };
   }
 
   // Step 3: If balance too low, skip
   if (balance < 5) {
-    return { action: 'idle', closedTrades: [], message: 'Недостаточно баланса ($<5)', scannedCount: 0, bestScore: 0 };
+    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: 'Недостаточно баланса ($<5)', scannedCount: 0, bestScore: 0 };
   }
 
   const openSymbols = new Set(updatedOpenTrades.map(t => t.symbol));
@@ -182,7 +278,7 @@ export async function runAutoTradeCycle(
 
   const best = await findBestSignal(weights, openSymbols, interval, limit);
   if (!best || best.decision.direction === 'none') {
-    return { action: 'idle', closedTrades: [], message: 'Сигналов не найдено, сканирую...', scannedCount: 10, bestScore: 0 };
+    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: 'Сигналов не найдено, сканирую...', scannedCount: 10, bestScore: 0 };
   }
 
   // Trade amount: scale with balance — 10% per trade, min $3, max $20
@@ -191,6 +287,7 @@ export async function runAutoTradeCycle(
   return {
     action: 'new-trade',
     closedTrades: [],
+    trailingUpdates: [],
     newTrade: {
       symbol: best.symbol,
       direction: best.decision.direction,

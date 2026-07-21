@@ -189,6 +189,13 @@ export async function closeTrade(
   );
 }
 
+export async function updateStopLoss(tradeId: string, newStopLoss: number): Promise<void> {
+  await db.execute(
+    `UPDATE trades SET stop_loss = ? WHERE id = ? AND status = 'open'`,
+    [newStopLoss, tradeId]
+  );
+}
+
 export async function getRecentTrades(limit: number = 20) {
   const result = await db.execute(
     'SELECT * FROM trades ORDER BY opened_at DESC LIMIT ?',
