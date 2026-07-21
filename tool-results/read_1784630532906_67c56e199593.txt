@@ -1,0 +1,742 @@
+     1→     1→import type { CandleData, IndicatorSignal, TradingDecision, BacktestTrade, BacktestSummary } from './types';
+     2→     2→
+     3→     3→// ============================================================
+     4→     4→// Indicator Calculations
+     5→     5→// ============================================================
+     6→     6→
+     7→     7→function sma(data: number[], period: number): number[] {
+     8→     8→  const result: number[] = [];
+     9→     9→  for (let i = 0; i < data.length; i++) {
+    10→    10→    if (i < period - 1) {
+    11→    11→      result.push(NaN);
+    12→    12→      continue;
+    13→    13→    }
+    14→    14→    let sum = 0;
+    15→    15→    for (let j = i - period + 1; j <= i; j++) {
+    16→    16→      sum += data[j];
+    17→    17→    }
+    18→    18→    result.push(sum / period);
+    19→    19→  }
+    20→    20→  return result;
+    21→    21→}
+    22→    22→
+    23→    23→function ema(data: number[], period: number): number[] {
+    24→    24→  const result: number[] = [];
+    25→    25→  const multiplier = 2 / (period + 1);
+    26→    26→  let prevEma: number | null = null;
+    27→    27→  for (let i = 0; i < data.length; i++) {
+    28→    28→    if (i < period - 1) {
+    29→    29→      result.push(NaN);
+    30→    30→      continue;
+    31→    31→    }
+    32→    32→    if (prevEma === null) {
+    33→    33→      let sum = 0;
+    34→    34→      for (let j = i - period + 1; j <= i; j++) sum += data[j];
+    35→    35→      prevEma = sum / period;
+    36→    36→    } else {
+    37→    37→      prevEma = (data[i] - prevEma) * multiplier + prevEma;
+    38→    38→    }
+    39→    39→    result.push(prevEma);
+    40→    40→  }
+    41→    41→  return result;
+    42→    42→}
+    43→    43→
+    44→    44→function calcRSI(closes: number[], period: number = 14): number {
+    45→    45→  if (closes.length < period + 1) return 50;
+    46→    46→  let gains = 0;
+    47→    47→  let losses = 0;
+    48→    48→  for (let i = closes.length - period; i < closes.length; i++) {
+    49→    49→    const change = closes[i] - closes[i - 1];
+    50→    50→    if (change > 0) gains += change;
+    51→    51→    else losses += Math.abs(change);
+    52→    52→  }
+    53→    53→  if (losses === 0) return 100;
+    54→    54→  const rs = (gains / period) / (losses / period);
+    55→    55→  return 100 - (100 / (1 + rs));
+    56→    56→}
+    57→    57→
+    58→    58→function calcMACD(closes: number[]): { macdLine: number; signalLine: number; histogram: number } {
+    59→    59→  const ema12 = ema(closes, 12);
+    60→    60→  const ema26 = ema(closes, 26);
+    61→    61→  const macdLineArr = ema12.map((v, i) => (isNaN(v) || isNaN(ema26[i])) ? NaN : v - ema26[i]);
+    62→    62→  const validMacd = macdLineArr.filter(v => !isNaN(v));
+    63→    63→  if (validMacd.length < 9) return { macdLine: 0, signalLine: 0, histogram: 0 };
+    64→    64→  const signalArr = ema(validMacd, 9);
+    65→    65→  const macdLine = validMacd[validMacd.length - 1];
+    66→    66→  const signalLine = signalArr[signalArr.length - 1];
+    67→    67→  return { macdLine, signalLine, histogram: macdLine - signalLine };
+    68→    68→}
+    69→    69→
+    70→    70→function calcBollingerBands(closes: number[], period: number = 20, stdDev: number = 2): { upper: number; middle: number; lower: number; position: number } {
+    71→    71→  if (closes.length < period) return { upper: 0, middle: 0, lower: 0, position: 0.5 };
+    72→    72→  const slice = closes.slice(-period);
+    73→    73→  const middle = slice.reduce((a, b) => a + b, 0) / period;
+    74→    74→  const variance = slice.reduce((sum, val) => sum + Math.pow(val - middle, 2), 0) / period;
+    75→    75→  const std = Math.sqrt(variance);
+    76→    76→  const upper = middle + stdDev * std;
+    77→    77→  const lower = middle - stdDev * std;
+    78→    78→  const currentPrice = closes[closes.length - 1];
+    79→    79→  const position = (currentPrice - lower) / (upper - lower);
+    80→    80→  return { upper, middle, lower, position: Math.max(0, Math.min(1, position)) };
+    81→    81→}
+    82→    82→
+    83→    83→function calcATR(candles: CandleData[], period: number = 14): number {
+    84→    84→  if (candles.length < period + 1) return 0;
+    85→    85→  let sum = 0;
+    86→    86→  for (let i = candles.length - period; i < candles.length; i++) {
+    87→    87→    const tr = Math.max(
+    88→    88→      candles[i].high - candles[i].low,
+    89→    89→      Math.abs(candles[i].high - candles[i - 1].close),
+    90→    90→      Math.abs(candles[i].low - candles[i - 1].close)
+    91→    91→    );
+    92→    92→    sum += tr;
+    93→    93→  }
+    94→    94→  return sum / period;
+    95→    95→}
+    96→    96→
+    97→    97→function calcVolumeSignal(candles: CandleData[], period: number = 20): number {
+    98→    98→  if (candles.length < period) return 0;
+    99→    99→  const recentVol = candles.slice(-period).reduce((s, c) => s + c.volume, 0) / period;
+   100→   100→  const currentVol = candles[candles.length - 1].volume;
+   101→   101→  if (recentVol === 0) return 0;
+   102→   102→  const ratio = currentVol / recentVol;
+   103→   103→  if (ratio > 2.0) return 1;
+   104→   104→  if (ratio > 1.5) return 0.5;
+   105→   105→  if (ratio < 0.5) return -0.5;
+   106→   106→  return 0;
+   107→   107→}
+   108→   108→
+   109→   109→// ============================================================
+   110→   110→// Additional Indicator Calculations
+   111→   111→// ============================================================
+   112→   112→
+   113→   113→function calcStochRSI(closes: number[], rsiPeriod: number = 14, stochPeriod: number = 14): number {
+   114→   114→  if (closes.length < rsiPeriod + stochPeriod) return 0.5;
+   115→   115→  // Calculate RSI for each window
+   116→   116→  const rsiValues: number[] = [];
+   117→   117→  for (let i = rsiPeriod; i <= closes.length; i++) {
+   118→   118→    rsiValues.push(calcRSI(closes.slice(0, i), rsiPeriod));
+   119→   119→  }
+   120→   120→  // Take last stochPeriod RSI values
+   121→   121→  const recentRSI = rsiValues.slice(-stochPeriod);
+   122→   122→  const minRSI = Math.min(...recentRSI);
+   123→   123→  const maxRSI = Math.max(...recentRSI);
+   124→   124→  const currentRSI = recentRSI[recentRSI.length - 1];
+   125→   125→  if (maxRSI === minRSI) return 0.5;
+   126→   126→  return (currentRSI - minRSI) / (maxRSI - minRSI);
+   127→   127→}
+   128→   128→
+   129→   129→function calcADX(candles: CandleData[], period: number = 14): { adx: number; plusDI: number; minusDI: number } {
+   130→   130→  if (candles.length < period * 2) return { adx: 0, plusDI: 0, minusDI: 0 };
+   131→   131→
+   132→   132→  const trueRanges: number[] = [];
+   133→   133→  const plusDM: number[] = [];
+   134→   134→  const minusDM: number[] = [];
+   135→   135→
+   136→   136→  for (let i = 1; i < candles.length; i++) {
+   137→   137→    const high = candles[i].high;
+   138→   138→    const low = candles[i].low;
+   139→   139→    const prevHigh = candles[i - 1].high;
+   140→   140→    const prevLow = candles[i - 1].low;
+   141→   141→    const prevClose = candles[i - 1].close;
+   142→   142→
+   143→   143→    const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+   144→   144→    trueRanges.push(tr);
+   145→   145→
+   146→   146→    const upMove = high - prevHigh;
+   147→   147→    const downMove = prevLow - low;
+   148→   148→
+   149→   149→    plusDM.push(upMove > downMove && upMove > 0 ? upMove : 0);
+   150→   150→    minusDM.push(downMove > upMove && downMove > 0 ? downMove : 0);
+   151→   151→  }
+   152→   152→
+   153→   153→  // Smooth with Wilder's method
+   154→   154→  const smooth = (data: number[], p: number) => {
+   155→   155→    const result: number[] = [];
+   156→   156→    let sum = 0;
+   157→   157→    for (let i = 0; i < p && i < data.length; i++) sum += data[i];
+   158→   158→    result.push(sum);
+   159→   159→    for (let i = p; i < data.length; i++) {
+   160→   160→      sum = sum - sum / p + data[i];
+   161→   161→      result.push(sum);
+   162→   162→    }
+   163→   163→    return result;
+   164→   164→  };
+   165→   165→
+   166→   166→  const smoothTR = smooth(trueRanges, period);
+   167→   167→  const smoothPlusDM = smooth(plusDM, period);
+   168→   168→  const smoothMinusDM = smooth(minusDM, period);
+   169→   169→
+   170→   170→  const diValues: number[] = [];
+   171→   171→  const plusDIValues: number[] = [];
+   172→   172→  const minusDIValues: number[] = [];
+   173→   173→
+   174→   174→  for (let i = 0; i < smoothTR.length; i++) {
+   175→   175→    const pdi = smoothTR[i] > 0 ? (smoothPlusDM[i] / smoothTR[i]) * 100 : 0;
+   176→   176→    const mdi = smoothTR[i] > 0 ? (smoothMinusDM[i] / smoothTR[i]) * 100 : 0;
+   177→   177→    plusDIValues.push(pdi);
+   178→   178→    minusDIValues.push(mdi);
+   179→   179→    const diSum = pdi + mdi;
+   180→   180→    diValues.push(diSum > 0 ? (Math.abs(pdi - mdi) / diSum) * 100 : 0);
+   181→   181→  }
+   182→   182→
+   183→   183→  // Smooth ADX
+   184→   184→  const adxSmoothed: number[] = [];
+   185→   185→  if (diValues.length >= period) {
+   186→   186→    let adxSum = 0;
+   187→   187→    for (let i = 0; i < period; i++) adxSum += diValues[i];
+   188→   188→    adxSmoothed.push(adxSum / period);
+   189→   189→    for (let i = period; i < diValues.length; i++) {
+   190→   190→      adxSmoothed.push((adxSmoothed[adxSmoothed.length - 1] * (period - 1) + diValues[i]) / period);
+   191→   191→    }
+   192→   192→  }
+   193→   193→
+   194→   194→  const lastIdx = adxSmoothed.length - 1;
+   195→   195→  return {
+   196→   196→    adx: adxSmoothed.length > 0 ? adxSmoothed[lastIdx] : 0,
+   197→   197→    plusDI: plusDIValues.length > 0 ? plusDIValues[plusDIValues.length - 1] : 0,
+   198→   198→    minusDI: minusDIValues.length > 0 ? minusDIValues[minusDIValues.length - 1] : 0,
+   199→   199→  };
+   200→   200→}
+   201→   201→
+   202→   202→function calcOBV(candles: CandleData[]): { obv: number; trend: number } {
+   203→   203→  if (candles.length < 2) return { obv: 0, trend: 0 };
+   204→   204→  let obv = 0;
+   205→   205→  const obvHistory: number[] = [];
+   206→   206→  for (let i = 1; i < candles.length; i++) {
+   207→   207→    if (candles[i].close > candles[i - 1].close) obv += candles[i].volume;
+   208→   208→    else if (candles[i].close < candles[i - 1].close) obv -= candles[i].volume;
+   209→   209→    obvHistory.push(obv);
+   210→   210→  }
+   211→   211→  // Simple trend: compare recent OBV vs earlier OBV
+   212→   212→  if (obvHistory.length < 10) return { obv, trend: 0 };
+   213→   213→  const recent = obvHistory.slice(-10).reduce((a, b) => a + b, 0) / 10;
+   214→   214→  const earlier = obvHistory.slice(-20, -10).reduce((a, b) => a + b, 0) / Math.min(10, obvHistory.length - 10);
+   215→   215→  const trend = earlier !== 0 ? (recent - earlier) / Math.abs(earlier) : 0;
+   216→   216→  return { obv, trend: Math.max(-1, Math.min(1, trend)) };
+   217→   217→}
+   218→   218→
+   219→   219→function calcVWAP(candles: CandleData[], period: number = 20): { vwap: number; signal: number } {
+   220→   220→  if (candles.length < period) return { vwap: 0, signal: 0 };
+   221→   221→  const slice = candles.slice(-period);
+   222→   222→  let cumVolumePrice = 0;
+   223→   223→  let cumVolume = 0;
+   224→   224→  for (const c of slice) {
+   225→   225→    const typicalPrice = (c.high + c.low + c.close) / 3;
+   226→   226→    cumVolumePrice += typicalPrice * c.volume;
+   227→   227→    cumVolume += c.volume;
+   228→   228→  }
+   229→   229→  const vwap = cumVolume > 0 ? cumVolumePrice / cumVolume : 0;
+   230→   230→  const price = candles[candles.length - 1].close;
+   231→   231→  const signal = vwap > 0 ? (price - vwap) / vwap : 0;
+   232→   232→  return { vwap, signal: Math.max(-1, Math.min(1, signal * 100)) }; // scale up
+   233→   233→}
+   234→   234→
+   235→   235→// ============================================================
+   236→   236→// Signal Generation
+   237→   237→// ============================================================
+   238→   238→
+   239→   239→export function analyzeIndicators(
+   240→   240→  candles: CandleData[],
+   241→   241→  weights: Record<string, number>
+   242→   242→): IndicatorSignal[] {
+   243→   243→  if (candles.length < 50) return [];
+   244→   244→  const closes = candles.map(c => c.close);
+   245→   245→  const signals: IndicatorSignal[] = [];
+   246→   246→
+   247→   247→  // RSI
+   248→   248→  const rsi = calcRSI(closes);
+   249→   249→  const rsiWeight = weights['rsi'] ?? 1;
+   250→   250→  if (rsi < 30) {
+   251→   251→    signals.push({ name: 'RSI', signal: 1, strength: (30 - rsi) / 30 });
+   252→   252→  } else if (rsi > 70) {
+   253→   253→    signals.push({ name: 'RSI', signal: -1, strength: (rsi - 70) / 30 });
+   254→   254→  } else {
+   255→   255→    signals.push({ name: 'RSI', signal: 0, strength: 0 });
+   256→   256→  }
+   257→   257→
+   258→   258→  // MACD
+   259→   259→  const macd = calcMACD(closes);
+   260→   260→  const macdWeight = weights['macd'] ?? 1;
+   261→   261→  if (macd.histogram > 0 && macd.macdLine > macd.signalLine) {
+   262→   262→    signals.push({ name: 'MACD', signal: 1, strength: Math.min(Math.abs(macd.histogram) / (macd.signalLine || 1), 1) });
+   263→   263→  } else if (macd.histogram < 0) {
+   264→   264→    signals.push({ name: 'MACD', signal: -1, strength: Math.min(Math.abs(macd.histogram) / (macd.signalLine || 1), 1) });
+   265→   265→  } else {
+   266→   266→    signals.push({ name: 'MACD', signal: 0, strength: 0 });
+   267→   267→  }
+   268→   268→
+   269→   269→  // EMA 50
+   270→   270→  const ema50Arr = ema(closes, 50);
+   271→   271→  const ema50 = ema50Arr[ema50Arr.length - 1];
+   272→   272→  const price = closes[closes.length - 1];
+   273→   273→  const ema50Weight = weights['ema50'] ?? 1;
+   274→   274→  if (!isNaN(ema50)) {
+   275→   275→    signals.push({
+   276→   276→      name: 'EMA_50',
+   277→   277→      signal: price > ema50 ? 1 : -1,
+   278→   278→      strength: Math.min(Math.abs(price - ema50) / ema50 * 10, 1),
+   279→   279→    });
+   280→   280→  } else {
+   281→   281→    signals.push({ name: 'EMA_50', signal: 0, strength: 0 });
+   282→   282→  }
+   283→   283→
+   284→   284→  // EMA 200
+   285→   285→  const ema200Arr = ema(closes, 200);
+   286→   286→  const ema200 = ema200Arr[ema200Arr.length - 1];
+   287→   287→  const ema200Weight = weights['ema200'] ?? 1;
+   288→   288→  if (!isNaN(ema200)) {
+   289→   289→    signals.push({
+   290→   290→      name: 'EMA_200',
+   291→   291→      signal: price > ema200 ? 1 : -1,
+   292→   292→      strength: Math.min(Math.abs(price - ema200) / ema200 * 10, 1),
+   293→   293→    });
+   294→   294→  } else {
+   295→   295→    signals.push({ name: 'EMA_200', signal: 0, strength: 0 });
+   296→   296→  }
+   297→   297→
+   298→   298→  // Bollinger Bands
+   299→   299→  const bb = calcBollingerBands(closes);
+   300→   300→  const bbWeight = weights['bollinger'] ?? 1;
+   301→   301→  if (bb.position < 0.1) {
+   302→   302→    signals.push({ name: 'Bollinger', signal: 1, strength: (0.1 - bb.position) / 0.1 });
+   303→   303→  } else if (bb.position > 0.9) {
+   304→   304→    signals.push({ name: 'Bollinger', signal: -1, strength: (bb.position - 0.9) / 0.1 });
+   305→   305→  } else {
+   306→   306→    signals.push({ name: 'Bollinger', signal: 0, strength: 0 });
+   307→   307→  }
+   308→   308→
+   309→   309→  // Volume
+   310→   310→  const volSignal = calcVolumeSignal(candles);
+   311→   311→  const volWeight = weights['volume'] ?? 1;
+   312→   312→  signals.push({ name: 'Volume', signal: volSignal > 0 ? 1 : volSignal < 0 ? -1 : 0, strength: Math.abs(volSignal) });
+   313→   313→
+   314→   314→  // StochRSI
+   315→   315→  const stochRSI = calcStochRSI(closes);
+   316→   316→  if (stochRSI > 0.8) {
+   317→   317→    signals.push({ name: 'StochRSI', signal: -1, strength: (stochRSI - 0.8) / 0.2 });
+   318→   318→  } else if (stochRSI < 0.2) {
+   319→   319→    signals.push({ name: 'StochRSI', signal: 1, strength: (0.2 - stochRSI) / 0.2 });
+   320→   320→  } else {
+   321→   321→    signals.push({ name: 'StochRSI', signal: 0, strength: 0 });
+   322→   322→  }
+   323→   323→
+   324→   324→  // ADX
+   325→   325→  const adxResult = calcADX(candles);
+   326→   326→  if (adxResult.adx > 25) {
+   327→   327→    // Strong trend — follow +DI vs -DI
+   328→   328→    const adxStrength = Math.min((adxResult.adx - 25) / 25, 1);
+   329→   329→    if (adxResult.plusDI > adxResult.minusDI) {
+   330→   330→      signals.push({ name: 'ADX', signal: 1, strength: adxStrength });
+   331→   331→    } else {
+   332→   332→      signals.push({ name: 'ADX', signal: -1, strength: adxStrength });
+   333→   333→    }
+   334→   334→  } else if (adxResult.adx < 20) {
+   335→   335→    // Weak/ranging — avoid, slight neutral
+   336→   336→    signals.push({ name: 'ADX', signal: 0, strength: 0.1 });
+   337→   337→  } else {
+   338→   338→    signals.push({ name: 'ADX', signal: 0, strength: 0 });
+   339→   339→  }
+   340→   340→
+   341→   341→  // OBV
+   342→   342→  const obvResult = calcOBV(candles);
+   343→   343→  const priceChange = closes.length > 5
+   344→   344→    ? (closes[closes.length - 1] - closes[closes.length - 6]) / closes[closes.length - 6]
+   345→   345→    : 0;
+   346→   346→  if (obvResult.trend > 0.05 && priceChange > 0) {
+   347→   347→    // Rising OBV + rising price = bullish confirmation
+   348→   348→    signals.push({ name: 'OBV', signal: 1, strength: Math.min(Math.abs(obvResult.trend) * 5, 1) });
+   349→   349→  } else if (obvResult.trend < -0.05 && priceChange < 0) {
+   350→   350→    // Falling OBV + falling price = bearish confirmation
+   351→   351→    signals.push({ name: 'OBV', signal: -1, strength: Math.min(Math.abs(obvResult.trend) * 5, 1) });
+   352→   352→  } else if (obvResult.trend > 0.05 && priceChange < 0) {
+   353→   353→    // Divergence: OBV rising but price falling — potential reversal up
+   354→   354→    signals.push({ name: 'OBV', signal: 1, strength: Math.min(Math.abs(obvResult.trend) * 3, 0.7) });
+   355→   355→  } else if (obvResult.trend < -0.05 && priceChange > 0) {
+   356→   356→    // Divergence: OBV falling but price rising — potential reversal down
+   357→   357→    signals.push({ name: 'OBV', signal: -1, strength: Math.min(Math.abs(obvResult.trend) * 3, 0.7) });
+   358→   358→  } else {
+   359→   359→    signals.push({ name: 'OBV', signal: 0, strength: 0 });
+   360→   360→  }
+   361→   361→
+   362→   362→  // VWAP
+   363→   363→  const vwapResult = calcVWAP(candles);
+   364→   364→  if (vwapResult.signal > 0.005) {
+   365→   365→    signals.push({ name: 'VWAP', signal: 1, strength: Math.min(vwapResult.signal * 10, 1) });
+   366→   366→  } else if (vwapResult.signal < -0.005) {
+   367→   367→    signals.push({ name: 'VWAP', signal: -1, strength: Math.min(Math.abs(vwapResult.signal) * 10, 1) });
+   368→   368→  } else {
+   369→   369→    signals.push({ name: 'VWAP', signal: 0, strength: 0 });
+   370→   370→  }
+   371→   371→
+   372→   372→  return signals;
+   373→   373→}
+   374→   374→
+   375→   375→// ============================================================
+   376→   376→// Trading Decision
+   377→   377→// ============================================================
+   378→   378→
+   379→   379→export function makeTradingDecision(
+   380→   380→  symbol: string,
+   381→   381→  candles: CandleData[],
+   382→   382→  weights: Record<string, number>,
+   383→   383→  idleMinutes: number = 0,
+   384→   384→): TradingDecision {
+   385→   385→  const indicators = analyzeIndicators(candles, weights);
+   386→   386→  const closes = candles.map(c => c.close);
+   387→   387→  const price = closes[closes.length - 1];
+   388→   388→  const atr = calcATR(candles);
+   389→   389→
+   390→   390→  // ============================================================
+   391→   391→  // POINT 1: ADX regime filter — skip if market is ranging (ADX < 20)
+   392→   392→  // ============================================================
+   393→   393→  const adxResult = calcADX(candles);
+   394→   394→  if (adxResult.adx < 20) {
+   395→   395→    // Market is choppy/ranging — don't trade
+   396→   396→    return {
+   397→   397→      symbol,
+   398→   398→      direction: 'none',
+   399→   399→      score: 0,
+   400→   400→      leverage: 1,
+   401→   401→      stopLoss: 0,
+   402→   402→      takeProfit: 0,
+   403→   403→      indicators,
+   404→   404→    };
+   405→   405→  }
+   406→   406→
+   407→   407→  let longScore = 0;
+   408→   408→  let shortScore = 0;
+   409→   409→  let longCount = 0;  // POINT 3: count agreeing indicators
+   410→   410→  let shortCount = 0;
+   411→   411→
+   412→   412→  for (const ind of indicators) {
+   413→   413→    const w = weights[ind.name] ?? 1;
+   414→   414→    if (ind.signal > 0) {
+   415→   415→      longScore += ind.strength * w;
+   416→   416→      longCount++;
+   417→   417→    } else if (ind.signal < 0) {
+   418→   418→      shortScore += ind.strength * w;
+   419→   419→      shortCount++;
+   420→   420→    }
+   421→   421→  }
+   422→   422→
+   423→   423→  const OPEN_THRESHOLD = 0.15;
+   424→   424→  const absLongScore = Math.abs(longScore);
+   425→   425→  const absShortScore = Math.abs(shortScore);
+   426→   426→  const maxScore = Math.max(absLongScore, absShortScore);
+   427→   427→
+   428→   428→  // ============================================================
+   429→   429→  // POINT 3: Confluence filter — require ≥5 indicators to agree
+   430→   430→  // ============================================================
+   431→   431→  const bestCount = Math.max(longCount, shortCount);
+   432→   432→  if (bestCount < 5) {
+   433→   433→    return {
+   434→   434→      symbol,
+   435→   435→      direction: 'none',
+   436→   436→      score: maxScore,
+   437→   437→      leverage: 1,
+   438→   438→      stopLoss: 0,
+   439→   439→      takeProfit: 0,
+   440→   440→      indicators,
+   441→   441→    };
+   442→   442→  }
+   443→   443→
+   444→   444→  // ============================================================
+   445→   445→  // POINT 2: Removed sub-threshold fallback — only trade with real signals
+   446→   446→  // ============================================================
+   447→   447→  let direction: 'long' | 'short' | 'none' = 'none';
+   448→   448→  let score = 0;
+   449→   449→
+   450→   450→  if (absLongScore >= OPEN_THRESHOLD && absLongScore >= absShortScore) {
+   451→   451→    direction = 'long';
+   452→   452→    score = longScore;
+   453→   453→  } else if (absShortScore >= OPEN_THRESHOLD && absShortScore > absLongScore) {
+   454→   454→    direction = 'short';
+   455→   455→    score = shortScore;
+   456→   456→  }
+   457→   457→  // No more fallback at score > 0.02
+   458→   458→
+   459→   459→  // Leverage based on signal strength (1x to 10x), lower for weak signals
+   460→   460→  const leverage = direction === 'none' ? 1 : Math.min(10, Math.max(1, Math.round(maxScore * 3)));
+   461→   461→
+   462→   462→  // Stop loss and take profit based on ATR
+   463→   463→  const stopLossPercent = atr / price;
+   464→   464→  const takeProfitPercent = stopLossPercent * 2.5; // Improved: 1:2.5 risk/reward
+   465→   465→
+   466→   466→  const stopLoss = direction === 'long'
+   467→   467→    ? price * (1 - stopLossPercent)
+   468→   468→    : price * (1 + stopLossPercent);
+   469→   469→  const takeProfit = direction === 'long'
+   470→   470→    ? price * (1 + takeProfitPercent)
+   471→   471→    : price * (1 - takeProfitPercent);
+   472→   472→
+   473→   473→  return {
+   474→   474→    symbol,
+   475→   475→    direction,
+   476→   476→    score,
+   477→   477→    leverage,
+   478→   478→    stopLoss,
+   479→   479→    takeProfit,
+   480→   480→    indicators,
+   481→   481→  };
+   482→   482→}
+   483→   483→
+   484→   484→// ============================================================
+   485→   485→// Backtesting
+   486→   486→// ============================================================
+   487→   487→
+   488→   488→export function runBacktest(
+   489→   489→  symbol: string,
+   490→   490→  candles: CandleData[],
+   491→   491→  weights: Record<string, number>,
+   492→   492→  initialBalance: number = 100,
+   493→   493→): BacktestSummary {
+   494→   494→  const minCandles = 200;
+   495→   495→  if (candles.length < minCandles) {
+   496→   496→    return {
+   497→   497→      symbol,
+   498→   498→      total_trades: 0,
+   499→   499→      winning_trades: 0,
+   500→   500→      losing_trades: 0,
+   501→   501→      total_pnl: 0,
+   502→   502→      winrate: 0,
+   503→   503→      profit_factor: 0,
+   504→   504→      indicator_performance: {},
+   505→   505→    };
+   506→   506→  }
+   507→   507→
+   508→   508→  let balance = initialBalance;
+   509→   509→  const trades: BacktestTrade[] = [];
+   510→   510→  const indicatorPerformance: Record<string, { wins: number; losses: number; pnl: number }> = {};
+   511→   511→  const indicatorNames = ['RSI', 'MACD', 'EMA_50', 'EMA_200', 'Bollinger', 'Volume', 'StochRSI', 'ADX', 'OBV', 'VWAP'];
+   512→   512→  for (const name of indicatorNames) {
+   513→   513→    indicatorPerformance[name] = { wins: 0, losses: 0, pnl: 0 };
+   514→   514→  }
+   515→   515→
+   516→   516→  let i = minCandles;
+   517→   517→  while (i < candles.length - 1) {
+   518→   518→    const historicalCandles = candles.slice(0, i + 1);
+   519→   519→    const decision = makeTradingDecision(symbol, historicalCandles, weights);
+   520→   520→
+   521→   521→    if (decision.direction !== 'none' && balance > 0) {
+   522→   522→      const amount = balance * 0.1 * decision.leverage;
+   523→   523→      if (amount < 0.01) { i++; continue; }
+   524→   524→
+   525→   525→      const entryPrice = candles[i].close;
+   526→   526→      let exitPrice = entryPrice;
+   527→   527→      let j = i + 1;
+   528→   528→      const maxHold = Math.min(i + 24, candles.length); // max 24h hold
+   529→   529→
+   530→   530→      while (j < maxHold) {
+   531→   531→        const candle = candles[j];
+   532→   532→        if (decision.direction === 'long') {
+   533→   533→          if (candle.low <= decision.stopLoss) { exitPrice = decision.stopLoss; break; }
+   534→   534→          if (candle.high >= decision.takeProfit) { exitPrice = decision.takeProfit; break; }
+   535→   535→        } else {
+   536→   536→          if (candle.high >= decision.stopLoss) { exitPrice = decision.stopLoss; break; }
+   537→   537→          if (candle.low <= decision.takeProfit) { exitPrice = decision.takeProfit; break; }
+   538→   538→        }
+   539→   539→        exitPrice = candle.close;
+   540→   540→        j++;
+   541→   541→      }
+   542→   542→
+   543→   543→      const priceChange = decision.direction === 'long'
+   544→   544→        ? (exitPrice - entryPrice) / entryPrice
+   545→   545→        : (entryPrice - exitPrice) / entryPrice;
+   546→   546→      const pnl = (amount * priceChange) - (amount * 0.001); // 0.1% fee
+   547→   547→      balance += pnl;
+   548→   548→
+   549→   549→      const activeIndicators = decision.indicators
+   550→   550→        .filter(ind => ind.signal !== 0)
+   551→   551→        .map(ind => ind.name);
+   552→   552→
+   553→   553→      const isWin = pnl > 0;
+   554→   554→      trades.push({
+   555→   555→        symbol,
+   556→   556→        entry_price: entryPrice,
+   557→   557→        exit_price: exitPrice,
+   558→   558→        amount,
+   559→   559→        leverage: decision.leverage,
+   560→   560→        direction: decision.direction,
+   561→   561→        pnl,
+   562→   562→        indicators_used: activeIndicators,
+   563→   563→      });
+   564→   564→
+   565→   565→      for (const indName of activeIndicators) {
+   566→   566→        if (indicatorPerformance[indName]) {
+   567→   567→          if (isWin) {
+   568→   568→            indicatorPerformance[indName].wins++;
+   569→   569→            indicatorPerformance[indName].pnl += pnl;
+   570→   570→          } else {
+   571→   571→            indicatorPerformance[indName].losses++;
+   572→   572→            indicatorPerformance[indName].pnl += pnl;
+   573→   573→          }
+   574→   574→        }
+   575→   575→      }
+   576→   576→
+   577→   577→      i = j; // Move past the trade duration
+   578→   578→    } else {
+   579→   579→      i++;
+   580→   580→    }
+   581→   581→  }
+   582→   582→
+   583→   583→  const winningTrades = trades.filter(t => t.pnl > 0);
+   584→   584→  const losingTrades = trades.filter(t => t.pnl <= 0);
+   585→   585→  const totalWins = winningTrades.reduce((s, t) => s + t.pnl, 0);
+   586→   586→  const totalLosses = Math.abs(losingTrades.reduce((s, t) => s + t.pnl, 0));
+   587→   587→  const winrate = trades.length > 0 ? (winningTrades.length / trades.length) * 100 : 0;
+   588→   588→  const profitFactor = totalLosses > 0 ? totalWins / totalLosses : totalWins > 0 ? 999 : 0;
+   589→   589→
+   590→   590→  return {
+   591→   591→    symbol,
+   592→   592→    total_trades: trades.length,
+   593→   593→    winning_trades: winningTrades.length,
+   594→   594→    losing_trades: losingTrades.length,
+   595→   595→    total_pnl: balance - initialBalance,
+   596→   596→    winrate,
+   597→   597→    profit_factor,
+   598→   598→    indicator_performance: indicatorPerformance,
+   599→   599→  };
+   600→   600→}
+   601→   601→
+   602→   602→// ============================================================
+   603→   603→// Order Book Analysis
+   604→   604→// ============================================================
+   605→   605→
+   606→   606→export function analyzeOrderBook(
+   607→   607→  bids: Array<{ price: number; quantity: number; total: number }>,
+   608→   608→  asks: Array<{ price: number; quantity: number; total: number }>,
+   609→   609→  midPrice: number
+   610→   610→): IndicatorSignal {
+   611→   611→  // Calculate bid/ask volume imbalance
+   612→   612→  const totalBidVol = bids.reduce((sum, b) => sum + b.quantity, 0);
+   613→   613→  const totalAskVol = asks.reduce((sum, a) => sum + a.quantity, 0);
+   614→   614→  const totalVol = totalBidVol + totalAskVol;
+   615→   615→
+   616→   616→  let imbalance = 0;
+   617→   617→  if (totalVol > 0) {
+   618→   618→    imbalance = (totalBidVol - totalAskVol) / totalVol;
+   619→   619→  }
+   620→   620→
+   621→   621→  // Detect walls — large orders (>3x average) near price
+   622→   622→  let bidWallPressure = 0;
+   623→   623→  let askWallPressure = 0;
+   624→   624→
+   625→   625→  if (bids.length > 1) {
+   626→   626→    const avgBidQty = totalBidVol / bids.length;
+   627→   627→    const largeBids = bids.filter(b => b.quantity > avgBidQty * 3);
+   628→   628→    bidWallPressure = largeBids.reduce((sum, b) => {
+   629→   629→      const distance = (midPrice - b.price) / midPrice;
+   630→   630→      return sum + (b.quantity * Math.exp(-distance * 100)); // closer walls matter more
+   631→   631→    }, 0);
+   632→   632→  }
+   633→   633→
+   634→   634→  if (asks.length > 1) {
+   635→   635→    const avgAskQty = totalAskVol / asks.length;
+   636→   636→    const largeAsks = asks.filter(a => a.quantity > avgAskQty * 3);
+   637→   637→    askWallPressure = largeAsks.reduce((sum, a) => {
+   638→   638→      const distance = (a.price - midPrice) / midPrice;
+   639→   639→      return sum + (a.quantity * Math.exp(-distance * 100));
+   640→   640→    }, 0);
+   641→   641→  }
+   642→   642→
+   643→   643→  // Combine signals
+   644→   644→  const wallImbalance = bidWallPressure > 0 || askWallPressure > 0
+   645→   645→    ? (bidWallPressure - askWallPressure) / (bidWallPressure + askWallPressure)
+   646→   646→    : 0;
+   647→   647→
+   648→   648→  const combinedSignal = imbalance * 0.6 + wallImbalance * 0.4;
+   649→   649→
+   650→   650→  let signal: number;
+   651→   651→  let strength: number;
+   652→   652→
+   653→   653→  if (combinedSignal > 0.15) {
+   654→   654→    signal = 1;
+   655→   655→    strength = Math.min(combinedSignal / 0.5, 1);
+   656→   656→  } else if (combinedSignal < -0.15) {
+   657→   657→    signal = -1;
+   658→   658→    strength = Math.min(Math.abs(combinedSignal) / 0.5, 1);
+   659→   659→  } else {
+   660→   660→    signal = 0;
+   661→   661→    strength = 0;
+   662→   662→  }
+   663→   663→
+   664→   664→  return {
+   665→   665→    name: 'OrderBook',
+   666→   666→    signal,
+   667→   667→    strength,
+   668→   668→  };
+   669→   669→}
+   670→   670→
+   671→   671→// ============================================================
+   672→   672→// Weight Optimization (Post-Backtest Learning)
+   673→   673→// ============================================================
+   674→   674→
+   675→   675→export function optimizeWeights(
+   676→   676→  currentWeights: Record<string, number>,
+   677→   677→  allSummaries: BacktestSummary[],
+   678→   678→): Record<string, number> {
+   679→   679→  const newWeights: Record<string, number> = { ...currentWeights };
+   680→   680→  const indicatorAgg: Record<string, { totalWins: number; totalTrades: number; totalPnl: number }> = {};
+   681→   681→
+   682→   682→  for (const summary of allSummaries) {
+   683→   683→    for (const [name, perf] of Object.entries(summary.indicator_performance)) {
+   684→   684→      if (!indicatorAgg[name]) indicatorAgg[name] = { totalWins: 0, totalTrades: 0, totalPnl: 0 };
+   685→   685→      indicatorAgg[name].totalWins += perf.wins;
+   686→   686→      indicatorAgg[name].totalTrades += perf.wins + perf.losses;
+   687→   687→      indicatorAgg[name].totalPnl += perf.pnl;
+   688→   688→    }
+   689→   689→  }
+   690→   690→
+   691→   691→  for (const [name, agg] of Object.entries(indicatorAgg)) {
+   692→   692→    if (agg.totalTrades < 3) continue; // Not enough data
+   693→   693→    const indicatorWinrate = agg.totalWins / agg.totalTrades;
+   694→   694→    // Scale weight: bad indicators get 0.2, good ones get up to 2.5
+   695→   695→    if (indicatorWinrate > 0.55) {
+   696→   696→      newWeights[name] = Math.min(2.5, 1.0 + (indicatorWinrate - 0.5) * 5);
+   697→   697→    } else if (indicatorWinrate < 0.45) {
+   698→   698→      newWeights[name] = Math.max(0.2, 1.0 - (0.5 - indicatorWinrate) * 5);
+   699→   699→    } else {
+   700→   700→      newWeights[name] = 1.0;
+   701→   701→    }
+   702→   702→  }
+   703→   703→
+   704→   704→  return newWeights;
+   705→   705→}
+   706→   706→
+   707→   707→// ============================================================
+   708→   708→// Fetch Klines from Binance
+   709→   709→// ============================================================
+   710→   710→
+   711→   711→export async function fetchKlines(symbol: string, interval: string = '1h', limit: number = 720): Promise<CandleData[]> {
+   712→   712→  const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+   713→   713→  const res = await fetch(url);
+   714→   714→  if (!res.ok) throw new Error(`Failed to fetch klines for ${symbol}: ${res.statusText}`);
+   715→   715→  const data = await res.json();
+   716→   716→  return data.map((k: (string | number)[]) => ({
+   717→   717→    time: Math.floor(Number(k[0]) / 1000),
+   718→   718→    open: parseFloat(String(k[1])),
+   719→   719→    high: parseFloat(String(k[2])),
+   720→   720→    low: parseFloat(String(k[3])),
+   721→   721→    close: parseFloat(String(k[4])),
+   722→   722→    volume: parseFloat(String(k[5])),
+   723→   723→  }));
+   724→   724→}
+   725→   725→
+   726→   726→// ============================================================
+   727→   727→// Fetch Top Symbols from Binance
+   728→   728→// ============================================================
+   729→   729→
+   730→   730→export async function fetchTopSymbols(): Promise<string[]> {
+   731→   731→  const url = 'https://api.binance.com/api/v3/ticker/24hr';
+   732→   732→  const res = await fetch(url);
+   733→   733→  if (!res.ok) return [];
+   734→   734→  const data = await res.json();
+   735→   735→  // Filter USDT pairs, sort by quote volume, take top 50
+   736→   736→  const usdtPairs = data
+   737→   737→    .filter((t: { symbol: string; quoteVolume: string }) => t.symbol.endsWith('USDT') && Number(t.quoteVolume) > 0)
+   738→   738→    .sort((a: { quoteVolume: string }, b: { quoteVolume: string }) => Number(b.quoteVolume) - Number(a.quoteVolume))
+   739→   739→    .slice(0, 50)
+   740→   740→    .map((t: { symbol: string }) => t.symbol);
+   741→   741→  return usdtPairs;
+   742→   742→}
