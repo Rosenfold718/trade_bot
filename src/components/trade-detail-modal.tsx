@@ -72,7 +72,7 @@ function TradeChart({ trade }: { trade: Trade }) {
     const fetchData = async () => {
       try {
         const res = await fetch(
-          `https://api.binance.com/api/v3/klines?symbol=${trade.symbol}&interval=1h&limit=720`,
+          `https://api.binance.com/api/v3/klines?symbol=${trade.symbol}&interval=1h&limit=1440`,
         );
         const raw = await res.json();
         if (cancelled || !Array.isArray(raw)) return;

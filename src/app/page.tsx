@@ -26,7 +26,7 @@ const TIMEFRAMES = [
   { label: '1m', interval: '1m', limit: 1000 },
   { label: '5m', interval: '5m', limit: 1000 },
   { label: '15m', interval: '15m', limit: 1000 },
-  { label: '1H', interval: '1h', limit: 720 },
+  { label: '1H', interval: '1h', limit: 1440 },
 ] as const;
 
 export type Timeframe = (typeof TIMEFRAMES)[number];

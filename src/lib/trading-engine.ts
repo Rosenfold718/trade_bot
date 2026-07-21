@@ -708,7 +708,7 @@ export function optimizeWeights(
 // Fetch Klines from Binance
 // ============================================================
 
-export async function fetchKlines(symbol: string, interval: string = '1h', limit: number = 720): Promise<CandleData[]> {
+export async function fetchKlines(symbol: string, interval: string = '1h', limit: number = 1440): Promise<CandleData[]> {
   const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch klines for ${symbol}: ${res.statusText}`);

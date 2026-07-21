@@ -31,7 +31,7 @@ export async function POST() {
     const backtestSymbols = symbols.slice(0, 20);
     for (const symbol of backtestSymbols) {
       try {
-        const candles = await fetchKlines(symbol, '1h', 720);
+        const candles = await fetchKlines(symbol, '1h', 1440);
         if (candles.length < 200) continue;
         const summary = runBacktest(symbol, candles, weights, state.balance);
         summaries.push(summary);

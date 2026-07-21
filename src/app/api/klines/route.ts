@@ -7,7 +7,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Symbol is required' }, { status: 400 });
   }
   try {
-    const klines = await fetchKlines(symbol, '1h', 720);
+    const klines = await fetchKlines(symbol, '1h', 1440);
     return NextResponse.json(klines);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to fetch klines';

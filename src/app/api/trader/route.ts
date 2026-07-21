@@ -37,11 +37,11 @@ export async function POST(request: NextRequest) {
         '1m': 1000,
         '5m': 1000,
         '15m': 1000,
-        '1h': 720,
+        '1h': 1440,
         '4h': 500,
         '1d': 365,
       };
-      const limit = limitMap[interval] || 720;
+      const limit = limitMap[interval] || 1440;
 
       const candles = await fetchKlines(symbol, interval, limit);
       if (candles.length < 50) {
@@ -227,11 +227,11 @@ export async function POST(request: NextRequest) {
             '1m': 1000,
             '5m': 1000,
             '15m': 1000,
-            '1h': 720,
+            '1h': 1440,
             '4h': 500,
             '1d': 365,
           };
-          const limit = limitMap[interval] || 720;
+          const limit = limitMap[interval] || 1440;
 
           const candles = await fetchKlines(sym, interval, limit);
           if (candles.length < 50) continue;

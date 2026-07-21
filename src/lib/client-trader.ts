@@ -6,7 +6,7 @@ import { makeTradingDecision, analyzeIndicators } from './trading-engine';
 // Client-side Binance data fetching (CORS works from browser)
 // ============================================================
 
-export async function fetchCandlesClient(symbol: string, interval: string = '1h', limit: number = 720): Promise<CandleData[]> {
+export async function fetchCandlesClient(symbol: string, interval: string = '1h', limit: number = 1440): Promise<CandleData[]> {
   const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`);
   if (!res.ok) throw new Error(`Failed to fetch klines for ${symbol}`);
   const raw = await res.json();
@@ -63,7 +63,7 @@ export async function findBestSignal(
   weights: Record<string, number>,
   openTradeSymbols: Set<string>,
   interval: string = '1h',
-  limit: number = 720,
+  limit: number = 1440,
 ): Promise<{ decision: TradingDecision; price: number; symbol: string } | null> {
   // Only trade symbols that are in the coin list (TOP_50_SYMBOLS)
   const symbols = TOP_50_SYMBOLS;
@@ -273,8 +273,8 @@ export async function runAutoTradeCycle(
   }
 
   const openSymbols = new Set(updatedOpenTrades.map(t => t.symbol));
-  const limitMap: Record<string, number> = { '1m': 1000, '5m': 1000, '15m': 1000, '1h': 720, '4h': 500 };
-  const limit = limitMap[interval] || 720;
+  const limitMap: Record<string, number> = { '1m': 1000, '5m': 1000, '15m': 1000, '1h': 1440, '4h': 500 };
+  const limit = limitMap[interval] || 1440;
 
   const best = await findBestSignal(weights, openSymbols, interval, limit);
   if (!best || best.decision.direction === 'none') {
