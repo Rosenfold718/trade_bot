@@ -5,7 +5,13 @@ import { useTerminalStore } from '@/lib/store';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Wallet, TrendingUp, TrendingDown, CreditCard, Activity, Gauge, ArrowUpCircle, ArrowDownCircle, MinusCircle } from 'lucide-react';
-import type { IndicatorSignal } from '@/lib/types';
+import type { Trade, IndicatorSignal } from '@/lib/types';
+
+function formatPrice(price: number): string {
+  if (price >= 1000) return `$${price.toFixed(2)}`;
+  if (price >= 1) return `$${price.toFixed(4)}`;
+  return `$${price.toPrecision(4)}`;
+}
 
 function StatCard({
   label,
@@ -362,5 +368,3 @@ export default function TradingDashboard() {
     </div>
   );
 }
-
-function IndicatorRow({ indicator }: { indicator: IndicatorSignal }) {
