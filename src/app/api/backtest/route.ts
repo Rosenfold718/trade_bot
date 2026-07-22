@@ -1,14 +1,18 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import {
   initDB, getTraderState, getIndicatorWeights,
   updateIndicatorWeight, saveBacktestResult, getBacktestResults,
 } from '@/lib/db';
 import { fetchKlines, runBacktest, optimizeWeights, fetchTopSymbols } from '@/lib/trading-engine';
+import { getAuthUserId } from '@/lib/auth-helpers';
 
 export async function GET() {
   try {
+    const userId = await getAuthUserId();
+    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
     await initDB();
-    const results = await getBacktestResults();
+    const results = await getBacktestResults(userId);
     return NextResponse.json(results);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
@@ -16,18 +20,23 @@ export async function GET() {
   }
 }
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
+    const userId = await getAuthUserId();
+    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
     await initDB();
-    const state = await getTraderState();
-    const weightsArr = await getIndicatorWeights();
+    const body = await request.json();
+    const strategyId = (body.strategyId as string) || 'momentum';
+
+    const state = await getTraderState(userId, strategyId);
+    const weightsArr = await getIndicatorWeights(userId);
     const weights: Record<string, number> = {};
     for (const w of weightsArr) weights[w.indicator_name] = w.weight;
 
     const symbols = await fetchTopSymbols();
     const summaries: Array<Awaited<ReturnType<typeof runBacktest>>> = [];
 
-    // Run backtest on top 20 symbols
     const backtestSymbols = symbols.slice(0, 20);
     for (const symbol of backtestSymbols) {
       try {
@@ -36,7 +45,8 @@ export async function POST() {
         const summary = runBacktest(symbol, candles, weights, state.balance);
         summaries.push(summary);
         await saveBacktestResult(
-          'multi-indicator',
+          userId,
+          strategyId,
           symbol,
           summary.total_trades,
           summary.winrate,
@@ -47,10 +57,8 @@ export async function POST() {
       }
     }
 
-    // Optimize weights based on backtest results
     const newWeights = optimizeWeights(weights, summaries);
 
-    // Save optimized weights
     for (const [name, weight] of Object.entries(newWeights)) {
       const id = name.toLowerCase().replace('_', '');
       const agg = summaries.reduce(
@@ -64,7 +72,7 @@ export async function POST() {
         { wins: 0, trades: 0 },
       );
       const winrate = agg.trades > 0 ? (agg.wins / agg.trades) * 100 : null;
-      await updateIndicatorWeight(id, weight, winrate);
+      await updateIndicatorWeight(userId, id, weight, winrate);
     }
 
     const totalTrades = summaries.reduce((s, sum) => s + sum.total_trades, 0);

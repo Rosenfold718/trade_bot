@@ -3,23 +3,20 @@ import { createClient, type Client } from '@libsql/client';
 const TURSO_URL = process.env.TURSO_DATABASE_URL!;
 const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN!;
 
-export const db: Client = createClient({
+export const tursoDb: Client = createClient({
   url: TURSO_URL,
   authToken: TURSO_AUTH_TOKEN,
 });
 
 // ============================================================
-// Schema Initialization
+// Schema Initialization (per-user)
 // ============================================================
 
 const SCHEMA_SQL = `
-  DROP TABLE IF EXISTS backtest_results;
-  DROP TABLE IF EXISTS indicator_weights;
-  DROP TABLE IF EXISTS trades;
-  DROP TABLE IF EXISTS trader_state;
-
-  CREATE TABLE trader_state (
+  CREATE TABLE IF NOT EXISTS trader_state (
     id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    strategy_id TEXT NOT NULL DEFAULT 'momentum',
     balance REAL NOT NULL DEFAULT 100,
     borrowed_funds REAL NOT NULL DEFAULT 0,
     debt_to_repay REAL NOT NULL DEFAULT 0,
@@ -27,8 +24,9 @@ const SCHEMA_SQL = `
     updated_at TEXT DEFAULT (datetime('now'))
   );
 
-  CREATE TABLE trades (
+  CREATE TABLE IF NOT EXISTS trades (
     id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
     symbol TEXT NOT NULL,
     strategy_id TEXT NOT NULL DEFAULT 'momentum',
     entry_price REAL NOT NULL,
@@ -44,15 +42,18 @@ const SCHEMA_SQL = `
     closed_at TEXT
   );
 
-  CREATE TABLE indicator_weights (
+  CREATE TABLE IF NOT EXISTS indicator_weights (
     id TEXT PRIMARY KEY,
-    indicator_name TEXT NOT NULL UNIQUE,
+    user_id TEXT NOT NULL DEFAULT '__global__',
+    indicator_name TEXT NOT NULL,
     weight REAL NOT NULL DEFAULT 1.0,
-    calculated_winrate REAL
+    calculated_winrate REAL,
+    UNIQUE(user_id, indicator_name)
   );
 
-  CREATE TABLE backtest_results (
+  CREATE TABLE IF NOT EXISTS backtest_results (
     id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL DEFAULT '__global__',
     strategy_name TEXT NOT NULL,
     symbol TEXT NOT NULL,
     total_trades INTEGER NOT NULL,
@@ -61,24 +62,18 @@ const SCHEMA_SQL = `
     timestamp TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
-  INSERT OR IGNORE INTO trader_state (id, balance, borrowed_funds, debt_to_repay, is_active)
-  VALUES ('momentum', 100, 0, 0, 1);
-  INSERT OR IGNORE INTO trader_state (id, balance, borrowed_funds, debt_to_repay, is_active)
-  VALUES ('mean-reversion', 100, 0, 0, 1);
-  INSERT OR IGNORE INTO trader_state (id, balance, borrowed_funds, debt_to_repay, is_active)
-  VALUES ('trend-pullback', 100, 0, 0, 1);
+  CREATE TABLE IF NOT EXISTS activity_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    details TEXT,
+    ip TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
 
-  INSERT OR IGNORE INTO indicator_weights (id, indicator_name, weight, calculated_winrate) VALUES
-    ('rsi', 'RSI', 1.0, NULL),
-    ('macd', 'MACD', 1.0, NULL),
-    ('ema50', 'EMA_50', 1.0, NULL),
-    ('ema200', 'EMA_200', 1.0, NULL),
-    ('bollinger', 'Bollinger', 1.0, NULL),
-    ('volume', 'Volume', 1.0, NULL),
-    ('stochrsi', 'StochRSI', 1.0, NULL),
-    ('adx', 'ADX', 1.0, NULL),
-    ('obv', 'OBV', 1.0, NULL),
-    ('vwap', 'VWAP', 1.0, NULL);
+  CREATE INDEX IF NOT EXISTS idx_trader_state_user ON trader_state(user_id);
+  CREATE INDEX IF NOT EXISTS idx_trades_user ON trades(user_id);
+  CREATE INDEX IF NOT EXISTS idx_activity_user ON activity_log(user_id);
 `;
 
 let schemaInitialized = false;
@@ -86,9 +81,9 @@ let schemaInitialized = false;
 export async function initDB(): Promise<void> {
   if (schemaInitialized) return;
   try {
-    await db.batch(SCHEMA_SQL.split(';').filter(s => s.trim().length > 0).map(s => s.trim() + ';'));
+    await tursoDb.batch(SCHEMA_SQL.split(';').filter(s => s.trim().length > 0).map(s => s.trim() + ';'));
     schemaInitialized = true;
-    console.log('✅ Database schema initialized');
+    console.log('✅ Database schema initialized (per-user)');
   } catch (err) {
     console.error('❌ Failed to initialize DB schema:', err);
     schemaInitialized = false;
@@ -97,13 +92,73 @@ export async function initDB(): Promise<void> {
 }
 
 // ============================================================
-// Trader State
+// User Initialization — called after registration
 // ============================================================
 
-export async function getTraderState(strategyId: string = 'momentum') {
-  const result = await db.execute('SELECT * FROM trader_state WHERE id = ?', [strategyId]);
+const STRATEGY_IDS = ['momentum', 'mean-reversion', 'trend-pullback'];
+
+export async function initUserTradingData(userId: string): Promise<void> {
+  await initDB();
+
+  for (const strategyId of STRATEGY_IDS) {
+    const id = `${userId}-${strategyId}`;
+    await tursoDb.execute(
+      `INSERT OR IGNORE INTO trader_state (id, user_id, strategy_id, balance, borrowed_funds, debt_to_repay, is_active)
+       VALUES (?, ?, ?, 100, 0, 0, 1)`,
+      [id, userId, strategyId]
+    );
+  }
+
+  // Initialize default indicator weights for user
+  const defaultWeights = [
+    ['rsi', 'RSI'], ['macd', 'MACD'], ['ema50', 'EMA_50'], ['ema200', 'EMA_200'],
+    ['bollinger', 'Bollinger'], ['volume', 'Volume'], ['stochrsi', 'StochRSI'],
+    ['adx', 'ADX'], ['obv', 'OBV'], ['vwap', 'VWAP'],
+  ];
+  for (const [id, name] of defaultWeights) {
+    await tursoDb.execute(
+      `INSERT OR IGNORE INTO indicator_weights (id, user_id, indicator_name, weight, calculated_winrate)
+       VALUES (?, ?, ?, 1.0, NULL)`,
+      [id, userId, name]
+    );
+  }
+
+  // Log registration
+  await tursoDb.execute(
+    `INSERT INTO activity_log (user_id, action, details) VALUES (?, 'register', 'New user registered')`,
+    [userId]
+  );
+
+  console.log(`✅ User ${userId} trading data initialized`);
+}
+
+// ============================================================
+// Activity Logging
+// ============================================================
+
+export async function logActivity(userId: string, action: string, details?: string, ip?: string): Promise<void> {
+  try {
+    await tursoDb.execute(
+      `INSERT INTO activity_log (user_id, action, details, ip) VALUES (?, ?, ?, ?)`,
+      [userId, action, details, ip]
+    );
+  } catch (err) {
+    console.error('Failed to log activity:', err);
+  }
+}
+
+// ============================================================
+// Trader State (per-user)
+// ============================================================
+
+export async function getTraderState(userId: string, strategyId: string = 'momentum') {
+  const id = `${userId}-${strategyId}`;
+  const result = await tursoDb.execute(
+    'SELECT * FROM trader_state WHERE id = ? AND user_id = ?',
+    [id, userId]
+  );
   const row = result.rows[0];
-  if (!row) throw new Error(`Trader state not found for strategy: ${strategyId}`);
+  if (!row) throw new Error(`Trader state not found for user: ${userId}, strategy: ${strategyId}`);
   return {
     id: row.id as string,
     strategy_id: strategyId,
@@ -114,36 +169,53 @@ export async function getTraderState(strategyId: string = 'momentum') {
   };
 }
 
-export async function updateBalance(newBalance: number, strategyId: string = 'momentum'): Promise<void> {
-  await db.execute('UPDATE trader_state SET balance = ?, updated_at = datetime(\'now\') WHERE id = ?', [newBalance, strategyId]);
-}
-
-export async function addCredit(amount: number, strategyId: string = 'momentum'): Promise<void> {
-  await db.execute(
-    'UPDATE trader_state SET borrowed_funds = borrowed_funds + ?, balance = balance + ?, updated_at = datetime(\'now\') WHERE id = ?',
-    [amount, amount, strategyId]
+export async function updateBalance(userId: string, newBalance: number, strategyId: string = 'momentum'): Promise<void> {
+  const id = `${userId}-${strategyId}`;
+  await tursoDb.execute(
+    "UPDATE trader_state SET balance = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?",
+    [newBalance, id, userId]
   );
 }
 
-export async function repayDebt(amount: number, strategyId: string = 'momentum'): Promise<void> {
-  const state = await getTraderState(strategyId);
+export async function addCredit(userId: string, amount: number, strategyId: string = 'momentum'): Promise<void> {
+  const id = `${userId}-${strategyId}`;
+  await tursoDb.execute(
+    "UPDATE trader_state SET borrowed_funds = borrowed_funds + ?, balance = balance + ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?",
+    [amount, amount, id, userId]
+  );
+}
+
+export async function repayDebt(userId: string, amount: number, strategyId: string = 'momentum'): Promise<void> {
+  const state = await getTraderState(userId, strategyId);
   const actualRepay = Math.min(amount, state.debt_to_repay);
-  await db.execute(
-    'UPDATE trader_state SET debt_to_repay = debt_to_repay - ?, balance = balance - ?, updated_at = datetime(\'now\') WHERE id = ?',
-    [actualRepay, actualRepay, strategyId]
+  const id = `${userId}-${strategyId}`;
+  await tursoDb.execute(
+    "UPDATE trader_state SET debt_to_repay = debt_to_repay - ?, balance = balance - ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?",
+    [actualRepay, actualRepay, id, userId]
   );
 }
 
-export async function resetTrader(strategyId: string = 'momentum'): Promise<void> {
+export async function resetTrader(userId: string, strategyId: string = 'momentum'): Promise<void> {
   await initDB();
-  console.log(`✅ Trader reset complete for strategy: ${strategyId}`);
+  const id = `${userId}-${strategyId}`;
+  await tursoDb.execute(
+    'UPDATE trader_state SET balance = 100, borrowed_funds = 0, debt_to_repay = 0, is_active = 1, updated_at = datetime(\'now\') WHERE id = ? AND user_id = ?',
+    [id, userId]
+  );
+  // Close all open trades for this user/strategy
+  await tursoDb.execute(
+    "UPDATE trades SET status = 'closed', closed_at = datetime('now') WHERE user_id = ? AND strategy_id = ? AND status = 'open'",
+    [userId, strategyId]
+  );
+  console.log(`✅ Trader reset complete for user: ${userId}, strategy: ${strategyId}`);
 }
 
 // ============================================================
-// Trades
+// Trades (per-user)
 // ============================================================
 
 export async function openTrade(
+  userId: string,
   symbol: string,
   entryPrice: number,
   amount: number,
@@ -154,24 +226,24 @@ export async function openTrade(
   strategyId: string = 'momentum',
 ): Promise<void> {
   const id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  await db.execute(
-    `INSERT INTO trades (id, symbol, strategy_id, entry_price, amount, leverage, direction, status, stop_loss, take_profit, opened_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, datetime('now'))`,
-    [id, symbol, strategyId, entryPrice, amount, leverage, direction, stopLoss, takeProfit]
+  await tursoDb.execute(
+    `INSERT INTO trades (id, user_id, symbol, strategy_id, entry_price, amount, leverage, direction, status, stop_loss, take_profit, opened_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, datetime('now'))`,
+    [id, userId, symbol, strategyId, entryPrice, amount, leverage, direction, stopLoss, takeProfit]
   );
 }
 
-export async function getOpenTrades(strategyId?: string): Promise<Array<{
+export async function getOpenTrades(userId: string, strategyId?: string): Promise<Array<{
   id: string; symbol: string; strategy_id: string; entry_price: number; exit_price: number | null; amount: number;
   leverage: number; direction: string; pnl: number | null; status: string;
   opened_at: string; closed_at: string | null;
   stop_loss: number | null; take_profit: number | null;
 }>> {
   const sql = strategyId
-    ? 'SELECT * FROM trades WHERE status = ? AND strategy_id = ?'
-    : 'SELECT * FROM trades WHERE status = ?';
-  const params = strategyId ? ['open', strategyId] : ['open'];
-  const result = await db.execute(sql, params);
+    ? 'SELECT * FROM trades WHERE status = ? AND user_id = ? AND strategy_id = ?'
+    : 'SELECT * FROM trades WHERE status = ? AND user_id = ?';
+  const params = strategyId ? ['open', userId, strategyId] : ['open', userId];
+  const result = await tursoDb.execute(sql, params);
   return result.rows.map(row => ({
     id: row.id as string,
     symbol: row.symbol as string,
@@ -195,25 +267,25 @@ export async function closeTrade(
   exitPrice: number,
   pnl: number,
 ): Promise<void> {
-  await db.execute(
-    `UPDATE trades SET exit_price = ?, pnl = ?, status = 'closed', closed_at = datetime('now') WHERE id = ?`,
+  await tursoDb.execute(
+    "UPDATE trades SET exit_price = ?, pnl = ?, status = 'closed', closed_at = datetime('now') WHERE id = ?",
     [exitPrice, pnl, tradeId]
   );
 }
 
 export async function updateStopLoss(tradeId: string, newStopLoss: number): Promise<void> {
-  await db.execute(
-    `UPDATE trades SET stop_loss = ? WHERE id = ? AND status = 'open'`,
+  await tursoDb.execute(
+    "UPDATE trades SET stop_loss = ? WHERE id = ? AND status = 'open'",
     [newStopLoss, tradeId]
   );
 }
 
-export async function getRecentTrades(limit: number = 20, strategyId?: string) {
+export async function getRecentTrades(userId: string, limit: number = 20, strategyId?: string) {
   const sql = strategyId
-    ? 'SELECT * FROM trades WHERE strategy_id = ? ORDER BY opened_at DESC LIMIT ?'
-    : 'SELECT * FROM trades ORDER BY opened_at DESC LIMIT ?';
-  const params = strategyId ? [strategyId, limit] : [limit];
-  const result = await db.execute(sql, params);
+    ? 'SELECT * FROM trades WHERE user_id = ? AND strategy_id = ? ORDER BY opened_at DESC LIMIT ?'
+    : 'SELECT * FROM trades WHERE user_id = ? ORDER BY opened_at DESC LIMIT ?';
+  const params = strategyId ? [userId, strategyId, limit] : [userId, limit];
+  const result = await tursoDb.execute(sql, params);
   return result.rows.map(row => ({
     id: row.id as string,
     symbol: row.symbol as string,
@@ -233,11 +305,14 @@ export async function getRecentTrades(limit: number = 20, strategyId?: string) {
 }
 
 // ============================================================
-// Indicator Weights
+// Indicator Weights (per-user)
 // ============================================================
 
-export async function getIndicatorWeights(): Promise<Array<{ id: string; indicator_name: string; weight: number; calculated_winrate: number | null }>> {
-  const result = await db.execute('SELECT * FROM indicator_weights');
+export async function getIndicatorWeights(userId: string): Promise<Array<{ id: string; indicator_name: string; weight: number; calculated_winrate: number | null }>> {
+  const result = await tursoDb.execute(
+    'SELECT * FROM indicator_weights WHERE user_id = ?',
+    [userId]
+  );
   return result.rows.map(row => ({
     id: row.id as string,
     indicator_name: row.indicator_name as string,
@@ -246,22 +321,26 @@ export async function getIndicatorWeights(): Promise<Array<{ id: string; indicat
   }));
 }
 
-export async function updateIndicatorWeight(indicatorId: string, newWeight: number, winrate: number | null): Promise<void> {
-  await db.execute(
-    'UPDATE indicator_weights SET weight = ?, calculated_winrate = ? WHERE id = ?',
-    [newWeight, winrate, indicatorId]
+export async function updateIndicatorWeight(userId: string, indicatorId: string, newWeight: number, winrate: number | null): Promise<void> {
+  await tursoDb.execute(
+    'UPDATE indicator_weights SET weight = ?, calculated_winrate = ? WHERE id = ? AND user_id = ?',
+    [newWeight, winrate, indicatorId, userId]
   );
 }
 
-export async function resetIndicatorWeights(): Promise<void> {
-  await db.execute('UPDATE indicator_weights SET weight = 1.0, calculated_winrate = NULL');
+export async function resetIndicatorWeights(userId: string): Promise<void> {
+  await tursoDb.execute(
+    'UPDATE indicator_weights SET weight = 1.0, calculated_winrate = NULL WHERE user_id = ?',
+    [userId]
+  );
 }
 
 // ============================================================
-// Backtest Results
+// Backtest Results (per-user)
 // ============================================================
 
 export async function saveBacktestResult(
+  userId: string,
   strategyName: string,
   symbol: string,
   totalTrades: number,
@@ -269,18 +348,21 @@ export async function saveBacktestResult(
   profitFactor: number,
 ): Promise<void> {
   const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  await db.execute(
-    `INSERT INTO backtest_results (id, strategy_name, symbol, total_trades, winrate, profit_factor, timestamp)
-     VALUES (?, ?, ?, ?, ?, datetime('now'))`,
-    [id, strategyName, symbol, totalTrades, winrate, profitFactor]
+  await tursoDb.execute(
+    `INSERT INTO backtest_results (id, user_id, strategy_name, symbol, total_trades, winrate, profit_factor, timestamp)
+     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
+    [id, userId, strategyName, symbol, totalTrades, winrate, profitFactor]
   );
 }
 
-export async function getBacktestResults(): Promise<Array<{
+export async function getBacktestResults(userId: string): Promise<Array<{
   id: string; strategy_name: string; symbol: string; total_trades: number;
   winrate: number; profit_factor: number; timestamp: string;
 }>> {
-  const result = await db.execute('SELECT * FROM backtest_results ORDER BY timestamp DESC LIMIT 20');
+  const result = await tursoDb.execute(
+    'SELECT * FROM backtest_results WHERE user_id = ? ORDER BY timestamp DESC LIMIT 20',
+    [userId]
+  );
   return result.rows.map(row => ({
     id: row.id as string,
     strategy_name: row.strategy_name as string,
@@ -290,4 +372,13 @@ export async function getBacktestResults(): Promise<Array<{
     profit_factor: Number(row.profit_factor),
     timestamp: row.timestamp as string,
   }));
+}
+
+// ============================================================
+// Admin: List all users (for monitoring)
+// ============================================================
+
+export async function getAllUserIds(): Promise<string[]> {
+  const result = await tursoDb.execute('SELECT DISTINCT user_id FROM trader_state');
+  return result.rows.map(r => r.user_id as string);
 }

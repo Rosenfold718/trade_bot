@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist_Mono } from "next/font/google";
+import AuthProvider from "@/components/auth/auth-provider";
 import "./globals.css";
 
 const geistMono = Geist_Mono({
@@ -8,8 +9,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Trade Bot — Terminal",
-  description: "AI-powered crypto trading terminal with technical analysis",
+  title: "Trade Terminal — Авторизация",
+  description: "Мультистратегический торговый терминал с ИИ-анализом",
   icons: {
     icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
   },
@@ -25,7 +26,9 @@ export default function RootLayout({
       <body
         className={`${geistMono.variable} antialiased bg-[#0a0a0f] text-white overflow-hidden`}
       >
-        {children}
+        <AuthProvider>
+          {children}
+        </AuthProvider>
       </body>
     </html>
   );
