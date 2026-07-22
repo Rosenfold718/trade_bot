@@ -48,7 +48,7 @@ export interface AuthSubscription {
 
 export async function findUserByUsername(username: string): Promise<AuthUser | null> {
   const result = await getClient().execute(
-    'SELECT * FROM "User" WHERE username = ?',
+    `SELECT * FROM "User" WHERE username = ?`,
     [username]
   );
   const row = result.rows[0];
@@ -64,7 +64,7 @@ export async function findUserByUsername(username: string): Promise<AuthUser | n
 
 export async function findUserById(id: string): Promise<AuthUser | null> {
   const result = await getClient().execute(
-    'SELECT * FROM "User" WHERE id = ?',
+    `SELECT * FROM "User" WHERE id = ?`,
     [id]
   );
   const row = result.rows[0];
@@ -85,14 +85,14 @@ export async function createUser(
   subscriptionData?: { isActive: boolean; expiresAt: string; lastPaymentAt?: string }
 ): Promise<AuthUser> {
   await getClient().execute(
-    'INSERT INTO "User" (id, username, password, createdAt, updatedAt) VALUES (?, ?, ?, datetime("now"), datetime("now"))',
+    `INSERT INTO "User" (id, username, password, createdAt, updatedAt) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     [id, username, hashedPassword]
   );
 
   if (subscriptionData) {
     const subId = `sub-${id}`;
     await getClient().execute(
-      'INSERT OR IGNORE INTO "Subscription" (id, userId, isActive, startsAt, expiresAt, lastPaymentAt) VALUES (?, ?, ?, datetime("now"), ?, ?)',
+      `INSERT OR IGNORE INTO "Subscription" (id, userId, isActive, startsAt, expiresAt, lastPaymentAt) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`,
       [subId, id, subscriptionData.isActive ? 1 : 0, subscriptionData.expiresAt, subscriptionData.lastPaymentAt || null]
     );
   }
@@ -113,14 +113,14 @@ export async function upsertUser(
   if (existing) {
     // Update password
     await getClient().execute(
-      'UPDATE "User" SET password = ?, updatedAt = datetime("now") WHERE id = ?',
+      `UPDATE "User" SET password = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?`,
       [hashedPassword, existing.id]
     );
   } else {
     // Create new
     const newId = id || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     await getClient().execute(
-      'INSERT INTO "User" (id, username, password, createdAt, updatedAt) VALUES (?, ?, ?, datetime("now"), datetime("now"))',
+      `INSERT INTO "User" (id, username, password, createdAt, updatedAt) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [newId, username, hashedPassword]
     );
   }
@@ -131,7 +131,7 @@ export async function upsertUser(
     if (userRow) {
       await getClient().execute(
         `INSERT INTO "Subscription" (id, userId, isActive, startsAt, expiresAt, lastPaymentAt)
-         VALUES (?, ?, ?, datetime("now"), ?, ?)
+         VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
          ON CONFLICT(userId) DO UPDATE SET
            isActive = excluded.isActive,
            startsAt = excluded.startsAt,
@@ -185,7 +185,7 @@ export async function getAllUsers(): Promise<Array<AuthUser & { subscription: Au
 
 export async function findSubscriptionByUserId(userId: string): Promise<AuthSubscription | null> {
   const result = await getClient().execute(
-    'SELECT * FROM "Subscription" WHERE userId = ?',
+    `SELECT * FROM "Subscription" WHERE userId = ?`,
     [userId]
   );
   const row = result.rows[0];
