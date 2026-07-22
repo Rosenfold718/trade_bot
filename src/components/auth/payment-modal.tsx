@@ -1,12 +1,28 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { signOut } from 'next-auth/react';
+import { useSession, signOut } from 'next-auth/react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, CreditCard, ExternalLink, CheckCircle, Clock, LogOut, Shield } from 'lucide-react';
+import { Loader2, CreditCard, ExternalLink, CheckCircle, LogOut, Shield, Zap, Crown, Star, Gem } from 'lucide-react';
 
 const PAYMENT_URL = 'https://www.sberbank.com/sms/pbpn?requisiteNumber=79198788008';
+
+interface Plan {
+  id: number;
+  months: number;
+  label: string;
+  price: string;
+  icon: React.ReactNode;
+  popular?: boolean;
+}
+
+const PLANS: Plan[] = [
+  { id: 1, months: 1,  label: '1 месяц', price: '1 ₽', icon: <Zap className="w-5 h-5" /> },
+  { id: 3, months: 3, label: '3 месяца', price: '1 ₽', icon: <Star className="w-5 h-5" />, popular: true },
+  { id: 6, months: 6, label: '6 месяцев', price: '1 ₽', icon: <Crown className="w-5 h-5" /> },
+  { id: 12, months: 12, label: '12 месяцев', price: '1 ₽', icon: <Gem className="w-5 h-5" /> },
+];
 
 interface PaymentModalProps {
   onClose: () => void;
@@ -14,24 +30,20 @@ interface PaymentModalProps {
 
 export default function PaymentModal({ onClose }: PaymentModalProps) {
   const { data: session } = useSession();
-  const [loading, setLoading] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<number>(1);
   const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState('');
   const [confirmed, setConfirmed] = useState(false);
   const [countdown, setCountdown] = useState(0);
-  const [checkingPayment, setCheckingPayment] = useState(false);
 
-  // Payment confirmation uses server-side session auth
+  const activePlan = PLANS.find(p => p.id === selectedPlan) ?? PLANS[0];
 
-  // Start countdown to prevent spam
+  // Start countdown after confirmation
   useEffect(() => {
     if (!confirmed) return;
     const timer = setInterval(() => {
       setCountdown(prev => {
-        if (prev <= 0) {
-          clearInterval(timer);
-          return 0;
-        }
+        if (prev <= 0) { clearInterval(timer); return 0; }
         return prev - 1;
       });
     }, 1000);
@@ -41,24 +53,17 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
   const handleConfirmPayment = async () => {
     setError('');
     setVerifying(true);
-
     try {
       const res = await fetch('/api/subscription', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ action: 'confirm-payment' }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'confirm-payment', months: activePlan.months }),
       });
       const data = await res.json();
-
       if (data.success) {
         setConfirmed(true);
         setCountdown(3);
-        // Auto-close after 3 seconds
-        setTimeout(() => {
-          onClose();
-        }, 3000);
+        setTimeout(() => onClose(), 3000);
       } else {
         setError(data.error || 'Ошибка активации');
       }
@@ -73,11 +78,8 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
     await signOut({ redirect: false });
   };
 
-  // Success state
-  if (confirmed && countdown <= 0) {
-    return null;
-  }
-
+  // ── Confirmed state ──
+  if (confirmed && countdown <= 0) return null;
   if (confirmed) {
     return (
       <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#0a0a0f]/95 backdrop-blur-xl">
@@ -90,10 +92,7 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
               <h2 className="text-xl font-bold text-white mb-2">Подписка активирована!</h2>
               <p className="text-sm text-white/50">Перенаправляем в терминал через {countdown} сек...</p>
             </div>
-            <Button
-              onClick={onClose}
-              className="w-full h-11 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-xl"
-            >
+            <Button onClick={onClose} className="w-full h-11 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-xl">
               Войти в терминал
             </Button>
           </CardContent>
@@ -102,37 +101,57 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
     );
   }
 
+  // ── Main payment screen ──
   return (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-[#0a0a0f]/95 backdrop-blur-xl"
-      // Prevent closing via click outside
-      onClick={(e) => {
-        if (e.target === e.currentTarget) {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      }}
+      onClick={(e) => { if (e.target === e.currentTarget) { e.preventDefault(); e.stopPropagation(); } }}
     >
-      {/* Overlay - prevents interaction with anything behind */}
       <div className="absolute inset-0" />
 
-      {/* Modal content */}
-      <Card className="relative z-10 w-full max-w-md mx-4 bg-[#12121e]/95 border-white/10 rounded-2xl shadow-2xl shadow-black/60">
+      <Card className="relative z-10 w-full max-w-lg mx-4 bg-[#12121e]/95 border-white/10 rounded-2xl shadow-2xl shadow-black/60 max-h-[90vh] overflow-y-auto">
         <CardHeader className="p-6 pb-2 text-center">
           <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mb-4">
             <CreditCard className="w-7 h-7 text-amber-400" />
           </div>
-          <CardTitle className="text-lg font-bold text-white">Оплата подписки</CardTitle>
-          <p className="text-sm text-white/40 mt-1">
-            Для доступа к торговому терминалу необходима активная подписка
-          </p>
+          <CardTitle className="text-lg font-bold text-white">Выберите тариф</CardTitle>
+          <p className="text-sm text-white/40 mt-1">Для доступа к торговому терминалу необходима активная подписка</p>
         </CardHeader>
-        <CardContent className="p-6 pt-2 space-y-5">
-          {/* Price & duration info */}
-          <div className="bg-white/5 rounded-xl p-4 space-y-3">
+        <CardContent className="p-6 pt-2 space-y-4">
+          {/* Plan selection grid */}
+          <div className="grid grid-cols-2 gap-3">
+            {PLANS.map((plan) => {
+              const isSelected = selectedPlan === plan.id;
+              return (
+                <button
+                  key={plan.id}
+                  onClick={() => setSelectedPlan(plan.id)}
+                  className={`relative flex flex-col items-center gap-2 p-4 rounded-xl border transition-all duration-200 cursor-pointer ${
+                    isSelected
+                      ? 'bg-emerald-500/10 border-emerald-500/40 shadow-lg shadow-emerald-500/5'
+                      : 'bg-white/[0.03] border-white/10 hover:bg-white/[0.06] hover:border-white/20'
+                  }`}
+                >
+                  {plan.popular && (
+                    <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 px-2.5 py-0.5 bg-emerald-500 text-[10px] font-bold text-white rounded-full">
+                      Популярный
+                    </span>
+                  )}
+                  <div className={isSelected ? 'text-emerald-400' : 'text-white/40'}>
+                    {plan.icon}
+                  </div>
+                  <span className={`text-sm font-semibold ${isSelected ? 'text-white' : 'text-white/70'}`}>{plan.label}</span>
+                  <span className={`text-lg font-bold ${isSelected ? 'text-emerald-400' : 'text-white/50'}`}>{plan.price}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Selected plan info */}
+          <div className="bg-white/5 rounded-xl p-3 space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-sm text-white/60">Период подписки</span>
-              <span className="text-sm font-medium text-white">30 дней</span>
+              <span className="text-sm text-white/60">Выбран тариф</span>
+              <span className="text-sm font-medium text-white">{activePlan.label}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm text-white/60">Включает</span>
@@ -144,9 +163,9 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
             </div>
           </div>
 
-          {/* Payment instructions */}
-          <div className="space-y-3">
-            <p className="text-xs text-white/50 text-center">Переведите оплату по реквизитам:</p>
+          {/* Payment link */}
+          <div className="space-y-2">
+            <p className="text-xs text-white/50 text-center">Шаг 1 — Переведите оплату по реквизитам:</p>
             <a
               href={PAYMENT_URL}
               target="_blank"
@@ -159,37 +178,30 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
           </div>
 
           {error && (
-            <div className="bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 text-sm text-red-400">
-              {error}
-            </div>
+            <div className="bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 text-sm text-red-400">{error}</div>
           )}
 
-          {/* Confirm payment button */}
-          <Button
-            onClick={handleConfirmPayment}
-            disabled={verifying || checkingPayment}
-            className="w-full h-11 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl transition-all duration-200 disabled:opacity-50"
-          >
-            {verifying ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                Активация...
-              </>
-            ) : (
-              <>
-                <CheckCircle className="w-4 h-4 mr-2" />
-                Я оплатил — Активировать подписку
-              </>
-            )}
-          </Button>
+          {/* Confirm button */}
+          <div className="space-y-2">
+            <p className="text-xs text-white/50 text-center">Шаг 2 — Нажмите кнопку после оплаты:</p>
+            <Button
+              onClick={handleConfirmPayment}
+              disabled={verifying}
+              className="w-full h-11 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl transition-all duration-200 disabled:opacity-50"
+            >
+              {verifying ? (
+                <><Loader2 className="w-4 h-4 animate-spin mr-2" />Активация...</>
+              ) : (
+                <><CheckCircle className="w-4 h-4 mr-2" />Я оплатил — Активировать подписку ({activePlan.label})</>
+              )}
+            </Button>
+          </div>
 
-          {/* Warning about blocking */}
           <p className="text-[10px] text-white/25 text-center leading-relaxed">
             <Shield className="w-3 h-3 inline -mt-0.5 mr-1" />
-            Окно оплаты не закроется до активации подписки. После оплаты нажмите кнопку выше.
+            Окно оплаты не закроется до активации подписки.
           </p>
 
-          {/* Logout option */}
           <div className="pt-2 border-t border-white/5">
             <button
               onClick={handleLogout}

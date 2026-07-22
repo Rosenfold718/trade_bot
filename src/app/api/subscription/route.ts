@@ -3,7 +3,7 @@ import { findSubscriptionByUserId, upsertSubscription } from '@/lib/auth-db';
 import { initAuthTables } from '@/lib/init-auth-tables';
 import { getAuthUserId } from '@/lib/auth-helpers';
 
-const SUBSCRIPTION_DURATION_DAYS = 30;
+const DEFAULT_DURATION_MONTHS = 1;
 
 export async function GET(request: NextRequest) {
   try {
@@ -46,11 +46,13 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { action } = body as { action: string };
+    const { action, months } = body as { action: string; months?: number };
 
     if (action === 'confirm-payment') {
+      const durationMonths = months && [1, 3, 6, 12].includes(months) ? months : DEFAULT_DURATION_MONTHS;
+      const durationDays = durationMonths * 30;
       const now = new Date();
-      const expiresAt = new Date(now.getTime() + SUBSCRIPTION_DURATION_DAYS * 24 * 60 * 60 * 1000);
+      const expiresAt = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
 
       const subscription = await upsertSubscription(userId, {
         isActive: true,
@@ -63,7 +65,8 @@ export async function POST(request: NextRequest) {
         success: true,
         isActive: true,
         expiresAt: subscription.expiresAt,
-        daysRemaining: SUBSCRIPTION_DURATION_DAYS,
+        daysRemaining: durationDays,
+        months: durationMonths,
       });
     }
 
