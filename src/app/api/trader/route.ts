@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, openTrade, closeTrade, updateStopLoss, updateBalance, repayDebt } from '@/lib/db';
+import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, openTrade, closeTrade, updateStopLoss, updateBalance, repayDebt, initUserTradingData } from '@/lib/db';
 import { fetchKlines, makeStrategyDecision, fetchTopSymbols } from '@/lib/trading-engine';
 import { getAuthUserId } from '@/lib/auth-helpers';
 
@@ -10,6 +10,14 @@ export async function GET(request: NextRequest) {
 
     await initDB();
     const strategyId = request.nextUrl.searchParams.get('strategyId') || 'momentum';
+
+    // Ensure user has trading data for this strategy
+    try {
+      await getTraderState(userId, strategyId);
+    } catch {
+      await initUserTradingData(userId);
+    }
+
     const [state, weights, openTrades, recentTrades] = await Promise.all([
       getTraderState(userId, strategyId),
       getIndicatorWeights(userId),

@@ -135,6 +135,11 @@ export async function initUserTradingData(userId: string): Promise<void> {
        VALUES (?, ?, ?, 100, 0, 0, 1)`,
       [id, userId, strategyId]
     );
+    // Fix migrated rows: update user_id from '__migrated__' to actual userId
+    await tursoDb.execute(
+      `UPDATE trader_state SET user_id = ? WHERE id = ? AND user_id = '__migrated__'`,
+      [userId, id]
+    );
   }
 
   // Initialize default indicator weights for user
@@ -144,10 +149,11 @@ export async function initUserTradingData(userId: string): Promise<void> {
     ['adx', 'ADX'], ['obv', 'OBV'], ['vwap', 'VWAP'],
   ];
   for (const [id, name] of defaultWeights) {
+    const weightId = `${userId}-${id}`;
     await tursoDb.execute(
       `INSERT OR IGNORE INTO indicator_weights (id, user_id, indicator_name, weight, calculated_winrate)
        VALUES (?, ?, ?, 1.0, NULL)`,
-      [id, userId, name]
+      [weightId, userId, name]
     );
   }
 
