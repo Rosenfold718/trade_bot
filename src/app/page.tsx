@@ -6,7 +6,6 @@ import dynamic from 'next/dynamic';
 import AuthScreen from '@/components/auth/auth-screen';
 import PaymentModal from '@/components/auth/payment-modal';
 import { Loader2, LogOut, Clock, Shield } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 
 const TradingTerminal = dynamic(() => import('@/components/trading-terminal'), {
   ssr: false,
@@ -119,14 +118,16 @@ export default function Home() {
 
   // Authenticated + subscription active → show terminal
   return (
-    <div className="relative">
+    <div className="h-screen w-screen flex flex-col overflow-hidden bg-[#0a0a0f]">
       {/* Subscription info bar */}
       <SubscriptionBar
         daysRemaining={subscriptionDays}
         username={(session?.user as any)?.username}
         onLogout={handleLogout}
       />
-      <TradingTerminal />
+      <div className="flex-1 min-h-0 overflow-hidden">
+        <TradingTerminal />
+      </div>
     </div>
   );
 }

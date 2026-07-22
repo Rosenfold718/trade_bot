@@ -350,7 +350,7 @@ export default function TradingTerminal() {
   }, [selectedSymbol, candles.length, timeframe, setCurrentAnalysis, activeStrategy]);
 
   return (
-    <div className="h-screen w-screen flex flex-col overflow-hidden bg-[#0a0a0f]">
+    <div className="h-full w-full flex flex-col overflow-hidden bg-[#0a0a0f]">
       {/* Top Bar */}
       <header className="h-10 flex items-center justify-between px-4 border-b border-white/5 bg-[#0d0d14]/90 backdrop-blur-sm shrink-0 z-20">
         <div className="flex items-center gap-3">
