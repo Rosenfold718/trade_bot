@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/prisma-auth';
+import { getAuthUserId } from '@/lib/auth-helpers';
 
 const SUBSCRIPTION_DURATION_DAYS = 30;
 
 export async function GET(request: NextRequest) {
   try {
-    const userId = request.headers.get('x-user-id');
+    const userId = await getAuthUserId(request);
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -15,7 +16,7 @@ export async function GET(request: NextRequest) {
     });
 
     if (!subscription) {
-      return NextResponse.json({ isActive: false, requiresPayment: true });
+      return NextResponse.json({ isActive: false, requiresPayment: true, daysRemaining: 0 });
     }
 
     const now = new Date();
@@ -38,7 +39,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const userId = request.headers.get('x-user-id');
+    const userId = await getAuthUserId(request);
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -47,7 +48,6 @@ export async function POST(request: NextRequest) {
     const { action } = body as { action: string };
 
     if (action === 'confirm-payment') {
-      // User clicked "I paid" — activate subscription
       const now = new Date();
       const expiresAt = new Date(now.getTime() + SUBSCRIPTION_DURATION_DAYS * 24 * 60 * 60 * 1000);
 
