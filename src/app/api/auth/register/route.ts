@@ -11,24 +11,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Логин и пароль обязательны' }, { status: 400 });
     }
 
-    if (username.length < 3 || username.length > 30) {
-      return NextResponse.json({ error: 'Логин должен быть от 3 до 30 символов' }, { status: 400 });
+    if (username.length < 3 || username.length > 20) {
+      return NextResponse.json({ error: 'Логин: 3-20 символов' }, { status: 400 });
     }
 
-    if (password.length < 6) {
-      return NextResponse.json({ error: 'Пароль должен быть не менее 6 символов' }, { status: 400 });
+    if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+      return NextResponse.json({ error: 'Логин: только латиница, цифры и _' }, { status: 400 });
     }
 
-    // Check if username already exists
+    if (password.length < 8) {
+      return NextResponse.json({ error: 'Пароль: минимум 8 символов' }, { status: 400 });
+    }
+
     const existing = await db.user.findUnique({ where: { username } });
     if (existing) {
       return NextResponse.json({ error: 'Пользователь с таким логином уже существует' }, { status: 409 });
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 12);
 
-    // Create user with inactive subscription
     const user = await db.user.create({
       data: {
         username,
@@ -36,22 +37,28 @@ export async function POST(request: NextRequest) {
         subscription: {
           create: {
             isActive: false,
-            expiresAt: new Date(), // expired immediately
+            expiresAt: new Date(),
           },
         },
       },
     });
 
-    // Initialize user's trading state in Turso (via init API call will be made from client)
     return NextResponse.json({
       success: true,
       userId: user.id,
       username: user.username,
-      requiresPayment: true,
     });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[register] Error:', message);
-    return NextResponse.json({ error: 'Ошибка регистрации' }, { status: 500 });
+  } catch (err: any) {
+    console.error('[register] Error:', err);
+
+    // Handle specific Prisma errors
+    if (err?.code === 'P2002') {
+      return NextResponse.json({ error: 'Пользователь с таким логином уже существует' }, { status: 409 });
+    }
+
+    return NextResponse.json({
+      error: 'Ошибка регистрации. Попробуйте позже.',
+    detail: process.env.NODE_ENV === 'development' ? err.message : undefined,
+    }, { status: 500 });
   }
 }
