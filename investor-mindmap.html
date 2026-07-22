@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Trade Bot — Intelligence Map</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #FFFFFF;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'SimHei', sans-serif;
+}
+#mindmap {
+  padding: 60px 70px;
+  display: inline-block;
+  min-width: 100%;
+  position: relative;
+}
+#mindmap > svg.lines {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  pointer-events: none; z-index: 0;
+}
+
+/* ─── Root Node ─── */
+#mindmap[data-intent="finance"] .root-node {
+  background: linear-gradient(135deg, #1E3A5F, #1E40AF);
+  box-shadow: 0 4px 16px rgba(30,58,95,0.3);
+}
+.root-node {
+  color: white; font-size: 19px; font-weight: 700;
+  padding: 18px 28px; border-radius: 14px;
+  text-align: center; line-height: 1.5;
+  position: relative; z-index: 2;
+  white-space: nowrap;
+}
+
+/* ─── Tree Layout ─── */
+.tree-layout {
+  display: flex; align-items: center; justify-content: center; gap: 0;
+}
+.left-side {
+  display: flex; flex-direction: column; gap: 14px;
+  padding-right: 40px;
+}
+.right-side {
+  display: flex; flex-direction: column; gap: 14px;
+  padding-left: 40px;
+}
+.center-root {
+  flex-shrink: 0;
+  display: flex; align-items: center;
+}
+
+/* ─── Branch (L1) ─── */
+.branch {
+  display: flex; flex-direction: column; gap: 6px;
+}
+.left-side .branch { align-items: flex-end; }
+.right-side .branch { align-items: flex-start; }
+
+.branch-node {
+  font-size: 14px; font-weight: 600;
+  padding: 9px 16px; border-radius: 8px;
+  position: relative; z-index: 2;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+/* Branch color themes */
+.c-amber .branch-node  { background: #FEF3C7; color: #92400E; border: 1.5px solid #F59E0B; }
+.c-green .branch-node  { background: #D1FAE5; color: #065F46; border: 1.5px solid #10B981; }
+.c-red .branch-node    { background: #FEE2E2; color: #991B1B; border: 1.5px solid #EF4444; }
+.c-cyan .branch-node   { background: #CFFAFE; color: #155E75; border: 1.5px solid #06B6D4; }
+.c-blue .branch-node   { background: #DBEAFE; color: #1E3A5F; border: 1.5px solid #3B82F6; }
+.c-purple .branch-node { background: #F3E8FF; color: #581C87; border: 1.5px solid #8B5CF6; }
+
+/* ─── Children containers ─── */
+.left-side .children, .left-side .leaf-group, .left-side .deep-group {
+  align-items: flex-end; padding-right: 16px;
+}
+.right-side .children, .right-side .leaf-group, .right-side .deep-group {
+  align-items: flex-start; padding-left: 16px;
+}
+.children, .leaf-group, .deep-group {
+  display: flex; flex-direction: column; gap: 4px;
+}
+
+/* ─── Sub-nodes (L2) ─── */
+.sub-node {
+  font-size: 12.5px; font-weight: 500;
+  padding: 5px 12px; border-radius: 6px;
+  position: relative; z-index: 2;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+.c-amber .sub-node  { background: #FFFBEB; color: #78350F; border: 1px solid #FDE68A; }
+.c-green .sub-node  { background: #ECFDF5; color: #064E3B; border: 1px solid #A7F3D0; }
+.c-red .sub-node    { background: #FEF2F2; color: #7F1D1D; border: 1px solid #FECACA; }
+.c-cyan .sub-node   { background: #ECFEFF; color: #164E63; border: 1px solid #A5F3FC; }
+.c-blue .sub-node   { background: #EFF6FF; color: #1E3A5F; border: 1px solid #BFDBFE; }
+.c-purple .sub-node { background: #FAF5FF; color: #3B0764; border: 1px solid #DDD6FE; }
+
+/* ─── Leaf nodes (L3) ─── */
+.leaf {
+  font-size: 11.5px; font-weight: 400;
+  padding: 3px 10px; border-radius: 4px;
+  position: relative; z-index: 2;
+  white-space: nowrap;
+  line-height: 1.4;
+  color: #475569;
+  background: #F8FAFC;
+  border: 1px solid #E2E8F0;
+}
+.leaf.highlight {
+  color: #065F46;
+  background: #F0FDF4;
+  border: 1px solid #BBF7D0;
+}
+
+/* ─── Leaf group (L2 sub-group wrapper) ─── */
+.leaf-group {
+  display: flex; flex-direction: column; gap: 3px;
+}
+
+/* ─── Deep node (L3/L4 styled node) ─── */
+.deep-node {
+  font-size: 11px; font-weight: 400;
+  padding: 3px 8px; border-radius: 3px;
+  position: relative; z-index: 2;
+  white-space: nowrap;
+  color: #64748B;
+}
+
+/* ─── Title / subtitle under root ─── */
+.root-subtitle {
+  text-align: center;
+  font-size: 11px;
+  color: #94A3B8;
+  margin-top: 8px;
+  white-space: nowrap;
+  position: relative; z-index: 2;
+}
+</style>
+</head>
+<body>
+<div id="mindmap" data-intent="finance">
+<div class="tree-layout">
+
+  <!-- ═══════════ LEFT SIDE ═══════════ -->
+  <div class="left-side">
+
+    <!-- Branch 1: Импульс Pro -->
+    <div class="branch c-amber">
+      <div class="branch-node">ИМПУЛЬС PRO</div>
+      <div class="children">
+        <div>
+          <div class="sub-node">10 индикаторов</div>
+          <div class="leaf-group">
+            <div class="leaf">RSI, MACD, EMA 50/200</div>
+            <div class="leaf">Bollinger, StochRSI, ADX</div>
+            <div class="leaf">OBV, VWAP, Volume</div>
+          </div>
+        </div>
+        <div>
+          <div class="sub-node">Фильтр: ADX > 20</div>
+          <div class="leaf-group">
+            <div class="leaf">Отсеивает боковик</div>
+            <div class="leaf">Только сильные тренды</div>
+          </div>
+        </div>
+        <div>
+          <div class="sub-node">Конфлюенс ≥ 4 из 10</div>
+          <div class="leaf-group">
+            <div class="leaf">Взвешенный скоринг</div>
+            <div class="leaf">Порог: score ≥ 0.15</div>
+          </div>
+        </div>
+        <div>
+          <div class="sub-node">MTF подтверждение</div>
+          <div class="leaf-group">
+            <div class="leaf">4H EMA50 тренд</div>
+            <div class="leaf">LONG: цена > EMA50(4H)</div>
+            <div class="leaf">SHORT: цена &lt; EMA50(4H)</div>
+          </div>
+        </div>
+        <div>
+          <div class="sub-node">Параметры риска</div>
+          <div class="leaf-group">
+            <div class="leaf">Плечо до 5x</div>
+            <div class="leaf">R:R = 1:2</div>
+            <div class="leaf">До 10 сделок</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Branch 2: Возврат к среднему -->
+    <div class="branch c-green">
+      <div class="branch-node">ВОЗВРАТ К СРЕДНЕМУ</div>
+      <div class="children">
+        <div>
+          <div class="sub-node">3 ключевых индикатора</div>
+          <div class="leaf-group">
+            <div class="leaf">RSI(14) — перепроданность</div>
+            <div class="leaf">Bollinger Bands(20,2)</div>
+            <div class="leaf">StochRSI(14,14)</div>
+          </div>
+        </div>
+        <div>
+          <div class="sub-node">Условия входа</div>
+          <div class="leaf-group">
+            <div class="leaf">LONG: ≥2 из {RSI&lt;35, BB lower, Stoch&lt;0.25}</div>
+            <div class="leaf">SHORT: ≥2 из {RSI&gt;65, BB upper, Stoch&gt;0.75}</div>
+            <div class="leaf">Volume spike как бонус</div>
+          </div>
+        </div>
+        <div>
+          <div class="sub-node">Временной фильтр</div>
+          <div class="leaf-group">
+            <div class="leaf">Торговля: 10:00–23:00 МСК</div>
+            <div class="leaf">Ночной флэт исключён</div>
+          </div>
+        </div>
+        <div>
+          <div class="sub-node">Параметры риска</div>
+          <div class="leaf-group">
+            <div class="leaf">Плечо до 3x (консервативно)</div>
+            <div class="leaf">R:R = 1:1.5</div>
+            <div class="leaf">До 5 сделок</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Branch 3: Управление рисками -->
+    <div class="branch c-red">
+      <div class="branch-node">УПРАВЛЕНИЕ РИСКАМИ</div>
+      <div class="children">
+        <div>
+          <div class="sub-node">ATR-based Stop Loss</div>
+          <div class="leaf-group">
+            <div class="leaf">SL = ATR(14) от цены входа</div>
+            <div class="leaf">Адаптивен к волатильности</div>
+          </div>
+        </div>
+        <div>
+          <div class="sub-node">Trailing Stop</div>
+          <div class="leaf-group">
+            <div class="leaf">1x SL → безубыток (+0.1%)</div>
+            <div class="leaf">2x SL → фиксация прибыли</div>
+          </div>
+        </div>
+        <div>
+          <div class="sub-node">Диверсификация</div>
+          <div class="leaf-group">
+            <div class="leaf">3 независимых баланса</div>
+            <div class="leaf">Лимит сделок / стратегию</div>
+            <div class="leaf">Разные монеты в каждой</div>
+          </div>
+        </div>
+        <div>
+          <div class="sub-node">Защита капитала</div>
+          <div class="leaf-group">
+            <div class="leaf">Комиссия 0.1% в расчёте PnL</div>
+            <div class="leaf">Мин. баланс $5 для входа</div>
+            <div class="leaf">Макс. $20 на сделку</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Branch 4: Преимущества для инвесторов -->
+    <div class="branch c-purple">
+      <div class="branch-node">ПРЕИМУЩЕСТВА</div>
+      <div class="children">
+        <div>
+          <div class="sub-node">Почему это заработает</div>
+          <div class="leaf-group">
+            <div class="leaf highlight">3 стратегии × диверсификация</div>
+            <div class="leaf highlight">Мультисигнатурный вход</div>
+            <div class="leaf highlight">Без эмоций — только логика</div>
+          </div>
+        </div>
+        <div>
+          <div class="sub-node">Масштабируемость</div>
+          <div class="leaf-group">
+            <div class="leaf">24/7 автоматическое сканирование</div>
+            <div class="leaf">Top 50 монет по объёму</div>
+            <div class="leaf">Каждые 60 секунд цикл</div>
+          </div>
+        </div>
+        <div>
+          <div class="sub-node">Адаптивность</div>
+          <div class="leaf-group">
+            <div class="leaf">Плечо 1x–5x по силе сигнала</div>
+            <div class="leaf">SL/TP по ATR, не фиксированные</div>
+            <div class="leaf">MTF фильтр старшего ТФ</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ═══════════ CENTER ROOT ═══════════ -->
+  <div class="center-root">
+    <div>
+      <div class="root-node">TRADE BOT<br>AI Торговая Система</div>
+      <div class="root-subtitle">Мультисигнатурный алгоритм • 3 стратегии • Binance Futures</div>
+    </div>
+  </div>
+
+  <!-- ═══════════ RIGHT SIDE ═══════════ -->
+  <div class="right-side">
+
+    <!-- Branch 5: Тренд на откатах -->
+    <div class="branch c-cyan">
+      <div class="branch-node">ТРЕНД НА ОТКАТАХ</div>
+      <div class="children">
+        <div>
+          <div class="sub-node">EMA система (9/21/99)</div>
+          <div class="leaf-group">
+            <div class="leaf">EMA9 > EMA21 = аптренд</div>
+            <div class="leaf">EMA9 &lt; EMA21 = даунтренд</div>
+            <div class="leaf">EMA99 = глобальный тренд</div>
+          </div>
+        </div>
+        <div>
+          <div class="sub-node">Вход на откате</div>
+          <div class="leaf-group">
+            <div class="leaf">Цена в зоне ±1.5% от EMA21</div>
+            <div class="leaf">6 индикаторов подтверждают</div>
+            <div class="leaf">Конфлюенс ≥ 3 из 6</div>
+          </div>
+        </div>
+        <div>
+          <div class="sub-node">Фильтры</div>
+          <div class="leaf-group">
+            <div class="leaf">ADX > 25 — сильный тренд</div>
+            <div class="leaf">OBV тренд совпадает</div>
+            <div class="leaf">Volume > 1.2x среднего</div>
+          </div>
+        </div>
+        <div>
+          <div class="sub-node">MTF подтверждение</div>
+          <div class="leaf-group">
+            <div class="leaf">4H EMA50 aligned</div>
+          </div>
+        </div>
+        <div>
+          <div class="sub-node">Параметры риска</div>
+          <div class="leaf-group">
+            <div class="leaf">Плечо до 5x</div>
+            <div class="leaf">R:R = 1:2</div>
+            <div class="leaf">До 5 сделок</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Branch 6: Движок анализа -->
+    <div class="branch c-blue">
+      <div class="branch-node">ДВИЖОК АНАЛИЗА</div>
+      <div class="children">
+        <div>
+          <div class="sub-node">10 технических индикаторов</div>
+          <div class="leaf-group">
+            <div class="leaf">RSI(14) — перепроданность/перекупленность</div>
+            <div class="leaf">MACD(12,26,9) — импульс и направление</div>
+            <div class="leaf">EMA 50 / EMA 200 — трендовые уровни</div>
+            <div class="leaf">Bollinger Bands(20,2) — волатильность</div>
+            <div class="leaf">StochRSI(14,14) — стохастический RSI</div>
+          </div>
+        </div>
+        <div>
+          <div class="sub-node">Подтверждающие</div>
+          <div class="leaf-group">
+            <div class="leaf">ADX(14) + DI — сила и направление тренда</div>
+            <div class="leaf">OBV — объёмный тренд и дивергенция</div>
+            <div class="leaf">VWAP(20) — средневзвешенная цена</div>
+            <div class="leaf">Volume Spike — всплеск объёма</div>
+            <div class="leaf">ATR(14) — размер стоп-лосса</div>
+          </div>
+        </div>
+        <div>
+          <div class="sub-node">Скоринг</div>
+          <div class="leaf-group">
+            <div class="leaf">Взвешенная сумма сигналов</div>
+            <div class="leaf">Сила = 0..1 по каждому индикатору</div>
+            <div class="leaf">Лучший сигнал среди 10 монет</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Branch 7: Инфраструктура -->
+    <div class="branch c-blue">
+      <div class="branch-node">ИНФРАСТРУКТУРА</div>
+      <div class="children">
+        <div>
+          <div class="sub-node">Данные</div>
+          <div class="leaf-group">
+            <div class="leaf">Binance REST API — свечи, цены</div>
+            <div class="leaf">Top 50 монет по объёму 24h</div>
+            <div class="leaf">До 1440 свечей (1H) на монету</div>
+          </div>
+        </div>
+        <div>
+          <div class="sub-node">Хранение</div>
+          <div class="leaf-group">
+            <div class="leaf">Turso Cloud DB (libsql)</div>
+            <div class="leaf">Сделки, баланс, состояние</div>
+          </div>
+        </div>
+        <div>
+          <div class="sub-node">Интерфейс</div>
+          <div class="leaf-group">
+            <div class="leaf">Next.js + lightweight-charts</div>
+            <div class="leaf">Real-time WebSocket графики</div>
+            <div class="leaf">Авто-цикл: каждые 60 сек</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+</div>
+
+<script>
+function drawAllLines() {
+  const map = document.getElementById('mindmap');
+  if (!map) { console.error('#mindmap not found'); return; }
+  const cRect = map.getBoundingClientRect();
+
+  const old = map.querySelector('svg.lines');
+  if (old) old.remove();
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.classList.add('lines');
+  svg.setAttribute('width', cRect.width);
+  svg.setAttribute('height', cRect.height);
+  svg.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:1;';
+  let lineCount = 0;
+
+  function rel(el) {
+    const r = el.getBoundingClientRect();
+    return {
+      cx: r.left - cRect.left + r.width/2,
+      cy: r.top - cRect.top + r.height/2,
+      left: r.left - cRect.left,
+      right: r.right - cRect.left,
+    };
+  }
+
+  function drawLine(x1, y1, x2, y2, color, width) {
+    const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    l.setAttribute('x1', Math.round(x1)); l.setAttribute('y1', Math.round(y1));
+    l.setAttribute('x2', Math.round(x2)); l.setAttribute('y2', Math.round(y2));
+    l.setAttribute('stroke', color); l.setAttribute('stroke-width', width);
+    l.setAttribute('stroke-linecap', 'round');
+    svg.appendChild(l);
+    lineCount++;
+  }
+
+  const lineStyles = [
+    { color: '#64748B', width: 2.5 },
+    { color: '#94A3B8', width: 2 },
+    { color: '#A8B4C2', width: 1.5 },
+    { color: '#B8C2CC', width: 1.2 },
+    { color: '#CBD5E1', width: 1 },
+  ];
+  function getLineStyle(depth) {
+    const s = lineStyles[Math.min(depth, lineStyles.length - 1)];
+    return { color: s.color, width: s.width };
+  }
+
+  function connect(parentEl, childEls, depth, dir) {
+    if (!childEls.length) return;
+    const p = rel(parentEl);
+    const startX = dir === 'left' ? p.left : p.right;
+    const startY = p.cy;
+    const style = getLineStyle(depth);
+
+    if (childEls.length === 1) {
+      const c = rel(childEls[0]);
+      const endX = dir === 'left' ? c.right : c.left;
+      const midY = Math.round((startY + c.cy) / 2);
+      drawLine(startX, midY, endX, midY, style.color, style.width);
+      return;
+    }
+
+    let closestEdge;
+    if (dir === 'left') {
+      closestEdge = Math.max(...childEls.map(ch => rel(ch).right));
+    } else {
+      closestEdge = Math.min(...childEls.map(ch => rel(ch).left));
+    }
+    const midpoint = startX + (closestEdge - startX) / 2;
+    const childClearance = 16;
+    const midFromChild = dir === 'left' ? closestEdge + childClearance : closestEdge - childClearance;
+    const midX = dir === 'left'
+      ? Math.min(midpoint, midFromChild)
+      : Math.max(midpoint, midFromChild);
+
+    drawLine(startX, startY, midX, startY, style.color, style.width);
+    const allCYs = childEls.map(ch => rel(ch).cy);
+    const minY = Math.min(startY, ...allCYs);
+    const maxY = Math.max(startY, ...allCYs);
+    drawLine(midX, minY, midX, maxY, style.color, style.width);
+    childEls.forEach(ch => {
+      const c = rel(ch);
+      const endX = dir === 'left' ? c.right : c.left;
+      drawLine(midX, c.cy, endX, c.cy, style.color, style.width);
+    });
+  }
+
+  const NODE_SEL = '.branch-node, .sub-node, .leaf, .deep-node';
+  const CONTAINER_SEL = ':scope > .children, :scope > .leaf-group, :scope > .deep-group';
+
+  function processChildren(parentNodeEl, containerEl, depth, dir) {
+    if (!containerEl) return;
+    const childNodeEls = [];
+    for (const wrapper of containerEl.children) {
+      const nodeEl = wrapper.matches?.(NODE_SEL) ? wrapper : wrapper.querySelector(NODE_SEL);
+      if (nodeEl) childNodeEls.push(nodeEl);
+    }
+    if (!childNodeEls.length) return;
+    connect(parentNodeEl, childNodeEls, depth, dir);
+    for (const wrapper of containerEl.children) {
+      const nodeEl = wrapper.matches?.(NODE_SEL) ? wrapper : wrapper.querySelector(NODE_SEL);
+      if (!nodeEl) continue;
+      wrapper.querySelectorAll(CONTAINER_SEL).forEach(nc =>
+        processChildren(nodeEl, nc, depth + 1, dir)
+      );
+    }
+  }
+
+  const rootNode = map.querySelector('.root-node');
+  if (!rootNode) { console.error('.root-node not found'); return; }
+
+  // Left side
+  const leftBranches = map.querySelectorAll('.left-side > .branch');
+  const leftBranchNodes = [];
+  leftBranches.forEach(branch => {
+    const bNode = branch.querySelector('.branch-node');
+    if (bNode) leftBranchNodes.push(bNode);
+  });
+  if (leftBranchNodes.length) {
+    connect(rootNode, leftBranchNodes, 0, 'left');
+  }
+  leftBranches.forEach(branch => {
+    const bNode = branch.querySelector('.branch-node');
+    if (!bNode) return;
+    processChildren(bNode, branch.querySelector(':scope > .children'), 1, 'left');
+  });
+
+  // Right side
+  const rightBranches = map.querySelectorAll('.right-side > .branch');
+  const rightBranchNodes = [];
+  rightBranches.forEach(branch => {
+    const bNode = branch.querySelector('.branch-node');
+    if (bNode) rightBranchNodes.push(bNode);
+  });
+  if (rightBranchNodes.length) {
+    connect(rootNode, rightBranchNodes, 0, 'right');
+  }
+  rightBranches.forEach(branch => {
+    const bNode = branch.querySelector('.branch-node');
+    if (!bNode) return;
+    processChildren(bNode, branch.querySelector(':scope > .children'), 1, 'right');
+  });
+
+  map.insertBefore(svg, map.firstChild);
+  console.log('Drew ' + lineCount + ' lines');
+}
+
+window.addEventListener('load', () => setTimeout(drawAllLines, 300));
+</script>
+</body>
+</html>
