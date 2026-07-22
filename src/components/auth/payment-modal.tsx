@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useSession, signOut } from 'next-auth/react';
+import { signOut } from 'next-auth/react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, CreditCard, ExternalLink, CheckCircle, Clock, LogOut, Shield } from 'lucide-react';
@@ -21,7 +21,7 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
   const [countdown, setCountdown] = useState(0);
   const [checkingPayment, setCheckingPayment] = useState(false);
 
-  const userId = (session?.user as any)?.id;
+  // Payment confirmation uses server-side session auth
 
   // Start countdown to prevent spam
   useEffect(() => {
@@ -39,7 +39,6 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
   }, [confirmed]);
 
   const handleConfirmPayment = async () => {
-    if (!userId) return;
     setError('');
     setVerifying(true);
 
@@ -48,7 +47,6 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-user-id': userId,
         },
         body: JSON.stringify({ action: 'confirm-payment' }),
       });

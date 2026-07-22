@@ -35,9 +35,7 @@ export default function Home() {
     if (!userId) return;
     setCheckingSub(true);
     try {
-      const res = await fetch('/api/subscription', {
-        headers: { 'x-user-id': userId },
-      });
+      const res = await fetch('/api/subscription');
       if (res.ok) {
         const data = await res.json();
         setSubDays(data.daysRemaining ?? 0);
