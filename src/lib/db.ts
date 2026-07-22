@@ -20,13 +20,8 @@ function getClient(): Client {
 
 // Lazy proxy — real connection created only on first actual query
 export const tursoDb = new Proxy({} as Client, {
-  get(_target, prop, receiver) {
-    const client = getClient();
-    const value = Reflect.get(client, prop, receiver);
-    if (typeof value === 'function') {
-      return value.bind(client);
-    }
-    return value;
+  get(_, prop) {
+    return (getClient() as any)[prop];
   },
 });
 
