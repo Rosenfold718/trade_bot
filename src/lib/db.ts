@@ -18,12 +18,9 @@ function getClient(): Client {
   return _client;
 }
 
-// Lazy proxy — real connection created only on first actual query
-export const tursoDb = new Proxy({} as Client, {
-  get(_, prop) {
-    return (getClient() as any)[prop];
-  },
-});
+// Export getClient for direct use (Proxy breaks private class fields in @libsql/client)
+export { getClient as getTursoClient };
+export const tursoDb = { execute: (...args: any[]) => getClient().execute(...args) as any, batch: (...args: any[]) => getClient().batch(...args) as any };
 
 // ============================================================
 // Schema Initialization (per-user)

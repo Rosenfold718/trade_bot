@@ -22,12 +22,8 @@ function getClient(): Client {
   return _client;
 }
 
-// Lazy proxy — connection created only on first query
-export const authDb = new Proxy({} as Client, {
-  get(_, prop) {
-    return (getClient() as any)[prop];
-  },
-});
+// Export getClient for direct use (Proxy breaks private class fields in @libsql/client)
+export { getClient as getAuthClient };
 
 // ============================================================
 // User queries
@@ -51,7 +47,7 @@ export interface AuthSubscription {
 }
 
 export async function findUserByUsername(username: string): Promise<AuthUser | null> {
-  const result = await authDb.execute(
+  const result = await getClient().execute(
     'SELECT * FROM "User" WHERE username = ?',
     [username]
   );
@@ -67,7 +63,7 @@ export async function findUserByUsername(username: string): Promise<AuthUser | n
 }
 
 export async function findUserById(id: string): Promise<AuthUser | null> {
-  const result = await authDb.execute(
+  const result = await getClient().execute(
     'SELECT * FROM "User" WHERE id = ?',
     [id]
   );
@@ -88,14 +84,14 @@ export async function createUser(
   hashedPassword: string,
   subscriptionData?: { isActive: boolean; expiresAt: string; lastPaymentAt?: string }
 ): Promise<AuthUser> {
-  await authDb.execute(
+  await getClient().execute(
     'INSERT INTO "User" (id, username, password, createdAt, updatedAt) VALUES (?, ?, ?, datetime("now"), datetime("now"))',
     [id, username, hashedPassword]
   );
 
   if (subscriptionData) {
     const subId = `sub-${id}`;
-    await authDb.execute(
+    await getClient().execute(
       'INSERT OR IGNORE INTO "Subscription" (id, userId, isActive, startsAt, expiresAt, lastPaymentAt) VALUES (?, ?, ?, datetime("now"), ?, ?)',
       [subId, id, subscriptionData.isActive ? 1 : 0, subscriptionData.expiresAt, subscriptionData.lastPaymentAt || null]
     );
@@ -116,14 +112,14 @@ export async function upsertUser(
   const existing = await findUserByUsername(username);
   if (existing) {
     // Update password
-    await authDb.execute(
+    await getClient().execute(
       'UPDATE "User" SET password = ?, updatedAt = datetime("now") WHERE id = ?',
       [hashedPassword, existing.id]
     );
   } else {
     // Create new
     const newId = id || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    await authDb.execute(
+    await getClient().execute(
       'INSERT INTO "User" (id, username, password, createdAt, updatedAt) VALUES (?, ?, ?, datetime("now"), datetime("now"))',
       [newId, username, hashedPassword]
     );
@@ -133,7 +129,7 @@ export async function upsertUser(
   if (subscriptionData) {
     const userRow = await findUserByUsername(username);
     if (userRow) {
-      await authDb.execute(
+      await getClient().execute(
         `INSERT INTO "Subscription" (id, userId, isActive, startsAt, expiresAt, lastPaymentAt)
          VALUES (?, ?, ?, datetime("now"), ?, ?)
          ON CONFLICT(userId) DO UPDATE SET
@@ -158,7 +154,7 @@ export async function upsertUser(
 }
 
 export async function getAllUsers(): Promise<Array<AuthUser & { subscription: AuthSubscription | null }>> {
-  const result = await authDb.execute(
+  const result = await getClient().execute(
     `SELECT u.id, u.username, u.createdAt,
             s.id as sub_id, s.userId as sub_userId, s.isActive as sub_isActive,
             s.startsAt as sub_startsAt, s.expiresAt as sub_expiresAt, s.lastPaymentAt as sub_lastPaymentAt
@@ -188,7 +184,7 @@ export async function getAllUsers(): Promise<Array<AuthUser & { subscription: Au
 // ============================================================
 
 export async function findSubscriptionByUserId(userId: string): Promise<AuthSubscription | null> {
-  const result = await authDb.execute(
+  const result = await getClient().execute(
     'SELECT * FROM "Subscription" WHERE userId = ?',
     [userId]
   );
@@ -208,7 +204,7 @@ export async function upsertSubscription(
   userId: string,
   data: { isActive: boolean; startsAt: string; expiresAt: string; lastPaymentAt?: string }
 ): Promise<AuthSubscription> {
-  await authDb.execute(
+  await getClient().execute(
     `INSERT INTO "Subscription" (id, userId, isActive, startsAt, expiresAt, lastPaymentAt)
      VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(userId) DO UPDATE SET
