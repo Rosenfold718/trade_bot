@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/prisma-auth';
+import { initAuthTables } from '@/lib/init-auth-tables';
 import { getAuthUserId } from '@/lib/auth-helpers';
 
 const SUBSCRIPTION_DURATION_DAYS = 30;
 
 export async function GET(request: NextRequest) {
   try {
+    await initAuthTables();
     const userId = await getAuthUserId(request);
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -39,6 +41,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    await initAuthTables();
     const userId = await getAuthUserId(request);
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

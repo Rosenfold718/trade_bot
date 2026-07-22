@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/prisma-auth';
+import { initAuthTables } from '@/lib/init-auth-tables';
 import bcrypt from 'bcryptjs';
 
 // Secret admin setup key — change this in production!
@@ -14,6 +15,7 @@ const ADMIN_SETUP_KEY = process.env.ADMIN_SETUP_KEY || 'trade-bot-admin-2024';
  */
 export async function POST(request: NextRequest) {
   try {
+    await initAuthTables();
     const authHeader = request.headers.get('authorization');
     if (!authHeader || authHeader !== `Bearer ${ADMIN_SETUP_KEY}`) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -89,6 +91,7 @@ export async function POST(request: NextRequest) {
  */
 export async function GET(request: NextRequest) {
   try {
+    await initAuthTables();
     const authHeader = request.headers.get('authorization');
     if (!authHeader || authHeader !== `Bearer ${ADMIN_SETUP_KEY}`) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

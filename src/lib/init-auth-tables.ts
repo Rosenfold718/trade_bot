@@ -1,21 +1,19 @@
 import { createClient } from '@libsql/client';
 
-const TURSO_URL = process.env.TURSO_DATABASE_URL!;
-const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN!;
-
-let _client: ReturnType<typeof createClient> | null = null;
 let _done = false;
-
-function getClient() {
-  if (!_client) {
-    _client = createClient({ url: TURSO_URL, authToken: TURSO_AUTH_TOKEN });
-  }
-  return _client;
-}
 
 export async function initAuthTables(): Promise<void> {
   if (_done) return;
-  const client = getClient();
+
+  const TURSO_URL = process.env.TURSO_DATABASE_URL;
+  const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN;
+
+  if (!TURSO_URL || !TURSO_AUTH_TOKEN) {
+    console.warn('[initAuthTables] TURSO_DATABASE_URL or TURSO_AUTH_TOKEN not set, skipping.');
+    return;
+  }
+
+  const client = createClient({ url: TURSO_URL, authToken: TURSO_AUTH_TOKEN });
 
   const statements = `
     CREATE TABLE IF NOT EXISTS "User" (

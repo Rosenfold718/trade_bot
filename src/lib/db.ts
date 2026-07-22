@@ -1,11 +1,15 @@
 import { createClient, type Client } from '@libsql/client';
 
-const TURSO_URL = process.env.TURSO_DATABASE_URL!;
-const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN!;
+const TURSO_URL = process.env.TURSO_DATABASE_URL;
+const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN;
+
+if (!TURSO_URL || !TURSO_AUTH_TOKEN) {
+  console.warn('[db] TURSO_DATABASE_URL or TURSO_AUTH_TOKEN not set. Trading DB will not work.');
+}
 
 export const tursoDb: Client = createClient({
-  url: TURSO_URL,
-  authToken: TURSO_AUTH_TOKEN,
+  url: TURSO_URL || 'file:./dev-null.db',
+  authToken: TURSO_AUTH_TOKEN || '',
 });
 
 // ============================================================

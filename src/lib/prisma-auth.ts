@@ -1,37 +1,19 @@
 import { PrismaClient } from '@prisma/client';
-import { PrismaLibSQL } from '@prisma/adapter-libsql';
+import { PrismaLibSql } from '@prisma/adapter-libsql';
 import { createClient } from '@libsql/client';
-import { initAuthTables } from '@/lib/init-auth-tables';
 
-let _db: PrismaClient | null = null;
-let _initPromise: Promise<void> | null = null;
+const TURSO_URL = process.env.TURSO_DATABASE_URL;
+const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN;
 
-async function ensureInitialized() {
-  if (_db) return;
-  if (_initPromise) {
-    await _initPromise;
-    return;
-  }
-  _initPromise = (async () => {
-    await initAuthTables();
-    const libsql = createClient({
-      url: process.env.TURSO_DATABASE_URL!,
-      authToken: process.env.TURSO_AUTH_TOKEN!,
-    });
-    const adapter = new PrismaLibSQL(libsql);
-    _db = new PrismaClient({ adapter });
-  })();
-  await _initPromise;
+if (!TURSO_URL || !TURSO_AUTH_TOKEN) {
+  console.warn('[prisma-auth] TURSO_DATABASE_URL or TURSO_AUTH_TOKEN not set. Auth will not work.');
 }
 
-// Proxy so that callers can do `await db.user.findUnique(...)` transparently
-export const db = new Proxy({} as PrismaClient, {
-  get(_target, prop) {
-    return async (...args: any[]) => {
-      await ensureInitialized();
-      const fn = (_db as any)[prop];
-      if (typeof fn === 'function') return fn.bind(_db)(...args);
-      return fn;
-    };
-  },
+const libsql = createClient({
+  url: TURSO_URL || 'file:./dev-null.db',
+  authToken: TURSO_AUTH_TOKEN || '',
 });
+
+const adapter = new PrismaLibSql(libsql);
+
+export const db = new PrismaClient({ adapter });
