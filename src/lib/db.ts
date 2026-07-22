@@ -92,14 +92,18 @@ const SCHEMA_SQL = `
 
 let schemaInitialized = false;
 
-// Migration: add user_id to existing tables that were created without it.
+// Migration: add columns to existing tables that were created without them.
 // These run on EVERY initDB call (with try-catch) so they are idempotent.
 const MIGRATION_SQLS = [
+  // Phase 1: add user_id
   "ALTER TABLE trader_state ADD COLUMN user_id TEXT DEFAULT '__migrated__'",
   "ALTER TABLE trades ADD COLUMN user_id TEXT DEFAULT '__migrated__'",
   "ALTER TABLE indicator_weights ADD COLUMN user_id TEXT DEFAULT '__global__'",
   "ALTER TABLE backtest_results ADD COLUMN user_id TEXT DEFAULT '__global__'",
   "ALTER TABLE activity_log ADD COLUMN user_id TEXT DEFAULT '__global__'",
+  // Phase 2: add strategy_id (added after initial table creation)
+  "ALTER TABLE trader_state ADD COLUMN strategy_id TEXT DEFAULT 'momentum'",
+  "ALTER TABLE trades ADD COLUMN strategy_id TEXT DEFAULT 'momentum'",
 ];
 
 export async function initDB(): Promise<void> {
@@ -107,6 +111,15 @@ export async function initDB(): Promise<void> {
   for (const sql of MIGRATION_SQLS) {
     try { await tursoDb.execute(sql); } catch { /* column already exists, ignore */ }
   }
+
+  // Clean up orphaned old-format rows (created before user_id + strategy_id existed)
+  try {
+    // Delete trader_state rows that have user_id = '__migrated__' (old format, can't be recovered)
+    await tursoDb.execute("DELETE FROM trader_state WHERE user_id = '__migrated__'");
+    // Delete trades that have user_id = '__migrated__' (old format)
+    await tursoDb.execute("DELETE FROM trades WHERE user_id = '__migrated__'");
+  } catch { /* ignore cleanup errors */ }
+
   if (schemaInitialized) return;
   try {
     await tursoDb.batch(SCHEMA_SQL.split(';').filter(s => s.trim().length > 0).map(s => s.trim() + ';'));
@@ -129,17 +142,29 @@ export async function initUserTradingData(userId: string): Promise<void> {
   await initDB();
 
   for (const strategyId of STRATEGY_IDS) {
-    const id = `${userId}-${strategyId}`;
-    await tursoDb.execute(
-      `INSERT OR IGNORE INTO trader_state (id, user_id, strategy_id, balance, borrowed_funds, debt_to_repay, is_active)
-       VALUES (?, ?, ?, 100, 0, 0, 1)`,
-      [id, userId, strategyId]
-    );
-    // Fix migrated rows: update user_id from '__migrated__' to actual userId
-    await tursoDb.execute(
-      `UPDATE trader_state SET user_id = ? WHERE id = ? AND user_id = '__migrated__'`,
-      [userId, id]
-    );
+    try {
+      const id = `${userId}-${strategyId}`;
+      await tursoDb.execute(
+        `INSERT OR IGNORE INTO trader_state (id, user_id, strategy_id, balance, borrowed_funds, debt_to_repay, is_active)
+         VALUES (?, ?, ?, 100, 0, 0, 1)`,
+        [id, userId, strategyId]
+      );
+      // Verify the row exists and has correct user_id + strategy_id
+      const check = await tursoDb.execute(
+        `SELECT id FROM trader_state WHERE id = ? AND user_id = ? AND strategy_id = ?`,
+        [id, userId, strategyId]
+      );
+      if (check.rows.length === 0) {
+        // Row might exist with wrong values — force update
+        await tursoDb.execute(
+          `INSERT OR REPLACE INTO trader_state (id, user_id, strategy_id, balance, borrowed_funds, debt_to_repay, is_active)
+           VALUES (?, ?, ?, 100, 0, 0, 1)`,
+          [id, userId, strategyId]
+        );
+      }
+    } catch (err) {
+      console.error(`[initUserTradingData] Failed for strategy ${strategyId}:`, err);
+    }
   }
 
   // Initialize default indicator weights for user

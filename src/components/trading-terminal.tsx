@@ -136,6 +136,7 @@ export default function TradingTerminal() {
   }, [indicators]);
 
   const initDone = useRef(false);
+  const [initFailed, setInitFailed] = useState(false);
   const openTradesRef = useRef(openTrades);
   openTradesRef.current = openTrades;
 
@@ -148,6 +149,7 @@ export default function TradingTerminal() {
         STRATEGIES.map(async (s) => {
           try {
             const res = await fetch(`/api/init?strategyId=${s.id}`);
+            if (!res.ok) return { strategyId: s.id, data: {} };
             const data = await res.json();
             return { strategyId: s.id, data };
           } catch {
@@ -156,8 +158,12 @@ export default function TradingTerminal() {
         })
       );
 
+      let anyStateLoaded = false;
       for (const { strategyId, data } of results) {
-        if (data.state) setStrategyTraderState(strategyId, data.state as TraderState);
+        if (data.state) {
+          setStrategyTraderState(strategyId, data.state as TraderState);
+          anyStateLoaded = true;
+        }
         if (data.openTrades) setStrategyOpenTrades(strategyId, data.openTrades as Trade[]);
         if (data.recentTrades) setStrategyRecentTrades(strategyId, data.recentTrades as Trade[]);
       }
@@ -165,13 +171,27 @@ export default function TradingTerminal() {
       // Also set the global weights (shared across strategies)
       const firstData = results[0]?.data;
       if (firstData?.weights) setWeights(firstData.weights as IndicatorWeight[]);
+
+      // If no state loaded at all, allow retry
+      if (!anyStateLoaded) {
+        initDone.current = false;
+        setInitFailed(true);
+      }
     } catch (err) {
       console.error('Init error:', err);
       initDone.current = false;
+      setInitFailed(true);
     }
   }, [setWeights, setStrategyTraderState, setStrategyOpenTrades, setStrategyRecentTrades]);
 
   useEffect(() => { initData(); }, [initData]);
+
+  // Retry init if it failed — check every 5s until data loads
+  useEffect(() => {
+    if (!initFailed) return;
+    const interval = setInterval(() => { initData(); }, 5000);
+    return () => clearInterval(interval);
+  }, [initFailed, initData]);
 
   const fetchCandles = useCallback(async (symbol: string, tf: Timeframe) => {
     setChartLoading(true);
