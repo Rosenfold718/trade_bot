@@ -5,7 +5,8 @@ import { useSession, signOut } from 'next-auth/react';
 import dynamic from 'next/dynamic';
 import AuthScreen from '@/components/auth/auth-screen';
 import PaymentModal from '@/components/auth/payment-modal';
-import { Loader2, LogOut, Clock, Shield } from 'lucide-react';
+import { Loader2, LogOut, Clock, Shield, CreditCard } from 'lucide-react';
+import AdminPaymentsPanel from '@/components/auth/admin-payments-panel';
 
 const TradingTerminal = dynamic(() => import('@/components/trading-terminal'), {
   ssr: false,
@@ -21,11 +22,16 @@ const TradingTerminal = dynamic(() => import('@/components/trading-terminal'), {
 
 type AppView = 'auth' | 'payment' | 'terminal';
 
+const ADMIN_SETUP_KEY = 'trade-bot-admin-2024';
+
 export default function Home() {
   const { data: session, status, update: updateSession } = useSession();
   const [view, setView] = useState<AppView>('auth');
   const [subDays, setSubDays] = useState(0);
   const [checkingSub, setCheckingSub] = useState(false);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+
+  const isAdmin = username === 'admin';
 
   const userId = (session?.user as any)?.id;
   const username = (session?.user as any)?.username;
@@ -107,7 +113,8 @@ export default function Home() {
   // ── Terminal ──
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-[#0a0a0f]">
-      <SubscriptionBar daysRemaining={subDays} username={username} onLogout={handleLogout} />
+      <SubscriptionBar daysRemaining={subDays} username={username} onLogout={handleLogout} onAdminPayments={isAdmin ? () => setShowAdminPanel(p => !p) : undefined} />
+      <AdminPaymentsPanel open={showAdminPanel} onClose={() => setShowAdminPanel(false)} />
       <div className="flex-1 min-h-0 overflow-hidden">
         <TradingTerminal />
       </div>
@@ -115,8 +122,8 @@ export default function Home() {
   );
 }
 
-function SubscriptionBar({ daysRemaining, username, onLogout }: {
-  daysRemaining: number; username?: string; onLogout: () => void;
+function SubscriptionBar({ daysRemaining, username, onLogout, onAdminPayments }: {
+  daysRemaining: number; username?: string; onLogout: () => void; onAdminPayments?: () => void;
 }) {
   const isLow = daysRemaining <= 7;
   const isExpired = daysRemaining <= 0;
@@ -127,6 +134,12 @@ function SubscriptionBar({ daysRemaining, username, onLogout }: {
       'bg-emerald-500/5 border-b border-emerald-500/10'
     }`}>
       <div className="flex items-center gap-3">
+        {onAdminPayments && (
+          <button onClick={onAdminPayments} className="flex items-center gap-1 text-amber-400/70 hover:text-amber-400 transition-colors">
+            <CreditCard className="w-3 h-3" />
+            Платежи
+          </button>
+        )}
         <div className="flex items-center gap-1.5">
           <Shield className={`w-3 h-3 ${isExpired ? 'text-red-400' : isLow ? 'text-amber-400' : 'text-emerald-400/60'}`} />
           <span className={isExpired ? 'text-red-400 font-medium' : isLow ? 'text-amber-400' : 'text-white/40'}>
@@ -140,10 +153,12 @@ function SubscriptionBar({ daysRemaining, username, onLogout }: {
           </span>
         </div>
       </div>
-      <button onClick={onLogout} className="flex items-center gap-1 text-white/30 hover:text-white/60 transition-colors">
-        <LogOut className="w-3 h-3" />
-        Выйти
-      </button>
+      <div className="flex items-center gap-3">
+        <button onClick={onLogout} className="flex items-center gap-1 text-white/30 hover:text-white/60 transition-colors">
+          <LogOut className="w-3 h-3" />
+          Выйти
+        </button>
+      </div>
     </div>
   );
 }
