@@ -44,6 +44,9 @@ export async function POST(request: NextRequest) {
     };
     const strategyId = rawStrategyId || 'momentum';
 
+    // Ensure user has trading data for this strategy
+    try { await getTraderState(userId, strategyId); } catch { await initUserTradingData(userId); }
+
     if (action === 'analyze') {
       const sym = rest.symbol as string | undefined;
       if (!sym) return NextResponse.json({ error: 'Symbol required' }, { status: 400 });
