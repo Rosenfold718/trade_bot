@@ -31,10 +31,9 @@ export default function Home() {
   const [checkingSub, setCheckingSub] = useState(false);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
 
-  const isAdmin = username === 'admin';
-
   const userId = (session?.user as any)?.id;
   const username = (session?.user as any)?.username;
+  const isAdmin = username === 'admin';
 
   // Check subscription when user logs in
   const checkSubscription = useCallback(async () => {
