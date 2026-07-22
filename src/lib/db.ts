@@ -92,10 +92,23 @@ const SCHEMA_SQL = `
 
 let schemaInitialized = false;
 
+// Migration: add user_id to existing tables that were created without it
+const MIGRATION_SQLS = [
+  "ALTER TABLE trader_state ADD COLUMN user_id TEXT DEFAULT '__migrated__'",
+  "ALTER TABLE trades ADD COLUMN user_id TEXT DEFAULT '__migrated__'",
+  "ALTER TABLE indicator_weights ADD COLUMN user_id TEXT DEFAULT '__global__'",
+  "ALTER TABLE backtest_results ADD COLUMN user_id TEXT DEFAULT '__global__'",
+  "ALTER TABLE activity_log ADD COLUMN user_id TEXT DEFAULT '__global__'",
+];
+
 export async function initDB(): Promise<void> {
   if (schemaInitialized) return;
   try {
     await tursoDb.batch(SCHEMA_SQL.split(';').filter(s => s.trim().length > 0).map(s => s.trim() + ';'));
+    // Run migrations — each ALTER TABLE is wrapped in try-catch since column may already exist
+    for (const sql of MIGRATION_SQLS) {
+      try { await tursoDb.execute(sql); } catch { /* column already exists, ignore */ }
+    }
     schemaInitialized = true;
     console.log('✅ Database schema initialized (per-user)');
   } catch (err) {
