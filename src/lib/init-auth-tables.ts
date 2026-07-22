@@ -68,7 +68,7 @@ export async function initAuthTables(): Promise<void> {
       "lastPaymentAt" DATETIME,
       CONSTRAINT "Subscription_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS "Subscription_userId_key" ON "Subscription"("userId"),
+    CREATE UNIQUE INDEX IF NOT EXISTS "Subscription_userId_key" ON "Subscription"("userId");
 
     CREATE TABLE IF NOT EXISTS "PaymentRequest" (
       "id" TEXT NOT NULL PRIMARY KEY,
