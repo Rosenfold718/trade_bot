@@ -5,15 +5,16 @@ let _done = false;
 export async function initAuthTables(): Promise<void> {
   if (_done) return;
 
-  const TURSO_URL = process.env.TURSO_DATABASE_URL;
-  const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN;
+  const url = process.env.TURSO_DATABASE_URL;
+  const token = process.env.TURSO_AUTH_TOKEN;
 
-  if (!TURSO_URL || !TURSO_AUTH_TOKEN) {
-    console.warn('[initAuthTables] TURSO_DATABASE_URL or TURSO_AUTH_TOKEN not set, skipping.');
-    return;
+  if (!url || !token) {
+    throw new Error(
+      '[initAuthTables] Missing TURSO_DATABASE_URL or TURSO_AUTH_TOKEN environment variables.'
+    );
   }
 
-  const client = createClient({ url: TURSO_URL, authToken: TURSO_AUTH_TOKEN });
+  const client = createClient({ url, authToken: token });
 
   const statements = `
     CREATE TABLE IF NOT EXISTS "User" (

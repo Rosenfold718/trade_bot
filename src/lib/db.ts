@@ -1,15 +1,33 @@
 import { createClient, type Client } from '@libsql/client';
 
-const TURSO_URL = process.env.TURSO_DATABASE_URL;
-const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN;
+let _client: Client | null = null;
 
-if (!TURSO_URL || !TURSO_AUTH_TOKEN) {
-  console.warn('[db] TURSO_DATABASE_URL or TURSO_AUTH_TOKEN not set. Trading DB will not work.');
+function getClient(): Client {
+  if (_client) return _client;
+
+  const url = process.env.TURSO_DATABASE_URL;
+  const token = process.env.TURSO_AUTH_TOKEN;
+
+  if (!url || !token) {
+    throw new Error(
+      '[db] Missing TURSO_DATABASE_URL or TURSO_AUTH_TOKEN environment variables.'
+    );
+  }
+
+  _client = createClient({ url, authToken: token });
+  return _client;
 }
 
-export const tursoDb: Client = createClient({
-  url: TURSO_URL || 'file:./dev-null.db',
-  authToken: TURSO_AUTH_TOKEN || '',
+// Lazy proxy — real connection created only on first actual query
+export const tursoDb = new Proxy({} as Client, {
+  get(_target, prop, receiver) {
+    const client = getClient();
+    const value = Reflect.get(client, prop, receiver);
+    if (typeof value === 'function') {
+      return value.bind(client);
+    }
+    return value;
+  },
 });
 
 // ============================================================
@@ -203,7 +221,7 @@ export async function resetTrader(userId: string, strategyId: string = 'momentum
   await initDB();
   const id = `${userId}-${strategyId}`;
   await tursoDb.execute(
-    'UPDATE trader_state SET balance = 100, borrowed_funds = 0, debt_to_repay = 0, is_active = 1, updated_at = datetime(\'now\') WHERE id = ? AND user_id = ?',
+    "UPDATE trader_state SET balance = 100, borrowed_funds = 0, debt_to_repay = 0, is_active = 1, updated_at = datetime('now') WHERE id = ? AND user_id = ?",
     [id, userId]
   );
   // Close all open trades for this user/strategy

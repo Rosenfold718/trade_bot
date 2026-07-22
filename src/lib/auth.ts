@@ -4,9 +4,6 @@ import { db as prisma } from '@/lib/prisma-auth';
 import { initAuthTables } from '@/lib/init-auth-tables';
 import bcrypt from 'bcryptjs';
 
-// Ensure auth tables exist on module load (fire-and-forget, safe due to IF NOT EXISTS)
-initAuthTables().catch(err => console.error('[auth] Failed to init auth tables:', err));
-
 export const authOptions: NextAuthOptions = {
   providers: [
     CredentialsProvider({
