@@ -10,20 +10,30 @@ export function getAuthDb(): PrismaClient {
   const url = process.env.TURSO_DATABASE_URL;
   const token = process.env.TURSO_AUTH_TOKEN;
 
+  // Log for debugging
+  console.log('[prisma-auth] TURSO_DATABASE_URL:', url ? `${url.slice(0, 20)}...` : 'MISSING');
+  console.log('[prisma-auth] TURSO_AUTH_TOKEN:', token ? '***SET***' : 'MISSING');
+
   if (!url || !token) {
-    throw new Error('[prisma-auth] Missing TURSO_DATABASE_URL or TURSO_AUTH_TOKEN');
+    throw new Error(`[prisma-auth] Missing env vars. TURSO_DATABASE_URL=${url ? 'set' : 'MISSING'}, TURSO_AUTH_TOKEN=${token ? 'set' : 'MISSING'}`);
   }
 
   const libsql = createClient({ url, authToken: token });
   const adapter = new PrismaLibSql(libsql);
-  _db = new PrismaClient({ adapter });
+
+  // Explicitly set datasourceUrl so Prisma doesn't read undefined DATABASE_URL
+  _db = new PrismaClient({
+    adapter,
+    datasources: {
+      db: { url },
+    },
+  });
+
   return _db;
 }
 
-// Backward-compatible alias
 export const db = new Proxy({} as PrismaClient, {
   get(_, prop) {
-    // Use direct property access (not Reflect.get) so Prisma getters get correct `this`
     return (getAuthDb() as any)[prop];
   },
 });
