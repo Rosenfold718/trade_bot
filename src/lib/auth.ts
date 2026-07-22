@@ -1,6 +1,6 @@
 import type { NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
-import { db as prisma } from '@/lib/prisma-auth';
+import { findUserByUsername } from '@/lib/auth-db';
 import { initAuthTables } from '@/lib/init-auth-tables';
 import bcrypt from 'bcryptjs';
 
@@ -18,9 +18,7 @@ export const authOptions: NextAuthOptions = {
 
         try {
           await initAuthTables();
-          const user = await prisma.user.findUnique({
-            where: { username: credentials.username },
-          });
+          const user = await findUserByUsername(credentials.username);
 
           if (!user) return null;
 

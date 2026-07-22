@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAuthDb } from '@/lib/prisma-auth';
+import { findUserByUsername, createUser, getAllUsers } from '@/lib/auth-db';
 import { initAuthTables } from '@/lib/init-auth-tables';
 import bcrypt from 'bcryptjs';
 
@@ -28,29 +28,25 @@ export async function GET(request: Request) {
   if (!hasError) {
     // 2. Check if admin exists
     try {
-      const db = getAuthDb();
-      const existing = await db.user.findUnique({ where: { username: 'admin' } });
+      const existing = await findUserByUsername('admin');
       if (existing) {
         lines.push('ℹ️ Админ уже существует, пропускаю');
       } else {
         const hashedPassword = await bcrypt.hash('Admin123', 12);
         const farFuture = new Date();
         farFuture.setFullYear(farFuture.getFullYear() + 10);
+        const userId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-        await db.user.create({
-          data: {
-            username: 'admin',
-            password: hashedPassword,
-            subscription: {
-              create: {
-                isActive: true,
-                startsAt: new Date(),
-                expiresAt: farFuture,
-                lastPaymentAt: new Date(),
-              },
-            },
-          },
-        });
+        await createUser(
+          userId,
+          'admin',
+          hashedPassword,
+          {
+            isActive: true,
+            expiresAt: farFuture.toISOString(),
+            lastPaymentAt: new Date().toISOString(),
+          }
+        );
         lines.push('✅ Админ создан: login=<b>admin</b> password=<b>Admin123</b>');
       }
     } catch (err: any) {
@@ -60,11 +56,7 @@ export async function GET(request: Request) {
 
     // 3. Show all users
     try {
-      const db = getAuthDb();
-      const users = await db.user.findMany({
-        select: { username: true, createdAt: true },
-        orderBy: { createdAt: 'desc' },
-      });
+      const users = await getAllUsers();
       lines.push(`📊 Пользователей в базе: ${users.length}`);
       for (const u of users) {
         lines.push(`   → ${u.username}`);

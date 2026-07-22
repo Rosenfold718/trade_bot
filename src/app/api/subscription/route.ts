@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/prisma-auth';
+import { findSubscriptionByUserId, upsertSubscription } from '@/lib/auth-db';
 import { initAuthTables } from '@/lib/init-auth-tables';
 import { getAuthUserId } from '@/lib/auth-helpers';
 
@@ -13,16 +13,14 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const subscription = await db.subscription.findUnique({
-      where: { userId },
-    });
+    const subscription = await findSubscriptionByUserId(userId);
 
     if (!subscription) {
       return NextResponse.json({ isActive: false, requiresPayment: true, daysRemaining: 0 });
     }
 
     const now = new Date();
-    const isActive = subscription.isActive && new Date(subscription.expiresAt) > now;
+    const isActive = subscription.isActive === 1 && new Date(subscription.expiresAt) > now;
 
     return NextResponse.json({
       isActive,
@@ -54,21 +52,11 @@ export async function POST(request: NextRequest) {
       const now = new Date();
       const expiresAt = new Date(now.getTime() + SUBSCRIPTION_DURATION_DAYS * 24 * 60 * 60 * 1000);
 
-      const subscription = await db.subscription.upsert({
-        where: { userId },
-        create: {
-          userId,
-          isActive: true,
-          startsAt: now,
-          expiresAt,
-          lastPaymentAt: now,
-        },
-        update: {
-          isActive: true,
-          startsAt: now,
-          expiresAt,
-          lastPaymentAt: now,
-        },
+      const subscription = await upsertSubscription(userId, {
+        isActive: true,
+        startsAt: now.toISOString(),
+        expiresAt: expiresAt.toISOString(),
+        lastPaymentAt: now.toISOString(),
       });
 
       return NextResponse.json({

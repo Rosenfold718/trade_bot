@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/prisma-auth';
+import { upsertUser, getAllUsers } from '@/lib/auth-db';
 import { initAuthTables } from '@/lib/init-auth-tables';
 import bcrypt from 'bcryptjs';
 
@@ -38,40 +38,16 @@ export async function POST(request: NextRequest) {
     const farFuture = new Date();
     farFuture.setFullYear(farFuture.getFullYear() + 10);
 
-    const user = await db.user.upsert({
-      where: { username },
-      create: {
-        username,
-        password: hashedPassword,
-        subscription: {
-          create: {
-            isActive: true,
-            startsAt: new Date(),
-            expiresAt: farFuture,
-            lastPaymentAt: new Date(),
-          },
-        },
-      },
-      update: {
-        password: hashedPassword,
-        subscription: {
-          upsert: {
-            create: {
-              isActive: true,
-              startsAt: new Date(),
-              expiresAt: farFuture,
-              lastPaymentAt: new Date(),
-            },
-            update: {
-              isActive: true,
-              startsAt: new Date(),
-              expiresAt: farFuture,
-              lastPaymentAt: new Date(),
-            },
-          },
-        },
-      },
-    });
+    const user = await upsertUser(
+      '', // auto-generate id for new users
+      username,
+      hashedPassword,
+      {
+        isActive: true,
+        expiresAt: farFuture.toISOString(),
+        lastPaymentAt: new Date().toISOString(),
+      }
+    );
 
     return NextResponse.json({
       success: true,
@@ -97,22 +73,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const users = await db.user.findMany({
-      select: {
-        id: true,
-        username: true,
-        createdAt: true,
-        subscription: {
-          select: {
-            isActive: true,
-            startsAt: true,
-            expiresAt: true,
-            lastPaymentAt: true,
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    const users = await getAllUsers();
 
     return NextResponse.json({ users });
   } catch (err) {
