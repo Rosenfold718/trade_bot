@@ -134,7 +134,7 @@ export default function ControlPanel() {
   const totalOpen = allBalances.reduce((sum, s) => sum + s.openCount, 0);
 
   return (
-    <div className="p-3 space-y-2">
+    <div className="p-2.5 sm:p-3 space-y-2 max-w-lg">
       {/* Active Strategy Info */}
       {strategy && (
         <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/5 rounded-xl">

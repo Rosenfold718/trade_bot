@@ -61,3 +61,20 @@ export function useIsTablet() {
 
   return !!isTablet
 }
+
+/** Detect landscape orientation on mobile devices */
+export function useIsLandscape() {
+  const [isLandscape, setIsLandscape] = React.useState(false)
+
+  React.useEffect(() => {
+    const mql = window.matchMedia('(orientation: landscape)')
+    const onChange = () => {
+      setIsLandscape(window.innerWidth > window.innerHeight)
+    }
+    mql.addEventListener("change", onChange)
+    onChange()
+    return () => mql.removeEventListener("change", onChange)
+  }, [])
+
+  return isLandscape
+}

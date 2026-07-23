@@ -327,8 +327,8 @@ export default function AuthScreen() {
           </CardContent>
         </Card>
 
-        {/* Features */}
-        <div className="grid grid-cols-3 gap-3">
+        {/* Features — responsive grid */}
+        <div className="grid grid-cols-3 gap-2 sm:gap-3">
           {[
             { icon: Zap, label: '3 стратегии', desc: 'Авто-торговля' },
             { icon: TrendingUp, label: 'AI анализ', desc: 'Binance API' },

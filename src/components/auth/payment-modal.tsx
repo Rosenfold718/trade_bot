@@ -174,7 +174,7 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
         </CardHeader>
         <CardContent className="p-6 pt-2 space-y-4">
           {/* Plans */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
             {PLANS.map((plan) => {
               const isSelected = selectedPlan === plan.id;
               return (
@@ -245,7 +245,7 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
               {verifying ? (
                 <><Loader2 className="w-4 h-4 animate-spin mr-2" />Отправка...</>
               ) : (
-                <><CheckCircle className="w-4 h-4 mr-2" />Я оплатил — Отправить заявку ({activePlan.label})</>
+                <><CheckCircle className="w-4 h-4 mr-2" /><span className="hidden sm:inline">Я оплатил — Отправить заявку ({activePlan.label})</span><span className="sm:hidden">Оплатил ({activePlan.label})</span></>
               )}
             </Button>
           </div>

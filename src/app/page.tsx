@@ -127,35 +127,35 @@ function SubscriptionBar({ daysRemaining, username, onLogout, onAdminPayments }:
   const isLow = daysRemaining <= 7;
   const isExpired = daysRemaining <= 0;
   return (
-    <div className={`h-7 flex items-center justify-between px-3 text-[10px] font-mono shrink-0 z-30 ${
+    <div className={`h-7 flex items-center justify-between px-2 sm:px-3 text-[10px] font-mono shrink-0 z-30 safe-top ${
       isExpired ? 'bg-red-500/15 border-b border-red-500/20' :
       isLow ? 'bg-amber-500/10 border-b border-amber-500/15' :
       'bg-emerald-500/5 border-b border-emerald-500/10'
     }`}>
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 sm:gap-3 min-w-0">
         {onAdminPayments && (
-          <button onClick={onAdminPayments} className="flex items-center gap-1 text-amber-400/70 hover:text-amber-400 transition-colors">
+          <button onClick={onAdminPayments} className="flex items-center gap-1 text-amber-400/70 hover:text-amber-400 transition-colors shrink-0">
             <CreditCard className="w-3 h-3" />
-            Платежи
+            <span className="hidden sm:inline">Платежи</span>
           </button>
         )}
-        <div className="flex items-center gap-1.5">
-          <Shield className={`w-3 h-3 ${isExpired ? 'text-red-400' : isLow ? 'text-amber-400' : 'text-emerald-400/60'}`} />
-          <span className={isExpired ? 'text-red-400 font-medium' : isLow ? 'text-amber-400' : 'text-white/40'}>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <Shield className={`w-3 h-3 shrink-0 ${isExpired ? 'text-red-400' : isLow ? 'text-amber-400' : 'text-emerald-400/60'}`} />
+          <span className={`${isExpired ? 'text-red-400 font-medium' : isLow ? 'text-amber-400' : 'text-white/40'} truncate max-w-[80px] sm:max-w-none`}>
             {username}
           </span>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 shrink-0">
           <Clock className={`w-3 h-3 ${isExpired ? 'text-red-400' : isLow ? 'text-amber-400' : 'text-emerald-400/60'}`} />
-          <span className={isExpired ? 'text-red-400 font-medium' : isLow ? 'text-amber-400' : 'text-white/40'}>
-            {isExpired ? 'Подписка истекла' : `${daysRemaining} дн. осталось`}
+          <span className={`${isExpired ? 'text-red-400 font-medium' : isLow ? 'text-amber-400' : 'text-white/40'} hidden sm:inline`}>
+            {isExpired ? 'Истекла' : `${daysRemaining}д`}
           </span>
         </div>
       </div>
       <div className="flex items-center gap-3">
         <button onClick={onLogout} className="flex items-center gap-1 text-white/30 hover:text-white/60 transition-colors">
           <LogOut className="w-3 h-3" />
-          Выйти
+          <span className="hidden sm:inline">Выйти</span>
         </button>
       </div>
     </div>

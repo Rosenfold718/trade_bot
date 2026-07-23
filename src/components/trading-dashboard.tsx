@@ -226,7 +226,7 @@ export default function TradingDashboard() {
     .reduce((sum, t) => sum + (t.pnl ?? 0), 0);
 
   return (
-    <div className="p-3 space-y-3">
+    <div className="p-2.5 sm:p-3 space-y-3 max-w-lg">
       {/* Strategy badge */}
       {strategy && (
         <div className={cn('flex items-center gap-2 px-3 py-1.5 rounded-lg border', strategy.bgColor, strategy.borderColor)}>
