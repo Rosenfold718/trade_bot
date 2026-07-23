@@ -5,12 +5,15 @@ import dynamic from 'next/dynamic';
 import { useTerminalStore } from '@/lib/store';
 import { STRATEGIES, getStrategy } from '@/lib/strategies';
 import { cn } from '@/lib/utils';
+import { useIsMobile } from '@/hooks/use-mobile';
+import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/sheet';
 import CoinList from '@/components/coin-list';
 import TradingDashboard from '@/components/trading-dashboard';
 import ControlPanel from '@/components/control-panel';
 import OrderBook from '@/components/order-book';
 import { DEFAULT_INDICATORS, type IndicatorConfig } from '@/components/chart';
 import type { CandleData, TraderState, Trade, IndicatorWeight } from '@/lib/types';
+import { List, BarChart3, LineChart, Settings, X } from 'lucide-react';
 
 const TradingChart = dynamic(() => import('@/components/chart'), {
   ssr: false,
@@ -88,6 +91,9 @@ export default function TradingTerminal() {
   } = useTerminalStore();
 
   const strategy = getStrategy(activeStrategy);
+  const isMobile = useIsMobile();
+  const [mobileTab, setMobileTab] = useState<'chart' | 'trades' | 'dashboard' | 'control'>('chart');
+  const [coinSheetOpen, setCoinSheetOpen] = useState(false);
 
   const [candles, setCandles] = useState<CandleData[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
@@ -381,33 +387,47 @@ export default function TradingTerminal() {
 
   return (
     <div className="h-full w-full flex flex-col overflow-hidden bg-[#0a0a0f]">
-      {/* Top Bar */}
-      <header className="h-10 flex items-center justify-between px-4 border-b border-white/5 bg-[#0d0d14]/90 backdrop-blur-sm shrink-0 z-20">
-        <div className="flex items-center gap-3">
+      {/* ===== HEADER ===== */}
+      <header className="h-10 flex items-center justify-between px-3 md:px-4 border-b border-white/5 bg-[#0d0d14]/90 backdrop-blur-sm shrink-0 z-20">
+        <div className="flex items-center gap-2 md:gap-3 min-w-0">
+          {/* Mobile: Coin list trigger */}
+          {isMobile && (
+            <Sheet open={coinSheetOpen} onOpenChange={setCoinSheetOpen}>
+              <SheetTrigger asChild>
+                <button className="shrink-0 p-1.5 rounded-md hover:bg-white/10 active:bg-white/15 transition-colors">
+                  <List className="w-4 h-4 text-white/60" />
+                </button>
+              </SheetTrigger>
+              <SheetContent side="left" className="w-72 p-0 bg-[#0d0d14] border-white/10">
+                <SheetTitle className="sr-only">Список монет</SheetTitle>
+                <CoinList />
+              </SheetContent>
+            </Sheet>
+          )}
           <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${autoTrading ? 'bg-green-400 animate-pulse' : 'bg-green-400/40'}`} />
-            <span className="text-sm font-bold text-white/90 tracking-tight">ТРЕЙД-БОТ</span>
+            <div className={cn('w-2 h-2 rounded-full shrink-0', autoTrading ? 'bg-green-400 animate-pulse' : 'bg-green-400/40')} />
+            <span className="text-xs md:text-sm font-bold text-white/90 tracking-tight">ТРЕЙД-БОТ</span>
             {autoTrading && (
-              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/25 animate-pulse">
+              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/25 animate-pulse hidden sm:inline-block">
                 АВТО LIVE
               </span>
             )}
           </div>
-          <div className="h-4 w-px bg-white/10" />
-          <span className="text-xs text-white/40 font-mono">
+          <div className="h-4 w-px bg-white/10 shrink-0" />
+          <span className="text-xs text-white/40 font-mono truncate">
             {selectedSymbol.replace('USDT', '')}
             <span className="text-white/25">/USDT</span>
           </span>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 md:gap-4 shrink-0">
           {traderState && (
-            <div className="flex items-center gap-4 text-xs font-mono">
-              <div className="flex items-center gap-1.5">
-                <span className="text-white/35">Баланс</span>
-                <span className={cn('font-bold', strategy?.color ?? 'text-white/90')}>${traderState.balance.toFixed(2)}</span>
+            <div className="flex items-center gap-2 md:gap-4 text-xs font-mono">
+              <div className="flex items-center gap-1">
+                <span className="text-white/35 hidden sm:inline">Баланс</span>
+                <span className={cn('font-bold text-[11px] md:text-xs', strategy?.color ?? 'text-white/90')}>${traderState.balance.toFixed(2)}</span>
               </div>
               {traderState.debt_to_repay > 0 && (
-                <div className="flex items-center gap-1.5">
+                <div className="hidden sm:flex items-center gap-1">
                   <span className="text-white/35">Долг</span>
                   <span className="text-red-400">${traderState.debt_to_repay.toFixed(2)}</span>
                 </div>
@@ -417,145 +437,368 @@ export default function TradingTerminal() {
         </div>
       </header>
 
-      {/* Strategy Selector */}
-      <div className="shrink-0 px-3 py-1.5 border-b border-white/5 bg-[#0d0d14]/80 flex gap-2">
-        {STRATEGIES.map(s => {
-          const ss = strategyStates[s.id];
-          const balance = ss?.traderState?.balance ?? 0;
-          const openCount = ss?.openTrades?.length ?? 0;
-          const isActive = activeStrategy === s.id;
-          return (
-            <button
-              key={s.id}
-              onClick={() => setActiveStrategy(s.id)}
-              className={cn(
-                'flex-1 rounded-lg border px-3 py-1.5 text-left transition-all duration-200',
-                isActive
-                  ? `${s.borderColor} ${s.bgColor}`
-                  : 'border-white/5 bg-white/[0.02] hover:bg-white/5',
-              )}
-            >
-              <div className="flex items-center justify-between">
-                <div className={cn('text-xs font-semibold', isActive ? s.color : 'text-zinc-400')}>{s.name}</div>
-                {openCount > 0 && (
-                  <span className="text-[9px] font-mono text-yellow-400/70 bg-yellow-500/10 px-1.5 py-0.5 rounded-full">
-                    {openCount} откр.
-                  </span>
+      {/* ===== STRATEGY SELECTOR ===== */}
+      <div className="shrink-0 px-2 md:px-3 py-1.5 border-b border-white/5 bg-[#0d0d14]/80">
+        <div className="flex gap-1.5 md:gap-2 overflow-x-auto no-scrollbar">
+          {STRATEGIES.map(s => {
+            const ss = strategyStates[s.id];
+            const balance = ss?.traderState?.balance ?? 0;
+            const openCount = ss?.openTrades?.length ?? 0;
+            const isActive = activeStrategy === s.id;
+            return (
+              <button
+                key={s.id}
+                onClick={() => setActiveStrategy(s.id)}
+                className={cn(
+                  'min-w-[140px] md:min-w-0 md:flex-1 rounded-lg border px-2.5 md:px-3 py-1.5 text-left transition-all duration-200 shrink-0',
+                  isActive
+                    ? `${s.borderColor} ${s.bgColor}`
+                    : 'border-white/5 bg-white/[0.02] hover:bg-white/5',
                 )}
-              </div>
-              <div className={cn('text-[10px] mt-0.5 truncate', isActive ? 'text-zinc-400' : 'text-zinc-600')}>
-                {s.description.split('.')[0]}
-              </div>
-              <div className={cn('text-[10px] mt-0.5 font-mono', isActive ? 'text-zinc-300' : 'text-zinc-600')}>
-                ${balance.toFixed(2)}
-              </div>
-            </button>
-          );
-        })}
+              >
+                <div className="flex items-center justify-between">
+                  <div className={cn('text-[11px] md:text-xs font-semibold', isActive ? s.color : 'text-zinc-400')}>{s.name}</div>
+                  {openCount > 0 && (
+                    <span className="text-[9px] font-mono text-yellow-400/70 bg-yellow-500/10 px-1.5 py-0.5 rounded-full">
+                      {openCount} откр.
+                    </span>
+                  )}
+                </div>
+                <div className={cn('text-[10px] mt-0.5 truncate', isActive ? 'text-zinc-400' : 'text-zinc-600')}>
+                  {s.description.split('.')[0]}
+                </div>
+                <div className={cn('text-[10px] mt-0.5 font-mono', isActive ? 'text-zinc-300' : 'text-zinc-600')}>
+                  ${balance.toFixed(2)}
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {/* Main Content */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left Panel */}
-        <aside className="w-52 shrink-0 overflow-hidden">
-          <CoinList />
-        </aside>
-
-        {/* Center — Chart + Order Book + Trades Table */}
-        <main className="flex-1 flex flex-col overflow-hidden">
-          {/* Chart + Order Book Row */}
-          <div className="flex-1 flex min-h-0">
-            {/* Chart Area */}
-            <div className="flex-1 relative min-h-0 overflow-hidden" id="chart-area">
-              {chartLoading && (
-                <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#0d0d14]/60 backdrop-blur-sm">
-                  <div className="flex items-center gap-2 text-xs text-white/50">
-                    <div className="w-3 h-3 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
-                    Загрузка графика...
-                  </div>
-                </div>
-              )}
-
-              {/* Top bar: Symbol + Timeframes + Indicators */}
-              <div className="absolute top-3 left-3 z-10 flex items-center gap-1 flex-wrap max-w-[calc(100%-2rem)]">
-                <div className="px-2.5 py-1 rounded-md bg-[#1a1a2e]/90 backdrop-blur-sm border border-white/5 mr-1 shrink-0">
-                  <span className="text-sm font-semibold text-white/90">{selectedSymbol.replace('USDT', '')}</span>
-                  <span className="text-xs text-white/40 ml-1.5">/USDT</span>
-                </div>
-                {TIMEFRAMES.map((tf) => (
-                  <button
-                    key={tf.interval}
-                    onClick={() => setTimeframe(tf)}
-                    className={cn(
-                      'px-2 py-1 rounded-md text-[11px] font-mono font-medium transition-all duration-150 border shrink-0',
-                      timeframe.interval === tf.interval
-                        ? 'bg-white/10 text-white/90 border-white/15'
-                        : 'bg-[#1a1a2e]/70 text-white/40 border-white/5 hover:bg-white/5 hover:text-white/60',
+      {/* ===== MOBILE LAYOUT ===== */}
+      {isMobile && (
+        <>
+          <div className="flex-1 min-h-0 overflow-hidden relative">
+            {/* Chart Tab */}
+            {mobileTab === 'chart' && (
+              <div className="absolute inset-0 flex flex-col">
+                <div className="flex-1 relative min-h-0 overflow-hidden" id="chart-area">
+                  {chartLoading && (
+                    <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#0d0d14]/60 backdrop-blur-sm">
+                      <div className="flex items-center gap-2 text-xs text-white/50">
+                        <div className="w-3 h-3 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+                        Загрузка графика...
+                      </div>
+                    </div>
+                  )}
+                  {/* Compact mobile top bar */}
+                  <div className="absolute top-2 left-2 right-2 z-10 flex items-center gap-1 flex-wrap">
+                    {TIMEFRAMES.map((tf) => (
+                      <button
+                        key={tf.interval}
+                        onClick={() => setTimeframe(tf)}
+                        className={cn(
+                          'px-2 py-0.5 rounded text-[10px] font-mono font-medium transition-all border shrink-0',
+                          timeframe.interval === tf.interval
+                            ? 'bg-white/10 text-white/90 border-white/15'
+                            : 'bg-[#1a1a2e]/70 text-white/40 border-white/5',
+                        )}
+                      >
+                        {tf.label}
+                      </button>
+                    ))}
+                    {strategy && (
+                      <div className={cn('px-1.5 py-0.5 rounded text-[9px] font-mono font-bold border shrink-0 ml-auto', strategy.bgColor, strategy.borderColor, strategy.color)}>
+                        {strategy.name}
+                      </div>
                     )}
-                  >
-                    {tf.label}
-                  </button>
-                ))}
-                {/* Separator */}
-                <div className="w-px h-4 bg-white/10 mx-0.5 shrink-0" />
-                {/* Strategy name badge */}
-                {strategy && (
-                  <div className={cn('px-1.5 py-1 rounded-md text-[9px] font-mono font-bold border shrink-0', strategy.bgColor, strategy.borderColor, strategy.color)}>
-                    {strategy.name}
+                  </div>
+                  <TradingChart data={candles} symbol={selectedSymbol} timeframe={timeframe} openTrades={openTrades} recentTrades={recentTrades} indicators={indicators} />
+                </div>
+              </div>
+            )}
+            {/* Trades Tab */}
+            {mobileTab === 'trades' && (
+              <div className="absolute inset-0 overflow-auto bg-[#0d0d14]">
+                <MobileTradesList openTrades={openTrades} recentTrades={recentTrades} coins={coins} onSelectTrade={(trade) => {
+                  setSelectedSymbol(trade.symbol);
+                  setFocusedTradeId(trade.id);
+                  setMobileTab('chart');
+                }} />
+              </div>
+            )}
+            {/* Dashboard Tab */}
+            {mobileTab === 'dashboard' && (
+              <div className="absolute inset-0 overflow-y-auto bg-[#0a0a0f]">
+                <TradingDashboard />
+                <ActivityLog />
+              </div>
+            )}
+            {/* Control Tab */}
+            {mobileTab === 'control' && (
+              <div className="absolute inset-0 overflow-y-auto bg-[#0a0a0f]">
+                <ControlPanel />
+              </div>
+            )}
+          </div>
+
+          {/* Bottom Tab Bar */}
+          <nav className="shrink-0 h-12 bg-[#0d0d14] border-t border-white/10 flex items-center justify-around px-2 z-20">
+            {([
+              { key: 'chart' as const, icon: BarChart3, label: 'График' },
+              { key: 'trades' as const, icon: LineChart, label: 'Сделки' },
+              { key: 'dashboard' as const, icon: BarChart3, label: 'Аналитика' },
+              { key: 'control' as const, icon: Settings, label: 'Управление' },
+            ]).map(({ key, icon: Icon, label }) => (
+              <button
+                key={key}
+                onClick={() => setMobileTab(key)}
+                className={cn(
+                  'flex flex-col items-center justify-center gap-0.5 py-1 px-3 rounded-lg transition-colors min-w-[60px]',
+                  mobileTab === key ? 'text-white' : 'text-white/35 hover:text-white/50',
+                )}
+              >
+                <Icon className="w-4 h-4" />
+                <span className="text-[9px] font-medium">{label}</span>
+                {mobileTab === key && <div className="w-1 h-1 rounded-full bg-green-400" />}
+              </button>
+            ))}
+          </nav>
+        </>
+      )}
+
+      {/* ===== DESKTOP/TABLET LAYOUT ===== */}
+      {!isMobile && (
+        <div className="flex-1 flex overflow-hidden">
+          {/* Left Panel — Coin List */}
+          <aside className="w-52 shrink-0 overflow-hidden">
+            <CoinList />
+          </aside>
+
+          {/* Center — Chart + Order Book + Trades Table */}
+          <main className="flex-1 flex flex-col overflow-hidden">
+            {/* Chart + Order Book Row */}
+            <div className="flex-1 flex min-h-0">
+              {/* Chart Area */}
+              <div className="flex-1 relative min-h-0 overflow-hidden" id="chart-area">
+                {chartLoading && (
+                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#0d0d14]/60 backdrop-blur-sm">
+                    <div className="flex items-center gap-2 text-xs text-white/50">
+                      <div className="w-3 h-3 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+                      Загрузка графика...
+                    </div>
                   </div>
                 )}
-                {/* Indicator toggles — only show indicators defined in the strategy */}
-                {Object.entries(indicators).filter(([, cfg]) => {
-                  // Show indicators that are in the strategy's chartIndicators or always shown
-                  if (!strategy) return true;
-                  return strategy.chartIndicators[cfg.id] !== undefined;
-                }).map(([key, ind]) => (
-                  <button
-                    key={ind.id}
-                    onClick={() => toggleIndicator(ind.id)}
-                    className={cn(
-                      'px-1.5 py-1 rounded-md text-[9px] font-mono font-medium border transition-all duration-150 shrink-0',
-                      ind.visible
-                        ? 'border-white/20 bg-white/10 text-white/80'
-                        : 'border-white/5 bg-white/[0.02] text-white/25 hover:text-white/40',
-                    )}
-                  >
-                    <span className="inline-block w-1.5 h-1.5 rounded-full mr-1 align-middle" style={{ backgroundColor: ind.visible ? ind.color : 'rgba(255,255,255,0.15)' }} />
-                    {ind.label}
-                  </button>
-                ))}
+
+                {/* Top bar: Symbol + Timeframes + Indicators */}
+                <div className="absolute top-3 left-3 z-10 flex items-center gap-1 flex-wrap max-w-[calc(100%-2rem)]">
+                  <div className="px-2.5 py-1 rounded-md bg-[#1a1a2e]/90 backdrop-blur-sm border border-white/5 mr-1 shrink-0">
+                    <span className="text-sm font-semibold text-white/90">{selectedSymbol.replace('USDT', '')}</span>
+                    <span className="text-xs text-white/40 ml-1.5">/USDT</span>
+                  </div>
+                  {TIMEFRAMES.map((tf) => (
+                    <button
+                      key={tf.interval}
+                      onClick={() => setTimeframe(tf)}
+                      className={cn(
+                        'px-2 py-1 rounded-md text-[11px] font-mono font-medium transition-all duration-150 border shrink-0',
+                        timeframe.interval === tf.interval
+                          ? 'bg-white/10 text-white/90 border-white/15'
+                          : 'bg-[#1a1a2e]/70 text-white/40 border-white/5 hover:bg-white/5 hover:text-white/60',
+                      )}
+                    >
+                      {tf.label}
+                    </button>
+                  ))}
+                  {/* Separator */}
+                  <div className="w-px h-4 bg-white/10 mx-0.5 shrink-0" />
+                  {/* Strategy name badge */}
+                  {strategy && (
+                    <div className={cn('px-1.5 py-1 rounded-md text-[9px] font-mono font-bold border shrink-0', strategy.bgColor, strategy.borderColor, strategy.color)}>
+                      {strategy.name}
+                    </div>
+                  )}
+                  {/* Indicator toggles — only show indicators defined in the strategy */}
+                  {Object.entries(indicators).filter(([, cfg]) => {
+                    if (!strategy) return true;
+                    return strategy.chartIndicators[cfg.id] !== undefined;
+                  }).map(([key, ind]) => (
+                    <button
+                      key={ind.id}
+                      onClick={() => toggleIndicator(ind.id)}
+                      className={cn(
+                        'px-1.5 py-1 rounded-md text-[9px] font-mono font-medium border transition-all duration-150 shrink-0',
+                        ind.visible
+                          ? 'border-white/20 bg-white/10 text-white/80'
+                          : 'border-white/5 bg-white/[0.02] text-white/25 hover:text-white/40',
+                      )}
+                    >
+                      <span className="inline-block w-1.5 h-1.5 rounded-full mr-1 align-middle" style={{ backgroundColor: ind.visible ? ind.color : 'rgba(255,255,255,0.15)' }} />
+                      {ind.label}
+                    </button>
+                  ))}
+                </div>
+
+                <TradingChart data={candles} symbol={selectedSymbol} timeframe={timeframe} openTrades={openTrades} recentTrades={recentTrades} indicators={indicators} />
+
+                {/* Draggable inline trade info panel */}
+                <DraggableTradePanel focusedTradeId={focusedTradeId} symbol={selectedSymbol} />
               </div>
 
-              <TradingChart data={candles} symbol={selectedSymbol} timeframe={timeframe} openTrades={openTrades} recentTrades={recentTrades} indicators={indicators} />
-
-              {/* Draggable inline trade info panel */}
-              <DraggableTradePanel focusedTradeId={focusedTradeId} symbol={selectedSymbol} />
+              {/* Order Book — hidden on smaller tablets */}
+              <div className="w-64 shrink-0 border-l border-white/5 hidden xl:block">
+                <OrderBook key={selectedSymbol} />
+              </div>
             </div>
 
-            {/* Order Book */}
-            <div className="w-64 shrink-0 border-l border-white/5">
-              <OrderBook key={selectedSymbol} />
+            {/* Bottom Trades Table */}
+            <div className="h-44 border-t border-white/5 bg-[#0d0d14] shrink-0 overflow-auto">
+              <TradesTable openTrades={openTrades} recentTrades={recentTrades} coins={coins} onSelectTrade={(trade) => {
+                setSelectedSymbol(trade.symbol);
+                setFocusedTradeId(trade.id);
+              }} />
             </div>
-          </div>
+          </main>
 
-          {/* Bottom Trades Table */}
-          <div className="h-44 border-t border-white/5 bg-[#0d0d14] shrink-0 overflow-auto">
-            <TradesTable openTrades={openTrades} recentTrades={recentTrades} coins={coins} onSelectTrade={(trade) => {
-              setSelectedSymbol(trade.symbol);
-              setFocusedTradeId(trade.id);
-            }} />
-          </div>
-        </main>
+          {/* Right Panel — Dashboard + Activity + Controls */}
+          <aside className="w-72 shrink-0 overflow-y-auto border-l border-white/5">
+            <TradingDashboard />
+            <ActivityLog />
+            <div className="border-t border-white/5">
+              <ControlPanel />
+            </div>
+          </aside>
+        </div>
+      )}
+    </div>
+  );
+}
 
-        {/* Right Panel */}
-        <aside className="w-72 shrink-0 overflow-y-auto border-l border-white/5">
-          <TradingDashboard />
-          <ActivityLog />
-          <div className="border-t border-white/5">
-            <ControlPanel />
-          </div>
-        </aside>
+// ============================================================
+// Mobile Trade Cards
+// ============================================================
+
+function MobileTradesList({ openTrades, recentTrades, coins, onSelectTrade }: {
+  openTrades: Trade[]; recentTrades: Trade[]; coins: Array<{ symbol: string; price: number }>;
+  onSelectTrade: (trade: Trade) => void;
+}) {
+  const allTrades = useMemo(
+    () => [...openTrades, ...recentTrades.filter(t => t.status === 'closed')].slice(0, 50),
+    [openTrades, recentTrades],
+  );
+
+  const totalOpenPnl = useMemo(() => {
+    let total = 0;
+    for (const trade of openTrades) {
+      if (trade.status !== 'open') continue;
+      const livePrice = coins.find(c => c.symbol === trade.symbol)?.price;
+      if (!livePrice || livePrice <= 0) continue;
+      const isLong = trade.direction === 'long';
+      const priceChange = isLong
+        ? (livePrice - trade.entry_price) / trade.entry_price
+        : (trade.entry_price - livePrice) / trade.entry_price;
+      total += trade.amount * priceChange * trade.leverage;
+    }
+    return total;
+  }, [openTrades, coins]);
+
+  const totalRealizedPnl = useMemo(() => {
+    return recentTrades
+      .filter(t => t.status === 'closed' && t.pnl !== null)
+      .reduce((sum, t) => sum + (t.pnl ?? 0), 0);
+  }, [recentTrades]);
+
+  if (allTrades.length === 0) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <span className="text-sm text-white/25">Нет сделок</span>
       </div>
+    );
+  }
+
+  return (
+    <div className="p-3 space-y-2">
+      {/* Summary */
+      <div className="flex items-center justify-between px-1 py-2">
+        <div className="flex items-center gap-3">
+          {openTrades.length > 0 && (
+            <span className="text-xs text-white/40 font-mono">Открыто: {openTrades.length}</span>
+          )}
+          <span className={cn('text-xs font-mono', totalOpenPnl >= 0 ? 'text-green-400/70' : 'text-red-400/70')}>
+            Нереализ.: {totalOpenPnl >= 0 ? '+' : ''}${totalOpenPnl.toFixed(2)}
+          </span>
+        </div>
+        <span className={cn('text-xs font-mono font-semibold', totalRealizedPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
+          Реализ.: {totalRealizedPnl >= 0 ? '+' : ''}${totalRealizedPnl.toFixed(2)}
+        </span>
+      </div>
+
+      {/* Trade Cards */
+      {allTrades.map((trade) => {
+        const isLong = trade.direction === 'long';
+        const isOpen = trade.status === 'open';
+        let displayPnl = trade.pnl;
+        if (isOpen) {
+          const livePrice = coins.find(c => c.symbol === trade.symbol)?.price;
+          if (livePrice && livePrice > 0) {
+            const priceChange = isLong
+              ? (livePrice - trade.entry_price) / trade.entry_price
+              : (trade.entry_price - livePrice) / trade.entry_price;
+            displayPnl = trade.amount * priceChange * trade.leverage;
+          }
+        }
+
+        return (
+          <button
+            key={trade.id}
+            onClick={() => onSelectTrade(trade)}
+            className="w-full text-left rounded-xl border border-white/5 bg-white/[0.02] p-3 active:bg-white/5 transition-colors"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <span className={cn('text-xs font-bold', isLong ? 'text-green-400' : 'text-red-400')}>
+                  {isLong ? '▲ LONG' : '▼ SHORT'}
+                </span>
+                <span className="text-sm font-semibold text-white/90">
+                  {trade.symbol.replace('USDT', '')}
+                </span>
+                <span className={cn('text-[9px] font-mono px-1.5 py-0.5 rounded', isOpen
+                  ? 'bg-yellow-500/10 text-yellow-400/80 border border-yellow-500/20'
+                  : 'bg-white/5 text-white/40 border border-white/10'
+                )}>
+                  {isOpen ? 'ОТКР' : 'ЗАКР'}
+                </span>
+              </div>
+              <span className={cn('text-sm font-mono font-bold',
+                displayPnl == null ? 'text-white/30' : displayPnl >= 0 ? 'text-green-400' : 'text-red-400'
+              )}>
+                {displayPnl != null && typeof displayPnl === 'number'
+                  ? `${displayPnl >= 0 ? '+' : ''}$${displayPnl.toFixed(2)}`
+                  : '—'}
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-[10px] font-mono">
+              <div>
+                <span className="text-white/30">Вход </span>
+                <span className="text-white/60">
+                  {typeof trade.entry_price === 'number'
+                    ? trade.entry_price < 1 ? trade.entry_price.toPrecision(4) : trade.entry_price.toFixed(2)
+                    : '—'}
+                </span>
+              </div>
+              <div>
+                <span className="text-white/30">Плечо </span>
+                <span className="text-white/60">{trade.leverage ?? '—'}x</span>
+              </div>
+              <div>
+                <span className="text-white/30">Объём </span>
+                <span className="text-white/60">${typeof trade.amount === 'number' ? trade.amount.toFixed(1) : '—'}</span>
+              </div>
+            </div>
+          </button>
+        );
+      })}
     </div>
   );
 }
