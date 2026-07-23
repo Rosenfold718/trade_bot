@@ -133,11 +133,11 @@ export default function AuthScreen() {
   // ── Registration Success Screen ──
   if (registerSuccess) {
     return (
-      <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center p-4">
-      <Card className="w-full max-w-md bg-[#12121e]/90 backdrop-blur-xl border-green-500/20 rounded-2xl">
-        <CardContent className="p-8 text-center space-y-6">
-          <div className="w-16 h-16 mx-auto rounded-full bg-green-500/10 flex items-center justify-center">
-            <Check className="w-8 h-8 text-green-400" />
+      <div className="min-h-[100dvh] bg-[#0a0a0f] flex items-center justify-center p-4 sm:p-6 safe-top safe-bottom">
+      <Card className="w-full max-w-[420px] bg-[#12121e]/90 backdrop-blur-xl border-green-500/20 rounded-2xl">
+        <CardContent className="p-6 sm:p-8 text-center space-y-5 sm:space-y-6">
+          <div className="w-14 h-14 sm:w-16 sm:h-16 mx-auto rounded-full bg-green-500/10 flex items-center justify-center">
+            <Check className="w-7 h-7 sm:w-8 sm:h-8 text-green-400" />
           </div>
           <div>
             <h2 className="text-xl font-bold text-white mb-2">Аккаунт создан!</h2>
@@ -172,24 +172,24 @@ export default function AuthScreen() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center p-4">
-      <div className="w-full max-w-md space-y-6">
+    <div className="min-h-[100dvh] bg-[#0a0a0f] flex items-center justify-center p-4 sm:p-6 safe-top safe-bottom">
+      <div className="w-full max-w-[420px] space-y-5 sm:space-y-6 my-auto">
         {/* Logo */}
-        <div className="text-center space-y-3 mb-8">
-          <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-br from-emerald-500/20 to-emerald-600/5 border border-emerald-500/20 flex items-center justify-center">
-            <TrendingUp className="w-7 h-7 text-emerald-400" />
+        <div className="text-center space-y-3 sm:mb-4">
+          <div className="w-14 h-14 sm:w-16 sm:h-16 mx-auto rounded-2xl bg-gradient-to-br from-emerald-500/20 to-emerald-600/5 border border-emerald-500/20 flex items-center justify-center">
+            <TrendingUp className="w-7 h-7 sm:w-8 sm:h-8 text-emerald-400" />
           </div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">Trade Terminal</h1>
-          <p className="text-sm text-white/40">Мультистратегический торговый терминал с ИИ-анализом</p>
+          <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">Trade Terminal</h1>
+          <p className="text-xs sm:text-sm text-white/40">Мультистратегический торговый терминал</p>
         </div>
 
         <Card className="bg-[#12121e]/90 backdrop-blur-xl border-white/10 rounded-2xl shadow-2xl shadow-black/40">
-          <CardContent className="p-6 space-y-5">
+          <CardContent className="p-4 sm:p-6 space-y-4 sm:space-y-5">
             {/* Tabs */}
             <div className="flex bg-white/5 rounded-xl p-1">
               <button
                 onClick={() => { setMode('login'); setError(''); }}
-                className={`flex-1 py-2.5 text-sm font-medium rounded-lg transition-all ${
+                className={`flex-1 py-2.5 sm:py-3 text-sm font-medium rounded-lg transition-all min-h-[44px] ${
                   mode === 'login' ? 'bg-white/10 text-white shadow-sm' : 'text-white/40 hover:text-white/60'
                 }`}
               >
@@ -198,7 +198,7 @@ export default function AuthScreen() {
               </button>
               <button
                 onClick={() => { setMode('register'); setError(''); }}
-                className={`flex-1 py-2.5 text-sm font-medium rounded-lg transition-all ${
+                className={`flex-1 py-2.5 sm:py-3 text-sm font-medium rounded-lg transition-all min-h-[44px] ${
                   mode === 'register' ? 'bg-white/10 text-white shadow-sm' : 'text-white/40 hover:text-white/60'
                 }`}
               >
@@ -224,7 +224,7 @@ export default function AuthScreen() {
                   value={username}
                   onChange={(e) => setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 20))}
                   placeholder="Только латиница, цифры, _"
-                  className="h-11 bg-white/5 border-white/10 text-white placeholder:text-white/25 rounded-xl focus:ring-emerald-500/30 focus:border-emerald-500/40"
+                  className="h-12 bg-white/5 border-white/10 text-white placeholder:text-white/25 rounded-xl focus:ring-emerald-500/30 focus:border-emerald-500/40 text-base"
                   required
                   autoComplete="username"
                 />
@@ -244,7 +244,7 @@ export default function AuthScreen() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder={mode === 'register' ? 'Мин. 8 символов, Aa1...' : 'Введите пароль'}
-                    className="h-11 bg-white/5 border-white/10 text-white placeholder:text-white/25 rounded-xl pr-11 focus:ring-emerald-500/30 focus:border-emerald-500/40"
+                    className="h-12 bg-white/5 border-white/10 text-white placeholder:text-white/25 rounded-xl pr-11 focus:ring-emerald-500/30 focus:border-emerald-500/40 text-base"
                     required
                     minLength={mode === 'register' ? 8 : 6}
                     autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
@@ -270,7 +270,7 @@ export default function AuthScreen() {
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="Повторите пароль"
-                    className="h-11 bg-white/5 border-white/10 text-white placeholder:text-white/25 rounded-xl focus:ring-emerald-500/30 focus:border-emerald-500/40"
+                    className="h-12 bg-white/5 border-white/10 text-white placeholder:text-white/25 rounded-xl focus:ring-emerald-500/30 focus:border-emerald-500/40 text-base"
                     required
                     minLength={8}
                     autoComplete="new-password"
@@ -311,7 +311,7 @@ export default function AuthScreen() {
               <Button
                 type="submit"
                 disabled={loading || !username || !password || (mode === 'register' && (!confirmPassword || password !== confirmPassword))}
-                className="w-full h-11 bg-emerald-600 hover:bg-green-700 text-white font-semibold rounded-xl transition-all disabled:opacity-40"
+                className="w-full h-12 bg-emerald-600 hover:bg-green-700 text-white font-semibold rounded-xl transition-all disabled:opacity-40 text-base"
               >
                 {loading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -331,13 +331,13 @@ export default function AuthScreen() {
         <div className="grid grid-cols-3 gap-2 sm:gap-3">
           {[
             { icon: Zap, label: '3 стратегии', desc: 'Авто-торговля' },
-            { icon: TrendingUp, label: 'AI анализ', desc: 'Binance API' },
+            { icon: TrendingUp, label: 'Тех. анализ', desc: 'Binance API' },
             { icon: Shield, label: 'Защита', desc: 'TP/SL/Trailing' },
           ].map(({ icon: Icon, label, desc }) => (
-            <div key={label} className="text-center p-3 rounded-xl bg-white/[0.02] border border-white/5">
-              <Icon className="w-4 h-4 mx-auto text-emerald-400/60 mb-1.5" />
-              <div className="text-[10px] font-medium text-white/60">{label}</div>
-              <div className="text-[9px] text-white/25">{desc}</div>
+            <div key={label} className="text-center p-2.5 sm:p-3 rounded-xl bg-white/[0.02] border border-white/5">
+              <Icon className="w-4 h-4 sm:w-5 sm:h-5 mx-auto text-emerald-400/60 mb-1.5" />
+              <div className="text-[10px] sm:text-xs font-medium text-white/60">{label}</div>
+              <div className="text-[9px] sm:text-[10px] text-white/25">{desc}</div>
             </div>
           ))}
         </div>

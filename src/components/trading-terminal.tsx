@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { useTerminalStore } from '@/lib/store';
 import { STRATEGIES, getStrategy } from '@/lib/strategies';
 import { cn } from '@/lib/utils';
+import { Menu, X, ChevronDown } from 'lucide-react';
 import CoinList from '@/components/coin-list';
 import TradingDashboard from '@/components/trading-dashboard';
 import ControlPanel from '@/components/control-panel';
@@ -93,6 +94,7 @@ export default function TradingTerminal() {
   const [chartLoading, setChartLoading] = useState(false);
   const [timeframe, setTimeframe] = useState<Timeframe>(TIMEFRAMES[3]);
   const [focusedTradeId, setFocusedTradeId] = useState<string | null>(null);
+  const [showCoinSheet, setShowCoinSheet] = useState(false);
 
   // Indicator state — derived from active strategy, with localStorage override
   const [indicators, setIndicators] = useState<Record<string, IndicatorConfig>>(() => {
@@ -383,6 +385,15 @@ export default function TradingTerminal() {
               </span>
             )}
           </div>
+          {/* Mobile coin selector button */}
+          <button
+            onClick={() => setShowCoinSheet(true)}
+            className="md:hidden flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-white/5 border border-white/10 active:bg-white/10 transition-colors"
+          >
+            <Menu className="w-3.5 h-3.5 text-white/60" />
+            <span className="text-[11px] font-semibold text-white/90">{selectedSymbol.replace('USDT', '')}</span>
+            <ChevronDown className="w-3 h-3 text-white/30" />
+          </button>
           <div className="h-4 w-px bg-white/10 hidden sm:block" />
           <span className="text-xs text-white/40 font-mono hidden sm:inline">
             {selectedSymbol.replace('USDT', '')}
@@ -444,17 +455,19 @@ export default function TradingTerminal() {
         })}
       </div>
 
-      {/* Main Content */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left Panel */}
-        <aside className="w-40 lg:w-52 shrink-0 overflow-hidden hidden md:block">
-          <CoinList />
-        </aside>
+      {/* Main Content — responsive layout */}
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+        {/* Row: Coin List (sidebar) + Center + Right Panel */}
+        <div className="flex-1 flex min-h-0 overflow-hidden">
+          {/* Left Panel — hidden on mobile */}
+          <aside className="w-40 lg:w-52 shrink-0 overflow-hidden hidden md:block">
+            <CoinList />
+          </aside>
 
-        {/* Center — Chart + Order Book + Trades Table */}
-        <main className="flex-1 flex flex-col overflow-hidden">
+          {/* Center — Chart + Order Book + Trades Table */}
+          <main className="flex-1 flex flex-col min-h-0 xl:overflow-hidden overflow-y-auto custom-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>
           {/* Chart + Order Book Row */}
-          <div className="flex-1 flex min-h-0">
+          <div className="flex-1 flex min-h-0 xl:flex-1 h-[50dvh] xl:h-auto shrink-0">
             {/* Chart Area */}
             <div className="flex-1 relative min-h-0 overflow-hidden" id="chart-area">
               {chartLoading && (
@@ -467,7 +480,7 @@ export default function TradingTerminal() {
               )}
 
               {/* Top bar: Symbol + Timeframes + Indicators */}
-              <div className="absolute top-3 left-3 z-10 flex items-center gap-1 flex-wrap max-w-[calc(100%-2rem)]">
+              <div className="absolute top-2 sm:top-3 left-2 sm:left-3 z-10 flex items-center gap-1 flex-wrap max-w-[calc(100%-1.5rem)] sm:max-w-[calc(100%-2rem)]">
                 <div className="px-2.5 py-1 rounded-md bg-[#1a1a2e]/90 backdrop-blur-sm border border-white/5 mr-1 shrink-0">
                   <span className="text-sm font-semibold text-white/90">{selectedSymbol.replace('USDT', '')}</span>
                   <span className="text-xs text-white/40 ml-1.5">/USDT</span>
@@ -518,8 +531,10 @@ export default function TradingTerminal() {
 
               <TradingChart data={candles} symbol={selectedSymbol} timeframe={timeframe} openTrades={openTrades} recentTrades={recentTrades} indicators={indicators} />
 
-              {/* Draggable inline trade info panel */}
-              <DraggableTradePanel focusedTradeId={focusedTradeId} symbol={selectedSymbol} />
+              {/* Draggable trade info — desktop only (not touch-friendly) */}
+              <div className="hidden md:block">
+                <DraggableTradePanel focusedTradeId={focusedTradeId} symbol={selectedSymbol} />
+              </div>
             </div>
 
             {/* Order Book */}
@@ -529,11 +544,19 @@ export default function TradingTerminal() {
           </div>
 
           {/* Bottom Trades Table */}
-          <div className="h-36 sm:h-44 lg:h-48 border-t border-white/5 bg-[#0d0d14] shrink-0 overflow-auto">
+          <div className="border-t border-white/5 bg-[#0d0d14] xl:h-48 xl:shrink-0 overflow-auto" style={{ maxHeight: '40vh' }}>
             <TradesTable openTrades={openTrades} recentTrades={recentTrades} coins={coins} onSelectTrade={(trade) => {
               setSelectedSymbol(trade.symbol);
               setFocusedTradeId(trade.id);
             }} />
+          </div>
+          {/* Dashboard + Controls — visible on mobile/tablet below trades */}
+          <div className="xl:hidden border-t border-white/5 safe-bottom">
+            <TradingDashboard />
+            <ActivityLog />
+            <div className="border-t border-white/5">
+              <ControlPanel />
+            </div>
           </div>
         </main>
 
@@ -545,6 +568,41 @@ export default function TradingTerminal() {
             <ControlPanel />
           </div>
         </aside>
+        </div>
+
+        {/* Mobile Coin List Sheet */}
+        <CoinListSheet open={showCoinSheet} onClose={() => setShowCoinSheet(false)} />
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Coin List Sheet (mobile bottom sheet)
+// ============================================================
+
+function CoinListSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 md:hidden animate-fade-in" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+      <div
+        className="absolute bottom-0 left-0 right-0 bg-[#0d0d14] border-t border-white/10 rounded-t-2xl flex flex-col animate-slide-up safe-bottom"
+        style={{ height: '75vh', maxHeight: '600px' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 shrink-0">
+          <span className="text-sm font-semibold text-white/90">Выберите монету</span>
+          <button
+            onClick={onClose}
+            className="p-2 -mr-2 text-white/40 hover:text-white/70 transition-colors rounded-lg active:bg-white/10"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <CoinList />
+        </div>
       </div>
     </div>
   );
@@ -596,8 +654,8 @@ function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex-1 overflow-auto">
-        <table className="w-full text-[11px]">
+      <div className="flex-1 overflow-x-auto overflow-y-auto">
+        <table className="w-full text-[11px] min-w-[520px]">
           <thead className="sticky top-0 bg-[#0d0d14] z-10">
             <tr className="text-white/35 border-b border-white/5">
               <th className="text-left font-medium py-2 px-2 md:px-3">Символ</th>

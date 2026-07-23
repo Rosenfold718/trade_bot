@@ -10,7 +10,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Trade Terminal — Авторизация",
-  description: "Мультистратегический торговый терминал с ИИ-анализом",
+  description: "Мультистратегический торговый терминал",
   icons: {
     icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
   },
