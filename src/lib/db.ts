@@ -261,12 +261,12 @@ export async function resetTrader(userId: string, strategyId: string = 'momentum
     "UPDATE trader_state SET balance = 100, borrowed_funds = 0, debt_to_repay = 0, is_active = 1, updated_at = datetime('now') WHERE id = ? AND user_id = ?",
     [id, userId]
   );
-  // Close all open trades for this user/strategy
+  // Delete ALL trades (open + history) for this user/strategy — clean slate
   await tursoDb.execute(
-    "UPDATE trades SET status = 'closed', closed_at = datetime('now') WHERE user_id = ? AND strategy_id = ? AND status = 'open'",
+    "DELETE FROM trades WHERE user_id = ? AND strategy_id = ?",
     [userId, strategyId]
   );
-  console.log(`✅ Trader reset complete for user: ${userId}, strategy: ${strategyId}`);
+  console.log(`✅ Trader reset complete (with trade history cleared) for user: ${userId}, strategy: ${strategyId}`);
 }
 
 // ============================================================
