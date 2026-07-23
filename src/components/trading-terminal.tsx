@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic';
 import { useTerminalStore } from '@/lib/store';
 import { STRATEGIES, getStrategy } from '@/lib/strategies';
 import { cn } from '@/lib/utils';
-import { useIsMobile } from '@/hooks/use-mobile';
+import { useIsMobile, useIsTablet } from '@/hooks/use-mobile';
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/sheet';
 import CoinList from '@/components/coin-list';
 import TradingDashboard from '@/components/trading-dashboard';
@@ -13,7 +13,7 @@ import ControlPanel from '@/components/control-panel';
 import OrderBook from '@/components/order-book';
 import { DEFAULT_INDICATORS, type IndicatorConfig } from '@/components/chart';
 import type { CandleData, TraderState, Trade, IndicatorWeight } from '@/lib/types';
-import { List, BarChart3, LineChart, Settings, X } from 'lucide-react';
+import { List, BarChart3, LineChart, Settings, X, PanelRight, ChevronDown } from 'lucide-react';
 
 const TradingChart = dynamic(() => import('@/components/chart'), {
   ssr: false,
@@ -92,8 +92,12 @@ export default function TradingTerminal() {
 
   const strategy = getStrategy(activeStrategy);
   const isMobile = useIsMobile();
+  const isTablet = useIsTablet();
+  const isCompact = isMobile || isTablet;
   const [mobileTab, setMobileTab] = useState<'chart' | 'trades' | 'dashboard' | 'control'>('chart');
   const [coinSheetOpen, setCoinSheetOpen] = useState(false);
+  const [sidebarSheetOpen, setSidebarSheetOpen] = useState(false);
+  const [indicatorMenuOpen, setIndicatorMenuOpen] = useState(false);
 
   const [candles, setCandles] = useState<CandleData[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
@@ -388,10 +392,10 @@ export default function TradingTerminal() {
   return (
     <div className="h-full w-full flex flex-col overflow-hidden bg-[#0a0a0f]">
       {/* ===== HEADER ===== */}
-      <header className="h-10 flex items-center justify-between px-3 md:px-4 border-b border-white/5 bg-[#0d0d14]/90 backdrop-blur-sm shrink-0 z-20">
-        <div className="flex items-center gap-2 md:gap-3 min-w-0">
-          {/* Mobile: Coin list trigger */}
-          {isMobile && (
+      <header className="h-10 flex items-center justify-between px-2 md:px-4 border-b border-white/5 bg-[#0d0d14]/90 backdrop-blur-sm shrink-0 z-20">
+        <div className="flex items-center gap-1.5 md:gap-3 min-w-0">
+          {/* Coin list trigger — mobile + tablet */}
+          {(isMobile || isTablet) && (
             <Sheet open={coinSheetOpen} onOpenChange={setCoinSheetOpen}>
               <SheetTrigger asChild>
                 <button className="shrink-0 p-1.5 rounded-md hover:bg-white/10 active:bg-white/15 transition-colors">
@@ -404,42 +408,82 @@ export default function TradingTerminal() {
               </SheetContent>
             </Sheet>
           )}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <div className={cn('w-2 h-2 rounded-full shrink-0', autoTrading ? 'bg-green-400 animate-pulse' : 'bg-green-400/40')} />
-            <span className="text-xs md:text-sm font-bold text-white/90 tracking-tight">ТРЕЙД-БОТ</span>
+            <span className="text-[11px] md:text-sm font-bold text-white/90 tracking-tight">ТРЕЙД-БОТ</span>
             {autoTrading && (
               <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/25 animate-pulse hidden sm:inline-block">
                 АВТО LIVE
               </span>
             )}
           </div>
-          <div className="h-4 w-px bg-white/10 shrink-0" />
-          <span className="text-xs text-white/40 font-mono truncate">
+          <div className="h-4 w-px bg-white/10 shrink-0 hidden sm:block" />
+          <span className="text-xs text-white/40 font-mono truncate hidden xs:inline">
             {selectedSymbol.replace('USDT', '')}
             <span className="text-white/25">/USDT</span>
           </span>
         </div>
-        <div className="flex items-center gap-2 md:gap-4 shrink-0">
+        <div className="flex items-center gap-1.5 md:gap-4 shrink-0">
           {traderState && (
-            <div className="flex items-center gap-2 md:gap-4 text-xs font-mono">
+            <div className="flex items-center gap-1.5 md:gap-4 text-xs font-mono">
               <div className="flex items-center gap-1">
-                <span className="text-white/35 hidden sm:inline">Баланс</span>
+                <span className="text-white/35 hidden md:inline">Баланс</span>
                 <span className={cn('font-bold text-[11px] md:text-xs', strategy?.color ?? 'text-white/90')}>${traderState.balance.toFixed(2)}</span>
               </div>
               {traderState.debt_to_repay > 0 && (
-                <div className="hidden sm:flex items-center gap-1">
+                <div className="hidden lg:flex items-center gap-1">
                   <span className="text-white/35">Долг</span>
                   <span className="text-red-400">${traderState.debt_to_repay.toFixed(2)}</span>
                 </div>
               )}
             </div>
           )}
+          {/* Sidebar trigger — tablet */}
+          {isTablet && (
+            <Sheet open={sidebarSheetOpen} onOpenChange={setSidebarSheetOpen}>
+              <SheetTrigger asChild>
+                <button className="shrink-0 p-1.5 rounded-md hover:bg-white/10 active:bg-white/15 transition-colors relative">
+                  <PanelRight className="w-4 h-4 text-white/60" />
+                </button>
+              </SheetTrigger>
+              <SheetContent side="right" className="w-80 p-0 bg-[#0a0a0f] border-white/10">
+                <SheetTitle className="sr-only">Панель управления</SheetTitle>
+                <div className="h-full overflow-y-auto">
+                  <TradingDashboard />
+                  <ActivityLog />
+                  <div className="border-t border-white/5">
+                    <ControlPanel />
+                  </div>
+                </div>
+              </SheetContent>
+            </Sheet>
+          )}
+          {/* Sidebar trigger — desktop (1024-1279) */}
+          {!isMobile && !isTablet && (
+            <Sheet open={sidebarSheetOpen} onOpenChange={setSidebarSheetOpen}>
+              <SheetTrigger asChild>
+                <button className="shrink-0 p-1.5 rounded-md hover:bg-white/10 active:bg-white/15 transition-colors relative xl:hidden">
+                  <PanelRight className="w-4 h-4 text-white/60" />
+                </button>
+              </SheetTrigger>
+              <SheetContent side="right" className="w-80 p-0 bg-[#0a0a0f] border-white/10">
+                <SheetTitle className="sr-only">Панель управления</SheetTitle>
+                <div className="h-full overflow-y-auto">
+                  <TradingDashboard />
+                  <ActivityLog />
+                  <div className="border-t border-white/5">
+                    <ControlPanel />
+                  </div>
+                </div>
+              </SheetContent>
+            </Sheet>
+          )}
         </div>
       </header>
 
       {/* ===== STRATEGY SELECTOR ===== */}
-      <div className="shrink-0 px-2 md:px-3 py-1.5 border-b border-white/5 bg-[#0d0d14]/80">
-        <div className="flex gap-1.5 md:gap-2 overflow-x-auto no-scrollbar">
+      <div className="shrink-0 px-1.5 md:px-3 py-1 border-b border-white/5 bg-[#0d0d14]/80">
+        <div className="flex gap-1 md:gap-2 overflow-x-auto no-scrollbar">
           {STRATEGIES.map(s => {
             const ss = strategyStates[s.id];
             const balance = ss?.traderState?.balance ?? 0;
@@ -450,7 +494,7 @@ export default function TradingTerminal() {
                 key={s.id}
                 onClick={() => setActiveStrategy(s.id)}
                 className={cn(
-                  'min-w-[140px] md:min-w-0 md:flex-1 rounded-lg border px-2.5 md:px-3 py-1.5 text-left transition-all duration-200 shrink-0',
+                  'min-w-[120px] md:min-w-[140px] lg:min-w-0 lg:flex-1 rounded-lg border px-2 md:px-3 py-1 md:py-1.5 text-left transition-all duration-200 shrink-0',
                   isActive
                     ? `${s.borderColor} ${s.bgColor}`
                     : 'border-white/5 bg-white/[0.02] hover:bg-white/5',
@@ -568,11 +612,59 @@ export default function TradingTerminal() {
         </>
       )}
 
-      {/* ===== DESKTOP/TABLET LAYOUT ===== */}
-      {!isMobile && (
+      {isTablet && (
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Chart Area */}
+          <div className="flex-1 relative min-h-0 overflow-hidden" id="chart-area">
+            {chartLoading && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#0d0d14]/60 backdrop-blur-sm">
+                <div className="flex items-center gap-2 text-xs text-white/50">
+                  <div className="w-3 h-3 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+                  Загрузка графика...
+                </div>
+              </div>
+            )}
+            {/* Compact toolbar */}
+            <div className="absolute top-2 left-2 right-2 z-10 flex items-center gap-1 flex-wrap">
+              {TIMEFRAMES.map((tf) => (
+                <button
+                  key={tf.interval}
+                  onClick={() => setTimeframe(tf)}
+                  className={cn(
+                    'px-2 py-0.5 rounded text-[10px] font-mono font-medium transition-all border shrink-0',
+                    timeframe.interval === tf.interval
+                      ? 'bg-white/10 text-white/90 border-white/15'
+                      : 'bg-[#1a1a2e]/70 text-white/40 border-white/5',
+                  )}
+                >
+                  {tf.label}
+                </button>
+              ))}
+              {strategy && (
+                <div className={cn('px-1.5 py-0.5 rounded text-[9px] font-mono font-bold border shrink-0 ml-auto', strategy.bgColor, strategy.borderColor, strategy.color)}>
+                  {strategy.name}
+                </div>
+              )}
+            </div>
+            <TradingChart data={candles} symbol={selectedSymbol} timeframe={timeframe} openTrades={openTrades} recentTrades={recentTrades} indicators={indicators} />
+            <DraggableTradePanel focusedTradeId={focusedTradeId} symbol={selectedSymbol} />
+          </div>
+
+          {/* Bottom Trades Table */}
+          <div className="h-40 lg:h-44 border-t border-white/5 bg-[#0d0d14] shrink-0 overflow-auto">
+            <TradesTable openTrades={openTrades} recentTrades={recentTrades} coins={coins} onSelectTrade={(trade) => {
+              setSelectedSymbol(trade.symbol);
+              setFocusedTradeId(trade.id);
+            }} />
+          </div>
+        </div>
+      )}
+
+      {/* ===== DESKTOP / LARGE DESKTOP LAYOUT ===== */
+      {!isMobile && !isTablet && (
         <div className="flex-1 flex overflow-hidden">
           {/* Left Panel — Coin List */}
-          <aside className="w-52 shrink-0 overflow-hidden">
+          <aside className="w-44 xl:w-52 shrink-0 overflow-hidden">
             <CoinList />
           </aside>
 
@@ -619,25 +711,14 @@ export default function TradingTerminal() {
                       {strategy.name}
                     </div>
                   )}
-                  {/* Indicator toggles — only show indicators defined in the strategy */}
-                  {Object.entries(indicators).filter(([, cfg]) => {
-                    if (!strategy) return true;
-                    return strategy.chartIndicators[cfg.id] !== undefined;
-                  }).map(([key, ind]) => (
-                    <button
-                      key={ind.id}
-                      onClick={() => toggleIndicator(ind.id)}
-                      className={cn(
-                        'px-1.5 py-1 rounded-md text-[9px] font-mono font-medium border transition-all duration-150 shrink-0',
-                        ind.visible
-                          ? 'border-white/20 bg-white/10 text-white/80'
-                          : 'border-white/5 bg-white/[0.02] text-white/25 hover:text-white/40',
-                      )}
-                    >
-                      <span className="inline-block w-1.5 h-1.5 rounded-full mr-1 align-middle" style={{ backgroundColor: ind.visible ? ind.color : 'rgba(255,255,255,0.15)' }} />
-                      {ind.label}
-                    </button>
-                  ))}
+                  {/* Indicator toggles */}
+                  <IndicatorToggles
+                    indicators={indicators}
+                    strategy={strategy}
+                    toggleIndicator={toggleIndicator}
+                    isOpen={indicatorMenuOpen}
+                    onToggle={() => setIndicatorMenuOpen(p => !p)}
+                  />
                 </div>
 
                 <TradingChart data={candles} symbol={selectedSymbol} timeframe={timeframe} openTrades={openTrades} recentTrades={recentTrades} indicators={indicators} />
@@ -646,7 +727,7 @@ export default function TradingTerminal() {
                 <DraggableTradePanel focusedTradeId={focusedTradeId} symbol={selectedSymbol} />
               </div>
 
-              {/* Order Book — hidden on smaller tablets */}
+              {/* Order Book — hidden on smaller desktop */}
               <div className="w-64 shrink-0 border-l border-white/5 hidden xl:block">
                 <OrderBook key={selectedSymbol} />
               </div>
@@ -661,14 +742,62 @@ export default function TradingTerminal() {
             </div>
           </main>
 
-          {/* Right Panel — Dashboard + Activity + Controls */}
-          <aside className="w-72 shrink-0 overflow-y-auto border-l border-white/5">
+          {/* Right Panel — Dashboard + Activity + Controls (only on large desktop) */}
+          <aside className="w-72 shrink-0 overflow-y-auto border-l border-white/5 hidden xl:block">
             <TradingDashboard />
             <ActivityLog />
             <div className="border-t border-white/5">
               <ControlPanel />
             </div>
           </aside>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// Indicator Toggles — compact dropdown for desktop
+// ============================================================
+
+function IndicatorToggles({ indicators, strategy, toggleIndicator, isOpen, onToggle }: {
+  indicators: Record<string, IndicatorConfig>;
+  strategy: ReturnType<typeof getStrategy>;
+  toggleIndicator: (id: string) => void;
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
+  const filtered = Object.entries(indicators).filter(([, cfg]) => {
+    if (!strategy) return true;
+    return strategy.chartIndicators[cfg.id] !== undefined;
+  });
+
+  return (
+    <div className="relative shrink-0">
+      <button
+        onClick={onToggle}
+        className="px-1.5 py-1 rounded-md text-[9px] font-mono font-medium border border-white/10 bg-white/5 text-white/50 hover:text-white/70 hover:bg-white/10 transition-all duration-150 flex items-center gap-1"
+      >
+        Индикаторы
+        <ChevronDown className={cn('w-2.5 h-2.5 transition-transform', isOpen && 'rotate-180')} />
+      </button>
+      {isOpen && (
+        <div className="absolute top-full left-0 mt-1 bg-[#12121e]/95 backdrop-blur-md border border-white/10 rounded-lg p-1.5 z-30 flex flex-wrap gap-1 min-w-[160px] max-w-[280px] shadow-xl shadow-black/30">
+          {filtered.map(([key, ind]) => (
+            <button
+              key={ind.id}
+              onClick={() => toggleIndicator(ind.id)}
+              className={cn(
+                'px-1.5 py-1 rounded-md text-[9px] font-mono font-medium border transition-all duration-150 shrink-0',
+                ind.visible
+                  ? 'border-white/20 bg-white/10 text-white/80'
+                  : 'border-white/5 bg-white/[0.02] text-white/25 hover:text-white/40',
+              )}
+            >
+              <span className="inline-block w-1.5 h-1.5 rounded-full mr-1 align-middle" style={{ backgroundColor: ind.visible ? ind.color : 'rgba(255,255,255,0.15)' }} />
+              {ind.label}
+            </button>
+          ))}
         </div>
       )}
     </div>
@@ -853,14 +982,14 @@ function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
         <table className="w-full text-[11px]">
           <thead className="sticky top-0 bg-[#0d0d14] z-10">
             <tr className="text-white/35 border-b border-white/5">
-              <th className="text-left font-medium py-2 px-3">Символ</th>
-              <th className="text-left font-medium py-2 px-2">Напр.</th>
-              <th className="text-right font-medium py-2 px-2">Вход</th>
-              <th className="text-right font-medium py-2 px-2">Выход</th>
-              <th className="text-right font-medium py-2 px-2">Плечо</th>
-              <th className="text-right font-medium py-2 px-2">Объем</th>
-              <th className="text-right font-medium py-2 px-2">PnL</th>
-              <th className="text-center font-medium py-2 px-2">Статус</th>
+              <th className="text-left font-medium py-2 px-2 md:px-3">Символ</th>
+              <th className="text-left font-medium py-2 px-1.5 md:px-2">Напр.</th>
+              <th className="text-right font-medium py-2 px-1.5 md:px-2 hidden md:table-cell">Вход</th>
+              <th className="text-right font-medium py-2 px-1.5 md:px-2 hidden lg:table-cell">Выход</th>
+              <th className="text-right font-medium py-2 px-1.5 md:px-2 hidden lg:table-cell">Плечо</th>
+              <th className="text-right font-medium py-2 px-1.5 md:px-2 hidden xl:table-cell">Объем</th>
+              <th className="text-right font-medium py-2 px-1.5 md:px-2">PnL</th>
+              <th className="text-center font-medium py-2 px-1.5 md:px-2">Статус</th>
             </tr>
           </thead>
           <tbody>
@@ -886,32 +1015,32 @@ function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
                 className="border-b border-white/[0.03] hover:bg-white/[0.04] transition-colors cursor-pointer"
                 onClick={() => onSelectTrade(trade)}
               >
-                <td className="py-1.5 px-3 font-mono text-white/80 font-medium">
+                <td className="py-1.5 px-2 md:px-3 font-mono text-white/80 font-medium">
                   {trade.symbol.replace('USDT', '')}
                 </td>
-                <td className="py-1.5 px-2">
+                <td className="py-1.5 px-1.5 md:px-2">
                   <span className={cn('font-mono font-bold', isLong ? 'text-green-400' : 'text-red-400')}>
                     {isLong ? 'LONG' : 'SHORT'}
                   </span>
                 </td>
-                <td className="py-1.5 px-2 text-right font-mono text-white/60">
+                <td className="py-1.5 px-1.5 md:px-2 text-right font-mono text-white/60 hidden md:table-cell">
                   {typeof trade.entry_price === 'number'
                     ? trade.entry_price < 1 ? trade.entry_price.toPrecision(4) : trade.entry_price.toFixed(2)
                     : '—'}
                 </td>
-                <td className="py-1.5 px-2 text-right font-mono text-white/60">
+                <td className="py-1.5 px-1.5 md:px-2 text-right font-mono text-white/60 hidden lg:table-cell">
                   {trade.exit_price != null && typeof trade.exit_price === 'number'
                     ? trade.exit_price < 1 ? trade.exit_price.toPrecision(4) : trade.exit_price.toFixed(2)
                     : '—'}
                 </td>
-                <td className="py-1.5 px-2 text-right font-mono text-white/50">{trade.leverage ?? '—'}x</td>
-                <td className="py-1.5 px-2 text-right font-mono text-white/60">${typeof trade.amount === 'number' ? trade.amount.toFixed(2) : '—'}</td>
-                <td className={cn('py-1.5 px-2 text-right font-mono font-bold', displayPnl == null ? 'text-white/30' : displayPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
+                <td className="py-1.5 px-1.5 md:px-2 text-right font-mono text-white/50 hidden lg:table-cell">{trade.leverage ?? '—'}x</td>
+                <td className="py-1.5 px-1.5 md:px-2 text-right font-mono text-white/60 hidden xl:table-cell">${typeof trade.amount === 'number' ? trade.amount.toFixed(2) : '—'}</td>
+                <td className={cn('py-1.5 px-1.5 md:px-2 text-right font-mono font-bold', displayPnl == null ? 'text-white/30' : displayPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
                   {displayPnl != null && typeof displayPnl === 'number'
                     ? `${displayPnl >= 0 ? '+' : ''}$${displayPnl.toFixed(2)}`
                     : '—'}
                 </td>
-                <td className="py-1.5 px-2 text-center">
+                <td className="py-1.5 px-1.5 md:px-2 text-center">
                   <span className={cn('text-[9px] font-mono px-1.5 py-0.5 rounded', isOpen
                     ? 'bg-yellow-500/10 text-yellow-400/80 border border-yellow-500/20'
                     : 'bg-white/5 text-white/40 border border-white/10'
