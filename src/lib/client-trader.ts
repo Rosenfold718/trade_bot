@@ -153,6 +153,8 @@ function calcEMA50(data: number[], period: number): number {
 
 // ============================================================
 // Client-side TP/SL monitoring
+// Uses LAST COMPLETED 1H candle close — aligns exit with signal timeframe
+// Prevents noise stop-outs from tick-price spikes mid-candle
 // ============================================================
 
 export interface MonitorResult {
@@ -160,40 +162,75 @@ export interface MonitorResult {
   trailingUpdates: Array<{ tradeId: string; newStopLoss: number; reason: string }>;
 }
 
-export async function monitorTradesClient(openTrades: Trade[]): Promise<MonitorResult> {
+/**
+ * Fetch the close price of the last COMPLETED 1H candle.
+ * This aligns SL/TP checks with the same data the signals are based on.
+ */
+async function fetchLastCandleClose(symbol: string): Promise<number> {
+  const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1h&limit=2`);
+  if (!res.ok) throw new Error(`Failed to fetch klines for ${symbol}`);
+  const data = await res.json();
+  if (!Array.isArray(data) || data.length < 1) throw new Error('No kline data');
+  // data[0] = last completed candle, data[1] = current forming candle (if exists)
+  // Use the last completed candle's close for SL/TP evaluation
+  const completedCandle = data.length >= 2 ? data[0] : data[data.length - 1];
+  return parseFloat(String(completedCandle[4]));
+}
+
+/**
+ * Get the current 1H candle hour (UTC epoch hour).
+ * Used to determine when a new candle has formed.
+ */
+export function getCurrentCandleHour(): number {
+  return Math.floor(Date.now() / 3600000);
+}
+
+export async function monitorTradesClient(
+  openTrades: Trade[],
+  lastCandleHour: number,
+): Promise<MonitorResult> {
   const closedTrades: MonitorResult['closedTrades'] = [];
   const trailingUpdates: MonitorResult['trailingUpdates'] = [];
 
+  const currentCandleHour = getCurrentCandleHour();
+
+  // Only check SL/TP when a NEW 1H candle has formed.
+  // This is the core fix: exit decisions must align with the signal timeframe.
+  if (currentCandleHour <= lastCandleHour) {
+    return { closedTrades: [], trailingUpdates: [] };
+  }
+
   for (const trade of openTrades) {
     try {
-      const currentPrice = await fetchCurrentPrice(trade.symbol);
+      // Use the last completed 1H candle close, NOT the tick price.
+      // This prevents mid-candle noise from triggering stops.
+      const candleClose = await fetchLastCandleClose(trade.symbol);
       let shouldClose = false;
       let reason = '';
 
-      if (trade.direction === 'long' && trade.take_profit && currentPrice >= trade.take_profit) {
-        shouldClose = true; reason = 'TP hit';
-      } else if (trade.direction === 'short' && trade.take_profit && currentPrice <= trade.take_profit) {
-        shouldClose = true; reason = 'TP hit';
+      if (trade.direction === 'long' && trade.take_profit && candleClose >= trade.take_profit) {
+        shouldClose = true; reason = 'TP hit (1H close)';
+      } else if (trade.direction === 'short' && trade.take_profit && candleClose <= trade.take_profit) {
+        shouldClose = true; reason = 'TP hit (1H close)';
       }
 
-      if (trade.direction === 'long' && trade.stop_loss && currentPrice <= trade.stop_loss) {
-        shouldClose = true; reason = 'SL hit';
-      } else if (trade.direction === 'short' && trade.stop_loss && currentPrice >= trade.stop_loss) {
-        shouldClose = true; reason = 'SL hit';
+      if (trade.direction === 'long' && trade.stop_loss && candleClose <= trade.stop_loss) {
+        shouldClose = true; reason = 'SL hit (1H close)';
+      } else if (trade.direction === 'short' && trade.stop_loss && candleClose >= trade.stop_loss) {
+        shouldClose = true; reason = 'SL hit (1H close)';
       }
 
       // ============================================================
-      // Gradual trailing stop: 3 levels of protection
+      // Trailing stop: 3 levels of protection (based on candle close)
       // ============================================================
       if (!shouldClose && trade.stop_loss && trade.entry_price) {
         const initialSlDistance = Math.abs(trade.entry_price - trade.stop_loss);
         const isLong = trade.direction === 'long';
         const favorableMove = isLong
-          ? currentPrice - trade.entry_price
-          : trade.entry_price - currentPrice;
+          ? candleClose - trade.entry_price
+          : trade.entry_price - candleClose;
 
         if (favorableMove >= initialSlDistance * 3) {
-          // Level 3: Price moved ≥3× SL — lock 2× SL distance profit
           const trailedSL = isLong
             ? trade.entry_price + initialSlDistance * 2
             : trade.entry_price - initialSlDistance * 2;
@@ -202,7 +239,6 @@ export async function monitorTradesClient(openTrades: Trade[]): Promise<MonitorR
             trailingUpdates.push({ tradeId: trade.id, newStopLoss: trailedSL, reason: 'Trailing lock 2× profit' });
           }
         } else if (favorableMove >= initialSlDistance * 2) {
-          // Level 2: Price moved ≥2× SL — lock 1× SL distance profit
           const trailedSL = isLong
             ? trade.entry_price + initialSlDistance
             : trade.entry_price - initialSlDistance;
@@ -211,7 +247,6 @@ export async function monitorTradesClient(openTrades: Trade[]): Promise<MonitorR
             trailingUpdates.push({ tradeId: trade.id, newStopLoss: trailedSL, reason: 'Trailing lock profit' });
           }
         } else if (favorableMove >= initialSlDistance) {
-          // Level 1: Price moved ≥1× SL — trail to breakeven
           const breakevenSL = isLong
             ? trade.entry_price * 1.001
             : trade.entry_price * 0.999;
@@ -224,10 +259,10 @@ export async function monitorTradesClient(openTrades: Trade[]): Promise<MonitorR
 
       if (shouldClose) {
         const priceChange = trade.direction === 'long'
-          ? (currentPrice - trade.entry_price) / trade.entry_price
-          : (trade.entry_price - currentPrice) / trade.entry_price;
+          ? (candleClose - trade.entry_price) / trade.entry_price
+          : (trade.entry_price - candleClose) / trade.entry_price;
         const pnl = trade.amount * priceChange * trade.leverage - trade.amount * 0.001;
-        closedTrades.push({ tradeId: trade.id, symbol: trade.symbol, direction: trade.direction, pnl, reason, exitPrice: currentPrice });
+        closedTrades.push({ tradeId: trade.id, symbol: trade.symbol, direction: trade.direction, pnl, reason, exitPrice: candleClose });
       }
     } catch {
       continue;
@@ -246,6 +281,7 @@ export async function runAutoTradeCycle(
   strategyId: string,
   interval: string,
   balance: number,
+  lastCandleHour: number = 0,
 ): Promise<{
     action: 'monitor' | 'new-trade' | 'idle';
     closedTrades: MonitorResult['closedTrades'];
@@ -254,13 +290,15 @@ export async function runAutoTradeCycle(
     message: string;
     scannedCount: number;
     bestScore: number;
+    newCandleHour: number;
   }> {
   const strategy = getStrategy(strategyId);
   const maxTrades = strategy?.maxOpenTrades ?? 10;
   const tradeSizePct = strategy?.tradeSizePercent ?? 0.10;
+  const currentCandleHour = getCurrentCandleHour();
 
-  // Step 1: Monitor open trades
-  const { closedTrades, trailingUpdates } = await monitorTradesClient(openTrades);
+  // Step 1: Monitor open trades (only when a new 1H candle has formed)
+  const { closedTrades, trailingUpdates } = await monitorTradesClient(openTrades, lastCandleHour);
   const updatedOpenTrades = openTrades.filter(t => !closedTrades.some(c => c.tradeId === t.id));
 
   if (closedTrades.length > 0 || trailingUpdates.length > 0) {
@@ -274,17 +312,18 @@ export async function runAutoTradeCycle(
       message: parts.join(' | '),
       scannedCount: 0,
       bestScore: 0,
+      newCandleHour: currentCandleHour,
     };
   }
 
   // Hard limit: strategy-specific max concurrent open trades
   if (updatedOpenTrades.length >= maxTrades) {
-    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: `Лимит сделок: ${updatedOpenTrades.length}/${maxTrades}, жду закрытия...`, scannedCount: 0, bestScore: 0 };
+    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: `Лимит сделок: ${updatedOpenTrades.length}/${maxTrades}, жду закрытия...`, scannedCount: 0, bestScore: 0, newCandleHour: currentCandleHour };
   }
 
   // Require higher minimum balance for safety
   if (balance < 10) {
-    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: 'Недостаточно баланса ($<10)', scannedCount: 0, bestScore: 0 };
+    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: 'Недостаточно баланса ($<10)', scannedCount: 0, bestScore: 0, newCandleHour: currentCandleHour };
   }
 
   const openSymbols = new Set(updatedOpenTrades.map(t => t.symbol));
@@ -293,7 +332,7 @@ export async function runAutoTradeCycle(
 
   const best = await findBestSignal(openSymbols, strategyId, interval, limit);
   if (!best || best.decision.direction === 'none') {
-    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: 'Сигналов не найдено, сканирую...', scannedCount: 20, bestScore: 0 };
+    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: 'Сигналов не найдено, сканирую...', scannedCount: 20, bestScore: 0, newCandleHour: currentCandleHour };
   }
 
   // Trade amount: smaller position per trade for risk management
@@ -316,5 +355,6 @@ export async function runAutoTradeCycle(
     message: `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${best.symbol.replace('USDT', '')} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x | Score: ${best.decision.score.toFixed(2)}`,
     scannedCount: 20,
     bestScore: Math.abs(best.decision.score),
+    newCandleHour: currentCandleHour,
   };
 }

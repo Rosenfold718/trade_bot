@@ -141,35 +141,37 @@ export async function POST(request: NextRequest) {
 
       for (const trade of openTrades) {
         try {
-          const url = `https://api.binance.com/api/v3/ticker/price?symbol=${trade.symbol}`;
-          const res = await fetch(url);
-          if (!res.ok) continue;
-          const data = await res.json();
-          const currentPrice = parseFloat(data.price);
+          // Use last completed 1H candle close — aligns with signal timeframe
+          const klineUrl = `https://api.binance.com/api/v3/klines?symbol=${trade.symbol}&interval=1h&limit=2`;
+          const klineRes = await fetch(klineUrl);
+          if (!klineRes.ok) continue;
+          const klineData = await klineRes.json();
+          if (!Array.isArray(klineData) || klineData.length < 1) continue;
+          const completedCandle = klineData.length >= 2 ? klineData[0] : klineData[klineData.length - 1];
+          const candleClose = parseFloat(String(completedCandle[4]));
 
           let shouldClose = false;
           let reason = '';
-          let exitPrice = currentPrice;
 
-          if (trade.direction === 'long' && trade.take_profit && currentPrice >= trade.take_profit) {
-            shouldClose = true; reason = 'TP hit';
-          } else if (trade.direction === 'short' && trade.take_profit && currentPrice <= trade.take_profit) {
-            shouldClose = true; reason = 'TP hit';
+          if (trade.direction === 'long' && trade.take_profit && candleClose >= trade.take_profit) {
+            shouldClose = true; reason = 'TP hit (1H close)';
+          } else if (trade.direction === 'short' && trade.take_profit && candleClose <= trade.take_profit) {
+            shouldClose = true; reason = 'TP hit (1H close)';
           }
 
-          if (trade.direction === 'long' && trade.stop_loss && currentPrice <= trade.stop_loss) {
-            shouldClose = true; reason = 'SL hit';
-          } else if (trade.direction === 'short' && trade.stop_loss && currentPrice >= trade.stop_loss) {
-            shouldClose = true; reason = 'SL hit';
+          if (trade.direction === 'long' && trade.stop_loss && candleClose <= trade.stop_loss) {
+            shouldClose = true; reason = 'SL hit (1H close)';
+          } else if (trade.direction === 'short' && trade.stop_loss && candleClose >= trade.stop_loss) {
+            shouldClose = true; reason = 'SL hit (1H close)';
           }
 
           if (shouldClose) {
             const priceChange = trade.direction === 'long'
-              ? (exitPrice - trade.entry_price) / trade.entry_price
-              : (trade.entry_price - exitPrice) / trade.entry_price;
+              ? (candleClose - trade.entry_price) / trade.entry_price
+              : (trade.entry_price - candleClose) / trade.entry_price;
             const pnl = trade.amount * priceChange * trade.leverage - trade.amount * 0.001;
 
-            await closeTrade(trade.id, exitPrice, pnl);
+            await closeTrade(trade.id, candleClose, pnl);
 
             const state = await getTraderState(userId, strategyId);
             let newBalance = state.balance + trade.amount + pnl;

@@ -137,6 +137,7 @@ export default function TradingTerminal() {
 
   const initDone = useRef(false);
   const [initFailed, setInitFailed] = useState(false);
+  const lastCandleHourRef = useRef(0); // Tracks last 1H candle boundary for SL/TP checks
   const openTradesRef = useRef(openTrades);
   openTradesRef.current = openTrades;
 
@@ -254,7 +255,11 @@ export default function TradingTerminal() {
             const balance = sTraderState?.balance ?? 100;
 
             try {
-              const result = await runAutoTradeCycle(sOpenTrades, s.id, timeframe.interval, balance);
+              const result = await runAutoTradeCycle(sOpenTrades, s.id, timeframe.interval, balance, lastCandleHourRef.current);
+              // Update candle hour ref if a new candle was detected
+              if (result.newCandleHour > lastCandleHourRef.current) {
+                lastCandleHourRef.current = result.newCandleHour;
+              }
               return { strategyId: s.id, result };
             } catch (err) {
               return { strategyId: s.id, result: { message: `Error: ${err instanceof Error ? err.message : 'unknown'}`, action: 'idle' as const, closedTrades: [], trailingUpdates: [] } };

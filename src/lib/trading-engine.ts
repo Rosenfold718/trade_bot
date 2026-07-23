@@ -588,8 +588,8 @@ function makeMomentumDecision(
     ? 1
     : Math.min(strategy.maxLeverage, Math.max(1, Math.round(maxScore * 1.5)));
 
-  // Wider stop loss: 1.5× ATR to avoid noise stop-outs
-  const stopLossPercent = 1.5 * atr / price;
+  // Wide stop loss: 2.5× ATR to give trades room to breathe on 1H timeframe
+  const stopLossPercent = 2.5 * atr / price;
   const takeProfitPercent = stopLossPercent * strategy.riskRewardRatio;
 
   const stopLoss = direction === 'long'
@@ -712,8 +712,8 @@ function makeMeanReversionDecision(
   }
 
   const leverage = Math.min(strategy.maxLeverage, Math.max(1, Math.round(score * 1.5)));
-  // Wider stop: 1.5× ATR
-  const stopLossPercent = 1.5 * atr / price;
+  // Wide stop: 2.5× ATR to give trades room to breathe on 1H timeframe
+  const stopLossPercent = 2.5 * atr / price;
   const takeProfitPercent = stopLossPercent * strategy.riskRewardRatio;
 
   const stopLoss = direction === 'long'
@@ -877,8 +877,8 @@ function makeTrendPullbackDecision(
   const direction: 'long' | 'short' = isUptrend ? 'long' : 'short';
   const leverage = Math.min(strategy.maxLeverage, Math.max(1, Math.round(score * 1.5)));
 
-  // Wider stop: 1.5× ATR
-  const stopLossPercent = 1.5 * atr / price;
+  // Wide stop: 2.5× ATR to give trades room to breathe on 1H timeframe
+  const stopLossPercent = 2.5 * atr / price;
   const takeProfitPercent = stopLossPercent * strategy.riskRewardRatio;
 
   const stopLoss = direction === 'long'

@@ -36,7 +36,7 @@ export const STRATEGIES: StrategyConfig[] = [
   {
     id: 'momentum',
     name: 'Импульс Pro',
-    description: 'Следование за сильным трендом. Требует ADX > 25, ≥6/10 индикаторов, score > 0.35. Стоп 1.5× ATR, TP 1:3.',
+    description: 'Следование за сильным трендом. Требует ADX > 25, ≥6/10 индикаторов, score > 0.35. Стоп 2.5× ATR, TP 1:3. Проверка SL/TP по закрытию 1H свечи.',
     color: 'text-amber-400',
     bgColor: 'bg-amber-500/10',
     borderColor: 'border-amber-500/30',
@@ -69,7 +69,7 @@ export const STRATEGIES: StrategyConfig[] = [
   {
     id: 'mean-reversion',
     name: 'Возврат к среднему',
-    description: 'Торговля на экстремальных отклонениях. Все 3 индикатора + EMA-50 тренд. Время 10:00–23:00 МСК.',
+    description: 'Торговля на экстремальных отклонениях. Все 3 индикатора + EMA-50 тренд. Стоп 2.5× ATR, TP 1:2.5. Время 10:00–23:00 МСК. Проверка SL/TP по закрытию 1H свечи.',
     color: 'text-emerald-400',
     bgColor: 'bg-emerald-500/10',
     borderColor: 'border-emerald-500/30',
@@ -103,7 +103,7 @@ export const STRATEGIES: StrategyConfig[] = [
   {
     id: 'trend-pullback',
     name: 'Тренд на откатах',
-    description: 'Вход на откатах к EMA21 в сильном тренде. ADX > 25, ≥4/6 согласия, RSI фильтр, стоп 1.5× ATR.',
+    description: 'Вход на откатах к EMA21 в сильном тренде. ADX > 25, ≥4/6 согласия, RSI фильтр. Стоп 2.5× ATR, TP 1:3. Проверка SL/TP по закрытию 1H свечи.',
     color: 'text-cyan-400',
     bgColor: 'bg-cyan-500/10',
     borderColor: 'border-cyan-500/30',
