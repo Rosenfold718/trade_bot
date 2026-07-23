@@ -372,15 +372,15 @@ export default function TradingTerminal() {
   }, [selectedSymbol, candles.length, timeframe, setCurrentAnalysis, activeStrategy]);
 
   return (
-    <div className="h-full w-full flex flex-col overflow-hidden bg-[#0a0a0f]">
+    <div className="xl:h-full w-full flex flex-col xl:overflow-hidden bg-[#0a0a0f]">
       {/* Top Bar */}
-      <header className="h-10 flex items-center justify-between px-2 sm:px-3 md:px-4 border-b border-white/5 bg-[#0d0d14]/90 backdrop-blur-sm shrink-0 z-20 safe-top">
-        <div className="flex items-center gap-1 sm:gap-2 md:gap-3 min-w-0">
-          <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${autoTrading ? 'bg-green-400 animate-pulse' : 'bg-green-400/40'}`} />
-            <span className="text-[11px] sm:text-sm font-bold text-white/90 tracking-tight">ТРЕЙД-БОТ</span>
+      <header className="h-11 flex items-center justify-between px-3 sm:px-4 md:px-5 border-b border-white/[0.06] bg-[#0d0d14]/95 backdrop-blur-xl shrink-0 z-20 safe-top">
+        <div className="flex items-center gap-2 sm:gap-3 md:gap-4 min-w-0">
+          <div className="flex items-center gap-2.5">
+            <div className={`w-2 h-2 rounded-full ${autoTrading ? 'bg-emerald-400 animate-pulse shadow-lg shadow-emerald-400/30' : 'bg-emerald-400/30'}`} />
+            <span className="text-xs sm:text-sm font-bold text-white/90 tracking-tight">ТРЕЙД-БОТ</span>
             {autoTrading && (
-              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/25 animate-pulse">
+              <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 animate-pulse">
                 АВТО LIVE
               </span>
             )}
@@ -388,13 +388,13 @@ export default function TradingTerminal() {
           {/* Mobile coin selector button */}
           <button
             onClick={() => setShowCoinSheet(true)}
-            className="md:hidden flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-white/5 border border-white/10 active:bg-white/10 transition-colors"
+            className="md:hidden flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.08] active:bg-white/[0.08] transition-colors"
           >
             <Menu className="w-3.5 h-3.5 text-white/60" />
             <span className="text-[11px] font-semibold text-white/90">{selectedSymbol.replace('USDT', '')}</span>
             <ChevronDown className="w-3 h-3 text-white/30" />
           </button>
-          <div className="h-4 w-px bg-white/10 hidden sm:block" />
+          <div className="h-4 w-px bg-white/[0.06] hidden sm:block" />
           <span className="text-xs text-white/40 font-mono hidden sm:inline">
             {selectedSymbol.replace('USDT', '')}
             <span className="text-white/25">/USDT</span>
@@ -419,7 +419,7 @@ export default function TradingTerminal() {
       </header>
 
       {/* Strategy Selector */}
-      <div className="shrink-0 px-1.5 sm:px-3 py-1 sm:py-1.5 border-b border-white/5 bg-[#0d0d14]/80 flex gap-1 sm:gap-2 overflow-x-auto no-scrollbar">
+      <div className="shrink-0 px-1.5 sm:px-3 py-1.5 sm:py-2 border-b border-white/[0.06] bg-[#0d0d14]/80 flex gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar">
         {STRATEGIES.map(s => {
           const ss = strategyStates[s.id];
           const balance = ss?.traderState?.balance ?? 0;
@@ -430,21 +430,21 @@ export default function TradingTerminal() {
               key={s.id}
               onClick={() => setActiveStrategy(s.id)}
               className={cn(
-                'flex-1 rounded-lg border px-3 py-1.5 text-left transition-all duration-200',
+                'min-w-0 w-full rounded-xl border px-3 py-2 text-left transition-all duration-200',
                 isActive
                   ? `${s.borderColor} ${s.bgColor}`
-                  : 'border-white/5 bg-white/[0.02] hover:bg-white/5',
+                  : 'border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.04]',
               )}
             >
               <div className="flex items-center justify-between">
-                <div className={cn('text-xs font-semibold', isActive ? s.color : 'text-zinc-400')}>{s.name}</div>
+                <div className={cn('text-xs font-semibold truncate', isActive ? s.color : 'text-zinc-400')}>{s.name}</div>
                 {openCount > 0 && (
-                  <span className="text-[9px] font-mono text-yellow-400/70 bg-yellow-500/10 px-1.5 py-0.5 rounded-full">
+                  <span className="text-[9px] font-mono text-yellow-400/70 bg-yellow-500/10 px-1.5 py-0.5 rounded-full shrink-0 ml-1">
                     {openCount} откр.
                   </span>
                 )}
               </div>
-              <div className={cn('text-[10px] mt-0.5 truncate', isActive ? 'text-zinc-400' : 'text-zinc-600')}>
+              <div className={cn('text-[10px] mt-1 truncate', isActive ? 'text-zinc-400' : 'text-zinc-600')}>
                 {s.description.split('.')[0]}
               </div>
               <div className={cn('text-[10px] mt-0.5 font-mono', isActive ? 'text-zinc-300' : 'text-zinc-600')}>
@@ -455,19 +455,19 @@ export default function TradingTerminal() {
         })}
       </div>
 
-      {/* Main Content — responsive layout */}
-      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+      {/* Main Content */
+      <div className="xl:flex-1 xl:flex xl:flex-col xl:min-h-0 xl:overflow-hidden">
         {/* Row: Coin List (sidebar) + Center + Right Panel */}
-        <div className="flex-1 flex min-h-0 overflow-hidden">
-          {/* Left Panel — hidden on mobile */}
+        <div className="xl:flex-1 xl:flex xl:min-h-0 xl:overflow-hidden">
+          {/* Left Panel — hidden on mobile/tablet */}
           <aside className="w-40 lg:w-52 shrink-0 overflow-hidden hidden md:block">
             <CoinList />
           </aside>
 
           {/* Center — Chart + Order Book + Trades Table */}
-          <main className="flex-1 flex flex-col min-h-0 xl:overflow-hidden overflow-y-auto custom-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>
+          <main className="xl:flex-1 xl:flex xl:flex-col xl:min-h-0 xl:overflow-hidden">
           {/* Chart + Order Book Row */}
-          <div className="flex-1 flex min-h-0 xl:flex-1 h-[50dvh] xl:h-auto shrink-0">
+          <div className="h-[50dvh] xl:h-auto xl:flex-1 flex min-h-0 shrink-0">
             {/* Chart Area */}
             <div className="flex-1 relative min-h-0 overflow-hidden" id="chart-area">
               {chartLoading && (
@@ -481,7 +481,7 @@ export default function TradingTerminal() {
 
               {/* Top bar: Symbol + Timeframes + Indicators */}
               <div className="absolute top-2 sm:top-3 left-2 sm:left-3 z-10 flex items-center gap-1 flex-wrap max-w-[calc(100%-1.5rem)] sm:max-w-[calc(100%-2rem)]">
-                <div className="px-2.5 py-1 rounded-md bg-[#1a1a2e]/90 backdrop-blur-sm border border-white/5 mr-1 shrink-0">
+                <div className="px-2.5 py-1 rounded-lg bg-[#12121e]/90 backdrop-blur-md border border-white/[0.08] mr-1 shrink-0">
                   <span className="text-sm font-semibold text-white/90">{selectedSymbol.replace('USDT', '')}</span>
                   <span className="text-xs text-white/40 ml-1.5">/USDT</span>
                 </div>
@@ -490,10 +490,10 @@ export default function TradingTerminal() {
                     key={tf.interval}
                     onClick={() => setTimeframe(tf)}
                     className={cn(
-                      'px-2 py-1 rounded-md text-[11px] font-mono font-medium transition-all duration-150 border shrink-0',
+                      'px-2.5 py-1 rounded-lg text-[11px] font-mono font-medium transition-all duration-200 border shrink-0',
                       timeframe.interval === tf.interval
-                        ? 'bg-white/10 text-white/90 border-white/15'
-                        : 'bg-[#1a1a2e]/70 text-white/40 border-white/5 hover:bg-white/5 hover:text-white/60',
+                        ? 'bg-white/[0.08] text-white/90 border-white/[0.12]'
+                        : 'bg-[#12121e]/70 text-white/35 border-white/[0.04] hover:bg-white/[0.04] hover:text-white/60',
                     )}
                   >
                     {tf.label}
@@ -537,34 +537,38 @@ export default function TradingTerminal() {
               </div>
             </div>
 
-            {/* Order Book */}
-            <div className="w-56 xl:w-64 2xl:w-72 shrink-0 border-l border-white/5 hidden lg:block">
+            {/* Order Book — desktop only */}
+            <div className="w-56 xl:w-64 2xl:w-72 shrink-0 border-l border-white/[0.06] hidden lg:block">
               <OrderBook key={selectedSymbol} />
             </div>
           </div>
 
           {/* Bottom Trades Table */}
-          <div className="border-t border-white/5 bg-[#0d0d14] xl:h-48 xl:shrink-0 overflow-auto" style={{ maxHeight: '40vh' }}>
+          <div className="border-t border-white/[0.06] bg-[#0d0d14] xl:h-48 xl:shrink-0 xl:overflow-auto overflow-x-auto" style={{ maxHeight: '35dvh' }}>
             <TradesTable openTrades={openTrades} recentTrades={recentTrades} coins={coins} onSelectTrade={(trade) => {
               setSelectedSymbol(trade.symbol);
               setFocusedTradeId(trade.id);
             }} />
           </div>
           {/* Dashboard + Controls — visible on mobile/tablet below trades */}
-          <div className="xl:hidden border-t border-white/5 safe-bottom">
-            <TradingDashboard />
+          <div className="xl:hidden border-t border-white/[0.06]">
+            <div className="p-2.5 sm:p-3">
+              <TradingDashboard />
+            </div>
             <ActivityLog />
-            <div className="border-t border-white/5">
+            <div className="border-t border-white/[0.06]">
               <ControlPanel />
             </div>
           </div>
         </main>
 
         {/* Right Panel */}
-        <aside className="w-64 xl:w-72 2xl:w-80 shrink-0 overflow-y-auto border-l border-white/5 hidden xl:block">
-          <TradingDashboard />
+        <aside className="w-64 xl:w-72 2xl:w-80 shrink-0 overflow-y-auto border-l border-white/[0.06] hidden xl:block">
+          <div className="p-2.5">
+            <TradingDashboard />
+          </div>
           <ActivityLog />
-          <div className="border-t border-white/5">
+          <div className="border-t border-white/[0.06]">
             <ControlPanel />
           </div>
         </aside>
@@ -646,8 +650,8 @@ function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
 
   if (allTrades.length === 0) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <span className="text-xs text-white/25">Нет сделок</span>
+      <div className="h-24 flex items-center justify-center">
+        <span className="text-xs text-white/20 font-mono">Нет сделок</span>
       </div>
     );
   }
@@ -655,17 +659,17 @@ function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
   return (
     <div className="h-full flex flex-col">
       <div className="flex-1 overflow-x-auto overflow-y-auto">
-        <table className="w-full text-[11px] min-w-[520px]">
+        <table className="w-full text-[11px] min-w-[480px]">
           <thead className="sticky top-0 bg-[#0d0d14] z-10">
-            <tr className="text-white/35 border-b border-white/5">
-              <th className="text-left font-medium py-2 px-2 md:px-3">Символ</th>
-              <th className="text-left font-medium py-2 px-1.5 md:px-2">Напр.</th>
-              <th className="text-right font-medium py-2 px-1.5 md:px-2 hidden md:table-cell">Вход</th>
-              <th className="text-right font-medium py-2 px-1.5 md:px-2 hidden lg:table-cell">Выход</th>
-              <th className="text-right font-medium py-2 px-1.5 md:px-2 hidden lg:table-cell">Плечо</th>
-              <th className="text-right font-medium py-2 px-1.5 md:px-2 hidden xl:table-cell">Объем</th>
-              <th className="text-right font-medium py-2 px-2">PnL</th>
-              <th className="text-center font-medium py-2 px-2">Статус</th>
+            <tr className="text-white/30 border-b border-white/[0.06]">
+              <th className="text-left font-medium py-2.5 px-2 md:px-3">Символ</th>
+              <th className="text-left font-medium py-2.5 px-1.5 md:px-2">Напр.</th>
+              <th className="text-right font-medium py-2.5 px-1.5 md:px-2 hidden md:table-cell">Вход</th>
+              <th className="text-right font-medium py-2.5 px-1.5 md:px-2 hidden lg:table-cell">Выход</th>
+              <th className="text-right font-medium py-2.5 px-1.5 md:px-2 hidden lg:table-cell">Плечо</th>
+              <th className="text-right font-medium py-2.5 px-1.5 md:px-2 hidden xl:table-cell">Объём</th>
+              <th className="text-right font-medium py-2.5 px-2">PnL</th>
+              <th className="text-center font-medium py-2.5 px-2">Статус</th>
             </tr>
           </thead>
           <tbody>
@@ -759,19 +763,19 @@ function ActivityLog() {
   if (activityLog.length === 0) return null;
 
   return (
-    <div className="border-t border-white/5 p-3">
-      <div className="text-xs uppercase tracking-wider text-white/40 font-medium mb-2 flex items-center gap-1.5">
-        <div className={cn('w-1.5 h-1.5 rounded-full', activityLog[0]?.type === 'trade' ? 'bg-green-400' : activityLog[0]?.type === 'error' ? 'bg-red-400' : 'bg-white/30')} />
+    <div className="border-t border-white/[0.06] p-3 sm:p-4">
+      <div className="text-[10px] uppercase tracking-widest text-white/30 font-medium mb-3 flex items-center gap-2">
+        <div className={cn('w-1.5 h-1.5 rounded-full', activityLog[0]?.type === 'trade' ? 'bg-emerald-400 shadow-sm shadow-emerald-400/30' : activityLog[0]?.type === 'error' ? 'bg-red-400' : 'bg-white/20')} />
         Лог активности
       </div>
-      <div className="max-h-40 overflow-y-auto space-y-0.5 pr-1 custom-scrollbar">
+      <div className="max-h-36 overflow-y-auto space-y-0.5 pr-1 custom-scrollbar">
         {activityLog.map((entry, i) => (
-          <div key={i} className="flex gap-2 text-[10px] font-mono">
-            <span className="text-white/20 shrink-0">{entry.time}</span>
+          <div key={i} className="flex gap-2 text-[10px] font-mono py-px">
+            <span className="text-white/15 shrink-0">{entry.time}</span>
             <span className={
-              entry.type === 'trade' ? 'text-green-400/80' :
-              entry.type === 'error' ? 'text-red-400/80' :
-              'text-white/40'
+              entry.type === 'trade' ? 'text-emerald-400/70' :
+              entry.type === 'error' ? 'text-red-400/70' :
+              'text-white/35'
             }>
               {entry.message}
             </span>

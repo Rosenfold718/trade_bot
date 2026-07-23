@@ -214,11 +214,20 @@
 /* Better touch handling on mobile */
 * {
   -webkit-tap-highlight-color: transparent;
-  -webkit-touch-callout: none;
 }
 
-/* Ensure proper scrolling on iOS */
-body {
+/* Ensure proper scrolling on mobile */
+html, body {
   -webkit-overflow-scrolling: touch;
-  overscroll-behavior-y: contain;
+  overscroll-behavior-y: none;
+  height: auto;
+  min-height: 100dvh;
+}
+
+/* Prevent layout shift from scrollbar on desktop */
+@media (min-width: 1280px) {
+  html, body {
+    height: 100%;
+    overflow: hidden;
+  }
 }

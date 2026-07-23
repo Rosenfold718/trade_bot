@@ -111,10 +111,10 @@ export default function Home() {
 
   // ── Terminal ──
   return (
-    <div className="h-screen w-screen flex flex-col overflow-hidden bg-[#0a0a0f]">
+    <div className="xl:h-[100dvh] w-full flex flex-col bg-[#0a0a0f]">
       <SubscriptionBar daysRemaining={subDays} username={username} onLogout={handleLogout} onAdminPayments={isAdmin ? () => setShowAdminPanel(p => !p) : undefined} />
       <AdminPaymentsPanel open={showAdminPanel} onClose={() => setShowAdminPanel(false)} />
-      <div className="flex-1 min-h-0 overflow-hidden">
+      <div className="flex-1 xl:min-h-0 xl:overflow-hidden">
         <TradingTerminal />
       </div>
     </div>

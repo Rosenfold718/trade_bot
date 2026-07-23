@@ -32,7 +32,7 @@ export default function RootLayout({
   return (
     <html lang="ru" suppressHydrationWarning>
       <body
-        className={`${geistMono.variable} antialiased bg-[#0a0a0f] text-white overflow-hidden`}
+        className={`${geistMono.variable} antialiased bg-[#0a0a0f] text-white`}
       >
         <AuthProvider>
           {children}

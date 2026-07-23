@@ -29,14 +29,14 @@ function StatCard({
   subValue?: string;
 }) {
   return (
-    <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/5 rounded-xl shadow-lg shadow-black/20">
+    <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/[0.06] rounded-xl">
       <CardContent className="p-3.5">
         <div className="flex items-center justify-between mb-1.5">
-          <span className="text-[10px] uppercase tracking-wider text-white/40 font-medium">{label}</span>
+          <span className="text-[10px] uppercase tracking-widest text-white/30 font-medium">{label}</span>
           <Icon className={cn('h-3.5 w-3.5', color)} />
         </div>
         <div className="text-lg font-bold text-white/95 font-mono">{value}</div>
-        {subValue && <div className="text-[10px] text-white/40 mt-0.5 font-mono">{subValue}</div>}
+        {subValue && <div className="text-[10px] text-white/35 mt-0.5 font-mono">{subValue}</div>}
       </CardContent>
     </Card>
   );
@@ -267,9 +267,9 @@ export default function TradingDashboard() {
 
       {/* Detailed Analysis Panel */}
       {currentAnalysis && currentAnalysis.indicators.length > 0 && (
-        <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/5 rounded-xl">
+        <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/[0.06] rounded-xl">
           <CardHeader className="p-3 pb-2">
-            <CardTitle className="text-xs uppercase tracking-wider text-white/50 font-medium">
+            <CardTitle className="text-[10px] uppercase tracking-widest text-white/30 font-medium">
               Анализ {currentAnalysis.symbol}
             </CardTitle>
           </CardHeader>
@@ -305,9 +305,9 @@ export default function TradingDashboard() {
       )}
 
       {/* Weights */}
-      <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/5 rounded-xl">
+      <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/[0.06] rounded-xl">
         <CardHeader className="p-3 pb-2">
-          <CardTitle className="text-xs uppercase tracking-wider text-white/50 font-medium">Веса индикаторов</CardTitle>
+          <CardTitle className="text-[10px] uppercase tracking-widest text-white/30 font-medium">Веса индикаторов</CardTitle>
         </CardHeader>
         <CardContent className="p-3 pt-0">
           <div className="space-y-1.5">

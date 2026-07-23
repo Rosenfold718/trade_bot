@@ -137,7 +137,7 @@ export default function ControlPanel() {
     <div className="p-2.5 sm:p-3 space-y-2 max-w-lg">
       {/* Active Strategy Info */}
       {strategy && (
-        <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/5 rounded-xl">
+        <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/[0.06] rounded-xl">
           <CardHeader className="p-3 pb-2">
             <CardTitle className={cn('text-xs uppercase tracking-wider font-medium', strategy.color)}>
               {strategy.name}
@@ -166,9 +166,9 @@ export default function ControlPanel() {
       )}
 
       {/* Auto Trading Toggle */}
-      <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/5 rounded-xl">
+      <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/[0.06] rounded-xl">
         <CardHeader className="p-3 pb-2">
-          <CardTitle className="text-xs uppercase tracking-wider text-white/50 font-medium flex items-center justify-between">
+          <CardTitle className="text-[10px] uppercase tracking-widest text-white/30 font-medium flex items-center justify-between">
             <div className="flex items-center gap-1.5">
               <Power className="h-3 w-3" />
               Авто-трейдинг
@@ -221,9 +221,9 @@ export default function ControlPanel() {
       </Card>
 
       {/* Credit */}
-      <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/5 rounded-xl">
+      <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/[0.06] rounded-xl">
         <CardHeader className="p-3 pb-2">
-          <CardTitle className="text-xs uppercase tracking-wider text-white/50 font-medium flex items-center gap-1.5">
+          <CardTitle className="text-[10px] uppercase tracking-widest text-white/30 font-medium flex items-center gap-1.5">
             <CreditCard className="h-3 w-3" /> Кредит
             {strategy && <span className="text-[9px] font-mono ml-auto text-white/25">({strategy.name})</span>}
           </CardTitle>
@@ -257,9 +257,9 @@ export default function ControlPanel() {
       </Card>
 
       {/* Actions */}
-      <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/5 rounded-xl">
+      <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/[0.06] rounded-xl">
         <CardHeader className="p-3 pb-2">
-          <CardTitle className="text-xs uppercase tracking-wider text-white/50 font-medium flex items-center gap-1.5">
+          <CardTitle className="text-[10px] uppercase tracking-widest text-white/30 font-medium flex items-center gap-1.5">
             <Zap className="h-3 w-3" /> Управление
           </CardTitle>
         </CardHeader>
