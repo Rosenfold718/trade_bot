@@ -69,11 +69,10 @@ export async function findBestSignal(
   const strategy = getStrategy(strategyId);
   if (!strategy) return null;
 
-  // Only trade symbols that are in the coin list (TOP_50_SYMBOLS)
+  // Scan 20 symbols for better signal coverage (was 10)
   const symbols = TOP_50_SYMBOLS;
   const available = symbols.filter(s => !openTradeSymbols.has(s));
-  // Shuffle and check more symbols for better signal detection
-  const checkSymbols = available.sort(() => Math.random() - 0.5).slice(0, 10);
+  const checkSymbols = available.sort(() => Math.random() - 0.5).slice(0, 20);
 
   // Time filter: check if within trading hours (Moscow time)
   if (strategy.timeFilterEnabled) {
@@ -184,7 +183,7 @@ export async function monitorTradesClient(openTrades: Trade[]): Promise<MonitorR
       }
 
       // ============================================================
-      // POINT 6: Trailing stop logic
+      // Gradual trailing stop: 3 levels of protection
       // ============================================================
       if (!shouldClose && trade.stop_loss && trade.entry_price) {
         const initialSlDistance = Math.abs(trade.entry_price - trade.stop_loss);
@@ -193,23 +192,32 @@ export async function monitorTradesClient(openTrades: Trade[]): Promise<MonitorR
           ? currentPrice - trade.entry_price
           : trade.entry_price - currentPrice;
 
-        if (favorableMove >= initialSlDistance) {
-          // Price moved ≥1× SL distance in our favor — trail to breakeven
-          const breakevenSL = isLong
-            ? trade.entry_price * 1.001 // tiny buffer above entry
-            : trade.entry_price * 0.999;
-          if ((isLong && breakevenSL > (trade.stop_loss ?? 0)) ||
-              (!isLong && breakevenSL < (trade.stop_loss ?? Infinity))) {
-            trailingUpdates.push({ tradeId: trade.id, newStopLoss: breakevenSL, reason: 'Trailing to breakeven' });
+        if (favorableMove >= initialSlDistance * 3) {
+          // Level 3: Price moved ≥3× SL — lock 2× SL distance profit
+          const trailedSL = isLong
+            ? trade.entry_price + initialSlDistance * 2
+            : trade.entry_price - initialSlDistance * 2;
+          if ((isLong && trailedSL > (trade.stop_loss ?? 0)) ||
+              (!isLong && trailedSL < (trade.stop_loss ?? Infinity))) {
+            trailingUpdates.push({ tradeId: trade.id, newStopLoss: trailedSL, reason: 'Trailing lock 2× profit' });
           }
         } else if (favorableMove >= initialSlDistance * 2) {
-          // Price moved ≥2× SL distance — trail to +1× from entry
+          // Level 2: Price moved ≥2× SL — lock 1× SL distance profit
           const trailedSL = isLong
             ? trade.entry_price + initialSlDistance
             : trade.entry_price - initialSlDistance;
           if ((isLong && trailedSL > (trade.stop_loss ?? 0)) ||
               (!isLong && trailedSL < (trade.stop_loss ?? Infinity))) {
             trailingUpdates.push({ tradeId: trade.id, newStopLoss: trailedSL, reason: 'Trailing lock profit' });
+          }
+        } else if (favorableMove >= initialSlDistance) {
+          // Level 1: Price moved ≥1× SL — trail to breakeven
+          const breakevenSL = isLong
+            ? trade.entry_price * 1.001
+            : trade.entry_price * 0.999;
+          if ((isLong && breakevenSL > (trade.stop_loss ?? 0)) ||
+              (!isLong && breakevenSL < (trade.stop_loss ?? Infinity))) {
+            trailingUpdates.push({ tradeId: trade.id, newStopLoss: breakevenSL, reason: 'Trailing to breakeven' });
           }
         }
       }
@@ -274,9 +282,9 @@ export async function runAutoTradeCycle(
     return { action: 'idle', closedTrades: [], trailingUpdates: [], message: `Лимит сделок: ${updatedOpenTrades.length}/${maxTrades}, жду закрытия...`, scannedCount: 0, bestScore: 0 };
   }
 
-  // Step 3: If balance too low, skip
-  if (balance < 5) {
-    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: 'Недостаточно баланса ($<5)', scannedCount: 0, bestScore: 0 };
+  // Require higher minimum balance for safety
+  if (balance < 10) {
+    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: 'Недостаточно баланса ($<10)', scannedCount: 0, bestScore: 0 };
   }
 
   const openSymbols = new Set(updatedOpenTrades.map(t => t.symbol));
@@ -285,11 +293,11 @@ export async function runAutoTradeCycle(
 
   const best = await findBestSignal(openSymbols, strategyId, interval, limit);
   if (!best || best.decision.direction === 'none') {
-    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: 'Сигналов не найдено, сканирую...', scannedCount: 10, bestScore: 0 };
+    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: 'Сигналов не найдено, сканирую...', scannedCount: 20, bestScore: 0 };
   }
 
-  // Trade amount: scale with balance using strategy-specific %
-  const tradeAmount = Math.max(3, Math.min(balance * tradeSizePct, 20));
+  // Trade amount: smaller position per trade for risk management
+  const tradeAmount = Math.max(3, Math.min(balance * tradeSizePct, 15));
 
   return {
     action: 'new-trade',
@@ -306,7 +314,7 @@ export async function runAutoTradeCycle(
       strategyId,
     },
     message: `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${best.symbol.replace('USDT', '')} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x | Score: ${best.decision.score.toFixed(2)}`,
-    scannedCount: 10,
+    scannedCount: 20,
     bestScore: Math.abs(best.decision.score),
   };
 }

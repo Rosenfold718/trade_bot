@@ -531,13 +531,12 @@ function makeMomentumDecision(
   const closes = candles.map(c => c.close);
   const price = closes[closes.length - 1];
   const atr = calcATR(candles);
+  const rsi = calcRSI(closes);
+  const adxResult = calcADX(candles);
 
-  // ADX regime filter
-  if (strategy.adxMin !== null) {
-    const adxResult = calcADX(candles);
-    if (adxResult.adx < strategy.adxMin) {
-      return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
-    }
+  // ADX regime filter — require strong trend
+  if (strategy.adxMin !== null && adxResult.adx < strategy.adxMin) {
+    return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
   }
 
   let longScore = 0;
@@ -546,12 +545,11 @@ function makeMomentumDecision(
   let shortCount = 0;
 
   for (const ind of indicators) {
-    const w = 1; // all weights equal in strategy mode
     if (ind.signal > 0) {
-      longScore += ind.strength * w;
+      longScore += ind.strength;
       longCount++;
     } else if (ind.signal < 0) {
-      shortScore += ind.strength * w;
+      shortScore += ind.strength;
       shortCount++;
     }
   }
@@ -560,9 +558,17 @@ function makeMomentumDecision(
   const absShortScore = Math.abs(shortScore);
   const maxScore = Math.max(absLongScore, absShortScore);
 
-  // Confluence: require ≥4 indicators to agree (relaxed from 5)
+  // Confluence: require ≥6 of 10 indicators to agree
   const bestCount = Math.max(longCount, shortCount);
-  if (bestCount < 4) {
+  if (bestCount < 6) {
+    return { symbol, direction: 'none', score: maxScore, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
+  }
+
+  // Trend exhaustion filter: don't buy at the top, don't sell at the bottom
+  if (absLongScore >= absShortScore && rsi > 78) {
+    return { symbol, direction: 'none', score: maxScore, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
+  }
+  if (absShortScore > absLongScore && rsi < 22) {
     return { symbol, direction: 'none', score: maxScore, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
   }
 
@@ -577,9 +583,13 @@ function makeMomentumDecision(
     score = shortScore;
   }
 
-  const leverage = direction === 'none' ? 1 : Math.min(strategy.maxLeverage, Math.max(1, Math.round(maxScore * 3)));
+  // Conservative leverage: 1x for weak signals, max 3x for very strong
+  const leverage = direction === 'none'
+    ? 1
+    : Math.min(strategy.maxLeverage, Math.max(1, Math.round(maxScore * 1.5)));
 
-  const stopLossPercent = atr / price;
+  // Wider stop loss: 1.5× ATR to avoid noise stop-outs
+  const stopLossPercent = 1.5 * atr / price;
   const takeProfitPercent = stopLossPercent * strategy.riskRewardRatio;
 
   const stopLoss = direction === 'long'
@@ -609,11 +619,16 @@ function makeMeanReversionDecision(
   const atr = calcATR(candles);
   const indicators: IndicatorSignal[] = [];
 
-  // Indicator 1: RSI(14)
+  // ── EMA-50 trend filter: don't catch falling knives ──
+  const ema50Arr = ema(closes, 50);
+  const ema50 = ema50Arr[ema50Arr.length - 1];
+  const aboveEma50 = !isNaN(ema50) && price > ema50;
+
+  // Indicator 1: RSI(14) — more extreme thresholds
   const rsi = calcRSI(closes, 14);
-  const rsiLong = rsi < 35;
-  const rsiShort = rsi > 65;
-  const rsiStrength = rsiLong ? (35 - rsi) / 35 : rsiShort ? (rsi - 65) / 35 : 0;
+  const rsiLong = rsi < 28;   // was 35 — require deeper oversold
+  const rsiShort = rsi > 72;  // was 65 — require deeper overbought
+  const rsiStrength = rsiLong ? (28 - rsi) / 28 : rsiShort ? (rsi - 72) / 28 : 0;
   indicators.push({
     name: 'RSI',
     signal: rsiLong ? 1 : rsiShort ? -1 : 0,
@@ -635,11 +650,11 @@ function makeMeanReversionDecision(
     strength: bbStrength,
   });
 
-  // Indicator 3: StochRSI
+  // Indicator 3: StochRSI — more extreme thresholds
   const stochRSI = calcStochRSI(closes, 14, 14);
-  const stochLong = stochRSI < 0.25;
-  const stochShort = stochRSI > 0.75;
-  const stochStrength = stochLong ? (0.25 - stochRSI) / 0.25 : stochShort ? (stochRSI - 0.75) / 0.25 : 0;
+  const stochLong = stochRSI < 0.15;   // was 0.25
+  const stochShort = stochRSI > 0.85;  // was 0.75
+  const stochStrength = stochLong ? (0.15 - stochRSI) / 0.15 : stochShort ? (stochRSI - 0.85) / 0.15 : 0;
   indicators.push({
     name: 'StochRSI',
     signal: stochLong ? 1 : stochShort ? -1 : 0,
@@ -650,47 +665,36 @@ function makeMeanReversionDecision(
   const volRatio = candles.length >= 20
     ? candles[candles.length - 1].volume / (candles.slice(-20).reduce((s, c) => s + c.volume, 0) / 20)
     : 0;
-  const volSpike = volRatio > 1.5;
-  const volStrength = volSpike ? Math.min((volRatio - 1.5) / 2, 1) : 0;
-  // Volume doesn't have a direction by itself — it amplifies the signal
-  indicators.push({
-    name: 'Volume',
-    signal: 0,
-    strength: volStrength,
-  });
+  const volSpike = volRatio > 1.3;  // lowered from 1.5
+  const volStrength = volSpike ? Math.min((volRatio - 1.3) / 2, 1) : 0;
+  indicators.push({ name: 'Volume', signal: 0, strength: volStrength });
 
-  // Count confluence for long and short
+  // Count confluence for long and short (volume is bonus, not counted)
   let longCount = 0;
   let shortCount = 0;
   let longScore = 0;
   let shortScore = 0;
 
   for (const ind of indicators) {
-    if (ind.signal > 0) {
-      longCount++;
-      longScore += ind.strength;
-    } else if (ind.signal < 0) {
-      shortCount++;
-      shortScore += ind.strength;
-    }
+    if (ind.signal > 0) { longCount++; longScore += ind.strength; }
+    else if (ind.signal < 0) { shortCount++; shortScore += ind.strength; }
   }
 
-  // Add volume as bonus if it agrees (volume spike = confirmation)
+  // Volume bonus
   if (volSpike) {
-    longScore += volStrength * 0.5;
-    shortScore += volStrength * 0.5;
+    longScore += volStrength * 0.3;
+    shortScore += volStrength * 0.3;
   }
 
-  // Require ≥2 of 4 indicators to agree (volume excluded from count, it's a bonus)
-  if (longCount < 2 && shortCount < 2) {
+  // ── STRICT: require ALL 3 indicators to agree (was 2 of 3) ──
+  if (longCount < 3 && shortCount < 3) {
     return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
   }
 
-  // Check mean reversion entry conditions (2 of 3 required, relaxed from all 3)
-  // LONG: at least 2 of {RSI < 35, price ≤ BB lower, StochRSI < 0.25}
-  const longEntry = longCount >= 2 && (rsiLong || bbLong || stochLong);
-  // SHORT: at least 2 of {RSI > 65, price ≥ BB upper, StochRSI > 0.75}
-  const shortEntry = shortCount >= 2 && (rsiShort || bbShort || stochShort);
+  // ── EMA-50 trend filter for longs: don't buy below EMA-50 (falling knife) ──
+  // For shorts: don't sell above EMA-50
+  const longEntry = longCount >= 3 && aboveEma50;
+  const shortEntry = shortCount >= 3 && !aboveEma50;
 
   let direction: 'long' | 'short' | 'none' = 'none';
   let score = 0;
@@ -707,8 +711,9 @@ function makeMeanReversionDecision(
     return { symbol, direction: 'none', score: Math.max(longScore, shortScore), leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
   }
 
-  const leverage = Math.min(strategy.maxLeverage, Math.max(1, Math.round(score * 2)));
-  const stopLossPercent = atr / price;
+  const leverage = Math.min(strategy.maxLeverage, Math.max(1, Math.round(score * 1.5)));
+  // Wider stop: 1.5× ATR
+  const stopLossPercent = 1.5 * atr / price;
   const takeProfitPercent = stopLossPercent * strategy.riskRewardRatio;
 
   const stopLoss = direction === 'long'
@@ -736,6 +741,7 @@ function makeTrendPullbackDecision(
   const closes = candles.map(c => c.close);
   const price = closes[closes.length - 1];
   const atr = calcATR(candles);
+  const rsi = calcRSI(closes);
   const indicators: IndicatorSignal[] = [];
 
   // Indicator 1: EMA9
@@ -753,7 +759,7 @@ function makeTrendPullbackDecision(
   // Indicator 4: ADX
   const adxResult = calcADX(candles);
 
-  // ADX filter: require > 25 for strong trend
+  // ADX filter: require strong trend
   if (strategy.adxMin !== null && adxResult.adx < strategy.adxMin) {
     indicators.push({ name: 'ADX', signal: 0, strength: 0 });
     return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
@@ -777,26 +783,41 @@ function makeTrendPullbackDecision(
 
   const trendDir = isUptrend ? 1 : -1;
 
-  // Check pullback to EMA21 (within 1.5%, relaxed from 0.5%)
+  // ── RSI exhaustion filter: don't enter long if RSI > 75, short if RSI < 25 ──
+  if (isUptrend && rsi > 75) {
+    indicators.push(
+      { name: 'EMA9', signal: 0, strength: 0 }, { name: 'EMA21', signal: 0, strength: 0 },
+      { name: 'EMA99', signal: 0, strength: 0 }, { name: 'ADX', signal: 0, strength: 0 },
+      { name: 'OBV', signal: 0, strength: 0 }, { name: 'Volume', signal: 0, strength: 0 },
+    );
+    return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
+  }
+  if (isDowntrend && rsi < 25) {
+    indicators.push(
+      { name: 'EMA9', signal: 0, strength: 0 }, { name: 'EMA21', signal: 0, strength: 0 },
+      { name: 'EMA99', signal: 0, strength: 0 }, { name: 'ADX', signal: 0, strength: 0 },
+      { name: 'OBV', signal: 0, strength: 0 }, { name: 'Volume', signal: 0, strength: 0 },
+    );
+    return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
+  }
+
+  // Check pullback to EMA21 — widened to 2% for more entry opportunities
   const ema21Dist = Math.abs(price - ema21) / ema21;
-  const isNearEma21 = ema21Dist <= 0.015;
+  const isNearEma21 = ema21Dist <= 0.02;  // was 0.015
 
   // Indicator signals
-  // EMA9 signal: trend direction
   indicators.push({
     name: 'EMA9',
     signal: trendDir,
     strength: Math.min(Math.abs(ema9 - ema21) / ema21 * 100, 1),
   });
 
-  // EMA21 signal: trend direction
   indicators.push({
     name: 'EMA21',
     signal: trendDir,
-    strength: Math.min(ema21Dist / 0.005, 1), // stronger when closer
+    strength: Math.min(ema21Dist / 0.005, 1),
   });
 
-  // EMA99 signal: price vs EMA99 confirms bigger trend
   const ema99Signal = !isNaN(ema99) ? (price > ema99 ? 1 : price < ema99 ? -1 : 0) : 0;
   const ema99Strength = !isNaN(ema99) ? Math.min(Math.abs(price - ema99) / ema99 * 20, 1) : 0;
   indicators.push({
@@ -805,14 +826,12 @@ function makeTrendPullbackDecision(
     strength: ema99Signal === trendDir ? ema99Strength : 0,
   });
 
-  // ADX signal: trend strength
   indicators.push({
     name: 'ADX',
     signal: adxResult.plusDI > adxResult.minusDI ? 1 : -1,
     strength: Math.min((adxResult.adx - 25) / 25, 1),
   });
 
-  // OBV signal: volume trend
   const obvResult = calcOBV(candles);
   indicators.push({
     name: 'OBV',
@@ -820,7 +839,6 @@ function makeTrendPullbackDecision(
     strength: Math.min(Math.abs(obvResult.trend) * 5, 1),
   });
 
-  // Volume signal: rising volume confirms
   const volRatio = candles.length >= 20
     ? candles[candles.length - 1].volume / (candles.slice(-20).reduce((s, c) => s + c.volume, 0) / 20)
     : 0;
@@ -841,8 +859,8 @@ function makeTrendPullbackDecision(
     }
   }
 
-  // Require ≥3 of 6 indicators to agree
-  if (agreeCount < 3) {
+  // Require ≥4 of 6 indicators to agree (was 3)
+  if (agreeCount < 4) {
     return { symbol, direction: 'none', score, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
   }
 
@@ -857,8 +875,10 @@ function makeTrendPullbackDecision(
   }
 
   const direction: 'long' | 'short' = isUptrend ? 'long' : 'short';
-  const leverage = Math.min(strategy.maxLeverage, Math.max(1, Math.round(score * 2.5)));
-  const stopLossPercent = atr / price;
+  const leverage = Math.min(strategy.maxLeverage, Math.max(1, Math.round(score * 1.5)));
+
+  // Wider stop: 1.5× ATR
+  const stopLossPercent = 1.5 * atr / price;
   const takeProfitPercent = stopLossPercent * strategy.riskRewardRatio;
 
   const stopLoss = direction === 'long'

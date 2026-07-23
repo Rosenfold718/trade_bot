@@ -31,11 +31,12 @@ export interface StrategyConfig {
 export const STRATEGIES: StrategyConfig[] = [
   // ──────────────────────────────────────────────────────────────
   // Стратегия 1: Импульс Pro
+  // Консервативная версия: высокие пороги, широкий стоп, 1:3 R:R
   // ──────────────────────────────────────────────────────────────
   {
     id: 'momentum',
     name: 'Импульс Pro',
-    description: 'Агрессивное следование за трендом с 10 индикаторами. Требует сильного тренда (ADX > 20) и подтверждения на нескольких таймфреймах.',
+    description: 'Следование за сильным трендом. Требует ADX > 25, ≥6/10 индикаторов, score > 0.35. Стоп 1.5× ATR, TP 1:3.',
     color: 'text-amber-400',
     bgColor: 'bg-amber-500/10',
     borderColor: 'border-amber-500/30',
@@ -49,12 +50,12 @@ export const STRATEGIES: StrategyConfig[] = [
       sr: { visible: true },
       swings: { visible: true },
     },
-    maxLeverage: 5,
-    riskRewardRatio: 2,
-    tradeSizePercent: 0.10,
-    maxOpenTrades: 10,
-    scoreThreshold: 0.15,
-    adxMin: 20,
+    maxLeverage: 3,
+    riskRewardRatio: 3,
+    tradeSizePercent: 0.06,
+    maxOpenTrades: 5,
+    scoreThreshold: 0.35,
+    adxMin: 25,
     mtfEnabled: true,
     timeFilterEnabled: false,
     timeFilterStart: 0,
@@ -63,11 +64,12 @@ export const STRATEGIES: StrategyConfig[] = [
 
   // ──────────────────────────────────────────────────────────────
   // Стратегия 2: Возврат к среднему
+  // Все 3 индикатора должны соглашаться + фильтр EMA-50
   // ──────────────────────────────────────────────────────────────
   {
     id: 'mean-reversion',
     name: 'Возврат к среднему',
-    description: 'Торговля против перепроданности/перекупленности через RSI, Полосы Боллинджера и StochRSI. Лучше работает в боковике. Временной фильтр (10:00–23:00 МСК).',
+    description: 'Торговля на экстремальных отклонениях. Все 3 индикатора + EMA-50 тренд. Время 10:00–23:00 МСК.',
     color: 'text-emerald-400',
     bgColor: 'bg-emerald-500/10',
     borderColor: 'border-emerald-500/30',
@@ -82,11 +84,11 @@ export const STRATEGIES: StrategyConfig[] = [
       sr: { visible: true },
       swings: { visible: false },
     },
-    maxLeverage: 3,
-    riskRewardRatio: 1.5,
-    tradeSizePercent: 0.08,
-    maxOpenTrades: 5,
-    scoreThreshold: 0.1,
+    maxLeverage: 2,
+    riskRewardRatio: 2.5,
+    tradeSizePercent: 0.05,
+    maxOpenTrades: 3,
+    scoreThreshold: 0.25,
     adxMin: null,
     mtfEnabled: false,
     timeFilterEnabled: true,
@@ -96,11 +98,12 @@ export const STRATEGIES: StrategyConfig[] = [
 
   // ──────────────────────────────────────────────────────────────
   // Стратегия 3: Тренд на откатах
+  // Более широкая зона отката, RSI фильтр истощения
   // ──────────────────────────────────────────────────────────────
   {
     id: 'trend-pullback',
     name: 'Тренд на откатах',
-    description: 'Вход на откатах к EMA21 в устоявшемся тренде. Требует ADX > 20 для подтверждения тренда.',
+    description: 'Вход на откатах к EMA21 в сильном тренде. ADX > 25, ≥4/6 согласия, RSI фильтр, стоп 1.5× ATR.',
     color: 'text-cyan-400',
     bgColor: 'bg-cyan-500/10',
     borderColor: 'border-cyan-500/30',
@@ -114,12 +117,12 @@ export const STRATEGIES: StrategyConfig[] = [
       sr: { visible: true },
       swings: { visible: true },
     },
-    maxLeverage: 5,
-    riskRewardRatio: 2,
-    tradeSizePercent: 0.10,
-    maxOpenTrades: 5,
-    scoreThreshold: 0.12,
-    adxMin: 20,
+    maxLeverage: 3,
+    riskRewardRatio: 3,
+    tradeSizePercent: 0.06,
+    maxOpenTrades: 3,
+    scoreThreshold: 0.30,
+    adxMin: 25,
     mtfEnabled: true,
     timeFilterEnabled: false,
     timeFilterStart: 0,
