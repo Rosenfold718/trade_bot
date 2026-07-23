@@ -69,12 +69,10 @@ export async function findBestSignal(
   const strategy = getStrategy(strategyId);
   if (!strategy) return null;
 
-  // Scan 20 symbols for better signal coverage (was 10)
   const symbols = TOP_50_SYMBOLS;
   const available = symbols.filter(s => !openTradeSymbols.has(s));
   const checkSymbols = available.sort(() => Math.random() - 0.5).slice(0, 20);
 
-  // Time filter: check if within trading hours (Moscow time)
   if (strategy.timeFilterEnabled) {
     const mskHour = new Date().toLocaleTimeString('en-US', { timeZone: 'Europe/Moscow', hour: 'numeric', hour12: false }).padStart(2, '0');
     const hour = parseInt(mskHour, 10);
@@ -94,23 +92,14 @@ export async function findBestSignal(
       const candles = await fetchCandlesClient(sym, interval, limit);
       if (candles.length < 50) continue;
       const decision = makeStrategyDecision(strategyId, sym, candles, 0);
-      if (decision.direction === 'none') {
-        noneCount++;
-        continue;
-      }
+      if (decision.direction === 'none') { noneCount++; continue; }
 
-      // Volume confirmation: prefer above-average volume but don't require spike
-      // (the old 2x filter was too strict — rejected almost everything)
       const avgVol = candles.slice(-20).reduce((s, c) => s + c.volume, 0) / Math.min(20, candles.length);
       const currentVol = candles[candles.length - 1].volume;
-      // Volume bonus: if >1.2x average, boost score slightly
       if (avgVol > 0 && currentVol > avgVol * 1.2) {
         decision.score *= 1.15;
       }
 
-      // ============================================================
-      // Multi-timeframe filter — 4H EMA 50 trend must align (if enabled)
-      // ============================================================
       if (strategy.mtfEnabled) {
         try {
           const h4candles = await fetchCandlesClient(sym, '4h', 200);
@@ -130,9 +119,7 @@ export async function findBestSignal(
         bestScore = Math.abs(decision.score);
         best = { decision, price: candles[candles.length - 1].close, symbol: sym };
       }
-    } catch {
-      continue;
-    }
+    } catch { continue; }
   }
 
   console.log(`[findBestSignal][${strategyId}] Checked ${checkSymbols.length}, none=${noneCount}, mtf_rejected=${mtfRejected}, best=${best?.symbol ?? 'null'} score=${bestScore.toFixed(2)}`);
@@ -140,21 +127,17 @@ export async function findBestSignal(
   return best;
 }
 
-// Simple EMA 50 calculation for MTF filter
 function calcEMA50(data: number[], period: number): number {
   if (data.length < period) return NaN;
   const k = 2 / (period + 1);
   let ema = data.slice(0, period).reduce((s, v) => s + v, 0) / period;
-  for (let i = period; i < data.length; i++) {
-    ema = data[i] * k + ema * (1 - k);
-  }
+  for (let i = period; i < data.length; i++) { ema = data[i] * k + ema * (1 - k); }
   return ema;
 }
 
 // ============================================================
 // Client-side TP/SL monitoring
 // Uses LAST COMPLETED 1H candle close — aligns exit with signal timeframe
-// Prevents noise stop-outs from tick-price spikes mid-candle
 // ============================================================
 
 export interface MonitorResult {
@@ -162,25 +145,15 @@ export interface MonitorResult {
   trailingUpdates: Array<{ tradeId: string; newStopLoss: number; reason: string }>;
 }
 
-/**
- * Fetch the close price of the last COMPLETED 1H candle.
- * This aligns SL/TP checks with the same data the signals are based on.
- */
 async function fetchLastCandleClose(symbol: string): Promise<number> {
   const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1h&limit=2`);
   if (!res.ok) throw new Error(`Failed to fetch klines for ${symbol}`);
   const data = await res.json();
   if (!Array.isArray(data) || data.length < 1) throw new Error('No kline data');
-  // data[0] = last completed candle, data[1] = current forming candle (if exists)
-  // Use the last completed candle's close for SL/TP evaluation
   const completedCandle = data.length >= 2 ? data[0] : data[data.length - 1];
   return parseFloat(String(completedCandle[4]));
 }
 
-/**
- * Get the current 1H candle hour (UTC epoch hour).
- * Used to determine when a new candle has formed.
- */
 export function getCurrentCandleHour(): number {
   return Math.floor(Date.now() / 3600000);
 }
@@ -191,67 +164,64 @@ export async function monitorTradesClient(
 ): Promise<MonitorResult> {
   const closedTrades: MonitorResult['closedTrades'] = [];
   const trailingUpdates: MonitorResult['trailingUpdates'] = [];
-
   const currentCandleHour = getCurrentCandleHour();
 
-  // Only check SL/TP when a NEW 1H candle has formed.
-  // This is the core fix: exit decisions must align with the signal timeframe.
   if (currentCandleHour <= lastCandleHour) {
     return { closedTrades: [], trailingUpdates: [] };
   }
 
   for (const trade of openTrades) {
     try {
-      // Use the last completed 1H candle close, NOT the tick price.
-      // This prevents mid-candle noise from triggering stops.
       const candleClose = await fetchLastCandleClose(trade.symbol);
       let shouldClose = false;
       let reason = '';
 
-      if (trade.direction === 'long' && trade.take_profit && candleClose >= trade.take_profit) {
-        shouldClose = true; reason = 'TP hit (1H close)';
-      } else if (trade.direction === 'short' && trade.take_profit && candleClose <= trade.take_profit) {
-        shouldClose = true; reason = 'TP hit (1H close)';
+      // TIME-BASED EXIT: close losing trades after 12 hours
+      const openMs = Date.now() - new Date(trade.opened_at).getTime();
+      const openHours = openMs / 3600000;
+      if (openHours > 12) {
+        const unrealizedPnl = trade.direction === 'long'
+          ? (candleClose - trade.entry_price) / trade.entry_price
+          : (trade.entry_price - candleClose) / trade.entry_price;
+        if (unrealizedPnl < 0) {
+          shouldClose = true;
+          reason = `Тайм-эксит (${Math.round(openHours)}ч)`;
+        }
       }
 
-      if (trade.direction === 'long' && trade.stop_loss && candleClose <= trade.stop_loss) {
-        shouldClose = true; reason = 'SL hit (1H close)';
-      } else if (trade.direction === 'short' && trade.stop_loss && candleClose >= trade.stop_loss) {
-        shouldClose = true; reason = 'SL hit (1H close)';
+      // TP check
+      if (!shouldClose && trade.direction === 'long' && trade.take_profit && candleClose >= trade.take_profit) {
+        shouldClose = true; reason = 'TP hit';
+      } else if (!shouldClose && trade.direction === 'short' && trade.take_profit && candleClose <= trade.take_profit) {
+        shouldClose = true; reason = 'TP hit';
       }
 
-      // ============================================================
-      // Trailing stop: 3 levels of protection (based on candle close)
-      // ============================================================
+      // SL check
+      if (!shouldClose && trade.direction === 'long' && trade.stop_loss && candleClose <= trade.stop_loss) {
+        shouldClose = true; reason = 'SL hit';
+      } else if (!shouldClose && trade.direction === 'short' && trade.stop_loss && candleClose >= trade.stop_loss) {
+        shouldClose = true; reason = 'SL hit';
+      }
+
+      // Trailing stop: 3 levels
       if (!shouldClose && trade.stop_loss && trade.entry_price) {
         const initialSlDistance = Math.abs(trade.entry_price - trade.stop_loss);
         const isLong = trade.direction === 'long';
-        const favorableMove = isLong
-          ? candleClose - trade.entry_price
-          : trade.entry_price - candleClose;
+        const favorableMove = isLong ? candleClose - trade.entry_price : trade.entry_price - candleClose;
 
         if (favorableMove >= initialSlDistance * 3) {
-          const trailedSL = isLong
-            ? trade.entry_price + initialSlDistance * 2
-            : trade.entry_price - initialSlDistance * 2;
-          if ((isLong && trailedSL > (trade.stop_loss ?? 0)) ||
-              (!isLong && trailedSL < (trade.stop_loss ?? Infinity))) {
+          const trailedSL = isLong ? trade.entry_price + initialSlDistance * 2 : trade.entry_price - initialSlDistance * 2;
+          if ((isLong && trailedSL > (trade.stop_loss ?? 0)) || (!isLong && trailedSL < (trade.stop_loss ?? Infinity))) {
             trailingUpdates.push({ tradeId: trade.id, newStopLoss: trailedSL, reason: 'Trailing lock 2× profit' });
           }
         } else if (favorableMove >= initialSlDistance * 2) {
-          const trailedSL = isLong
-            ? trade.entry_price + initialSlDistance
-            : trade.entry_price - initialSlDistance;
-          if ((isLong && trailedSL > (trade.stop_loss ?? 0)) ||
-              (!isLong && trailedSL < (trade.stop_loss ?? Infinity))) {
+          const trailedSL = isLong ? trade.entry_price + initialSlDistance : trade.entry_price - initialSlDistance;
+          if ((isLong && trailedSL > (trade.stop_loss ?? 0)) || (!isLong && trailedSL < (trade.stop_loss ?? Infinity))) {
             trailingUpdates.push({ tradeId: trade.id, newStopLoss: trailedSL, reason: 'Trailing lock profit' });
           }
         } else if (favorableMove >= initialSlDistance) {
-          const breakevenSL = isLong
-            ? trade.entry_price * 1.001
-            : trade.entry_price * 0.999;
-          if ((isLong && breakevenSL > (trade.stop_loss ?? 0)) ||
-              (!isLong && breakevenSL < (trade.stop_loss ?? Infinity))) {
+          const breakevenSL = isLong ? trade.entry_price * 1.001 : trade.entry_price * 0.999;
+          if ((isLong && breakevenSL > (trade.stop_loss ?? 0)) || (!isLong && breakevenSL < (trade.stop_loss ?? Infinity))) {
             trailingUpdates.push({ tradeId: trade.id, newStopLoss: breakevenSL, reason: 'Trailing to breakeven' });
           }
         }
@@ -264,17 +234,21 @@ export async function monitorTradesClient(
         const pnl = trade.amount * priceChange * trade.leverage - trade.amount * 0.001;
         closedTrades.push({ tradeId: trade.id, symbol: trade.symbol, direction: trade.direction, pnl, reason, exitPrice: candleClose });
       }
-    } catch {
-      continue;
-    }
+    } catch { continue; }
   }
 
   return { closedTrades, trailingUpdates };
 }
 
 // ============================================================
-// Full auto-trade cycle (runs entirely client-side)
+// Full auto-trade cycle — institutional money management
 // ============================================================
+
+export type NewTradeInfo = {
+  symbol: string; direction: string; price: number; leverage: number;
+  stopLoss: number; takeProfit: number; amount: number; strategyId: string;
+  label: 'secure' | 'runner';
+};
 
 export async function runAutoTradeCycle(
   openTrades: Trade[],
@@ -282,11 +256,12 @@ export async function runAutoTradeCycle(
   interval: string,
   balance: number,
   lastCandleHour: number = 0,
+  recentPnl24h: number = 0,
 ): Promise<{
     action: 'monitor' | 'new-trade' | 'idle';
     closedTrades: MonitorResult['closedTrades'];
     trailingUpdates: MonitorResult['trailingUpdates'];
-    newTrade?: { symbol: string; direction: string; price: number; leverage: number; stopLoss: number; takeProfit: number; amount: number; strategyId: string };
+    newTrades?: NewTradeInfo[];
     message: string;
     scannedCount: number;
     bestScore: number;
@@ -297,31 +272,32 @@ export async function runAutoTradeCycle(
   const tradeSizePct = strategy?.tradeSizePercent ?? 0.10;
   const currentCandleHour = getCurrentCandleHour();
 
-  // Step 1: Monitor open trades (only when a new 1H candle has formed)
+  // DAILY LOSS LIMIT: stop trading if lost >5% in 24h
+  const dailyLossLimit = balance * 0.05;
+  if (recentPnl24h < -dailyLossLimit) {
+    return {
+      action: 'idle', closedTrades: [], trailingUpdates: [],
+      message: `Дневной лимит: -$${Math.abs(recentPnl24h).toFixed(2)} (>5%). Пауза до завтра.`,
+      scannedCount: 0, bestScore: 0, newCandleHour: currentCandleHour,
+    };
+  }
+
+  // Step 1: Monitor open trades
   const { closedTrades, trailingUpdates } = await monitorTradesClient(openTrades, lastCandleHour);
   const updatedOpenTrades = openTrades.filter(t => !closedTrades.some(c => c.tradeId === t.id));
 
   if (closedTrades.length > 0 || trailingUpdates.length > 0) {
     const parts: string[] = [];
-    if (closedTrades.length > 0) parts.push(`Closed ${closedTrades.length} trade(s): ${closedTrades.map(c => `${c.symbol} (${c.reason})`).join(', ')}`);
-    if (trailingUpdates.length > 0) parts.push(`Trailing SL: ${trailingUpdates.length} trade(s)`);
-    return {
-      action: 'monitor',
-      closedTrades,
-      trailingUpdates,
-      message: parts.join(' | '),
-      scannedCount: 0,
-      bestScore: 0,
-      newCandleHour: currentCandleHour,
-    };
+    if (closedTrades.length > 0) parts.push(`Закрыто ${closedTrades.length}: ${closedTrades.map(c => `${c.symbol.replace('USDT', '')} (${c.reason})`).join(', ')}`);
+    if (trailingUpdates.length > 0) parts.push(`Trailing SL: ${trailingUpdates.length}`);
+    return { action: 'monitor', closedTrades, trailingUpdates, message: parts.join(' | '), scannedCount: 0, bestScore: 0, newCandleHour: currentCandleHour };
   }
 
-  // Hard limit: strategy-specific max concurrent open trades
-  if (updatedOpenTrades.length >= maxTrades) {
-    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: `Лимит сделок: ${updatedOpenTrades.length}/${maxTrades}, жду закрытия...`, scannedCount: 0, bestScore: 0, newCandleHour: currentCandleHour };
+  // Each signal opens 2 trades (secure + runner), need room for the pair
+  if (updatedOpenTrades.length + 2 > maxTrades) {
+    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: `Лимит: ${updatedOpenTrades.length}/${maxTrades}, жду...`, scannedCount: 0, bestScore: 0, newCandleHour: currentCandleHour };
   }
 
-  // Require higher minimum balance for safety
   if (balance < 10) {
     return { action: 'idle', closedTrades: [], trailingUpdates: [], message: 'Недостаточно баланса ($<10)', scannedCount: 0, bestScore: 0, newCandleHour: currentCandleHour };
   }
@@ -335,26 +311,29 @@ export async function runAutoTradeCycle(
     return { action: 'idle', closedTrades: [], trailingUpdates: [], message: 'Сигналов не найдено, сканирую...', scannedCount: 20, bestScore: 0, newCandleHour: currentCandleHour };
   }
 
-  // Trade amount: smaller position per trade for risk management
-  const tradeAmount = Math.max(3, Math.min(balance * tradeSizePct, 15));
+  // ============================================================
+  // MULTI-LEVEL TP: Secure (50%) + Runner (50%)
+  // Secure: TP at 1.5× SL distance → locks profit early
+  // Runner: TP at full R:R → lets winners run
+  // Trailing logic automatically moves runner SL to breakeven
+  // ============================================================
+  const totalAmount = Math.max(3, Math.min(balance * tradeSizePct, 15));
+  const secureAmount = Math.round(totalAmount * 0.5 * 100) / 100;
+  const runnerAmount = Math.round((totalAmount - secureAmount) * 100) / 100;
 
+  const slDist = Math.abs(best.price - best.decision.stopLoss);
+  const isLong = best.decision.direction === 'long';
+  const secureTP = isLong ? best.price + slDist * 1.5 : best.price - slDist * 1.5;
+
+  const newTrades: NewTradeInfo[] = [
+    { symbol: best.symbol, direction: best.decision.direction, price: best.price, leverage: best.decision.leverage, stopLoss: best.decision.stopLoss, takeProfit: secureTP, amount: secureAmount, strategyId, label: 'secure' },
+    { symbol: best.symbol, direction: best.decision.direction, price: best.price, leverage: best.decision.leverage, stopLoss: best.decision.stopLoss, takeProfit: best.decision.takeProfit, amount: runnerAmount, strategyId, label: 'runner' },
+  ];
+
+  const coinName = best.symbol.replace('USDT', '');
   return {
-    action: 'new-trade',
-    closedTrades: [],
-    trailingUpdates: [],
-    newTrade: {
-      symbol: best.symbol,
-      direction: best.decision.direction,
-      price: best.price,
-      leverage: best.decision.leverage,
-      stopLoss: best.decision.stopLoss,
-      takeProfit: best.decision.takeProfit,
-      amount: tradeAmount,
-      strategyId,
-    },
-    message: `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${best.symbol.replace('USDT', '')} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x | Score: ${best.decision.score.toFixed(2)}`,
-    scannedCount: 20,
-    bestScore: Math.abs(best.decision.score),
-    newCandleHour: currentCandleHour,
+    action: 'new-trade', closedTrades: [], trailingUpdates: [], newTrades,
+    message: `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${coinName} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x | Secure 1.5R + Runner ${strategy?.riskRewardRatio ?? 3}R`,
+    scannedCount: 20, bestScore: Math.abs(best.decision.score), newCandleHour: currentCandleHour,
   };
 }

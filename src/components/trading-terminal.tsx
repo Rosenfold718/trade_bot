@@ -253,9 +253,13 @@ export default function TradingTerminal() {
             const sOpenTrades = ss?.openTrades ?? [];
             const sTraderState = ss?.traderState;
             const balance = sTraderState?.balance ?? 100;
+            const sRecentTrades = ss?.recentTrades ?? [];
+            const recentPnl24h = sRecentTrades
+              .filter((t: { closed_at: string | null; pnl: number | null }) => t.closed_at && new Date(t.closed_at).getTime() > Date.now() - 86400000)
+              .reduce((sum: number, t: { pnl: number | null }) => sum + (t.pnl || 0), 0);
 
             try {
-              const result = await runAutoTradeCycle(sOpenTrades, s.id, timeframe.interval, balance, lastCandleHourRef.current);
+              const result = await runAutoTradeCycle(sOpenTrades, s.id, timeframe.interval, balance, lastCandleHourRef.current, recentPnl24h);
               // Update candle hour ref if a new candle was detected
               if (result.newCandleHour > lastCandleHourRef.current) {
                 lastCandleHourRef.current = result.newCandleHour;
@@ -275,7 +279,7 @@ export default function TradingTerminal() {
             message: string;
             closedTrades: Array<{ tradeId: string; symbol: string; direction: string; pnl: number; reason: string; exitPrice: number }>;
             trailingUpdates: Array<{ tradeId: string; newStopLoss: number; reason: string }>;
-            newTrade?: { symbol: string; direction: string; price: number; leverage: number; stopLoss: number; takeProfit: number; amount: number; strategyId: string };
+            newTrades?: Array<{ symbol: string; direction: string; price: number; leverage: number; stopLoss: number; takeProfit: number; amount: number; strategyId: string; label: string }>;
           };
 
           console.log(`[AutoTrade][${strategyId}]`, r.message);
@@ -308,29 +312,30 @@ export default function TradingTerminal() {
             } catch { /* silent */ }
           }
 
-          // Open new trade
-          if (r.newTrade) {
-            const nt = r.newTrade;
-            try {
-              const openRes = await fetch('/api/trader', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  action: 'open-trade',
-                  symbol: nt.symbol, entryPrice: nt.price, amount: nt.amount,
-                  leverage: nt.leverage, direction: nt.direction,
-                  stopLoss: nt.stopLoss, takeProfit: nt.takeProfit,
-                  strategyId,
-                }),
-              });
-              const openData = await openRes.json();
-              if (openData.success) {
-                addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Открыта ${nt.direction.toUpperCase()} ${nt.symbol.replace('USDT', '')} @ $${nt.price.toFixed(2)} | ${nt.leverage}x | $${nt.amount.toFixed(2)}`, 'trade');
-              } else {
-                addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Ошибка открытия: ${openData.error || 'unknown'}`, 'error');
+          // Open new trades (secure + runner pair)
+          if (r.newTrades && r.newTrades.length > 0) {
+            for (const nt of r.newTrades) {
+              try {
+                const openRes = await fetch('/api/trader', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    action: 'open-trade',
+                    symbol: nt.symbol, entryPrice: nt.price, amount: nt.amount,
+                    leverage: nt.leverage, direction: nt.direction,
+                    stopLoss: nt.stopLoss, takeProfit: nt.takeProfit,
+                    strategyId,
+                  }),
+                });
+                const openData = await openRes.json();
+                if (openData.success) {
+                  addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] ${nt.label === 'secure' ? '🔒 Secure' : '🚀 Runner'} ${nt.direction.toUpperCase()} ${nt.symbol.replace('USDT', '')} @ $${nt.price.toFixed(2)} | ${nt.leverage}x | $${nt.amount.toFixed(2)}`, 'trade');
+                } else {
+                  addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Ошибка ${nt.label}: ${openData.error || 'unknown'}`, 'error');
+                }
+              } catch (err) {
+                addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Ошибка сети: ${err instanceof Error ? err.message : 'unknown'}`, 'error');
               }
-            } catch (err) {
-              addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Ошибка сети: ${err instanceof Error ? err.message : 'unknown'}`, 'error');
             }
           }
 

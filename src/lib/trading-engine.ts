@@ -624,11 +624,11 @@ function makeMeanReversionDecision(
   const ema50 = ema50Arr[ema50Arr.length - 1];
   const aboveEma50 = !isNaN(ema50) && price > ema50;
 
-  // Indicator 1: RSI(14) — more extreme thresholds
+  // Indicator 1: RSI(14) — relaxed thresholds for more entries
   const rsi = calcRSI(closes, 14);
-  const rsiLong = rsi < 28;   // was 35 — require deeper oversold
-  const rsiShort = rsi > 72;  // was 65 — require deeper overbought
-  const rsiStrength = rsiLong ? (28 - rsi) / 28 : rsiShort ? (rsi - 72) / 28 : 0;
+  const rsiLong = rsi < 32;   // was 28
+  const rsiShort = rsi > 68;  // was 72
+  const rsiStrength = rsiLong ? (32 - rsi) / 32 : rsiShort ? (rsi - 68) / 32 : 0;
   indicators.push({
     name: 'RSI',
     signal: rsiLong ? 1 : rsiShort ? -1 : 0,
@@ -650,11 +650,11 @@ function makeMeanReversionDecision(
     strength: bbStrength,
   });
 
-  // Indicator 3: StochRSI — more extreme thresholds
+  // Indicator 3: StochRSI — relaxed thresholds
   const stochRSI = calcStochRSI(closes, 14, 14);
-  const stochLong = stochRSI < 0.15;   // was 0.25
-  const stochShort = stochRSI > 0.85;  // was 0.75
-  const stochStrength = stochLong ? (0.15 - stochRSI) / 0.15 : stochShort ? (stochRSI - 0.85) / 0.15 : 0;
+  const stochLong = stochRSI < 0.20;   // was 0.15
+  const stochShort = stochRSI > 0.80;  // was 0.85
+  const stochStrength = stochLong ? (0.20 - stochRSI) / 0.20 : stochShort ? (stochRSI - 0.80) / 0.20 : 0;
   indicators.push({
     name: 'StochRSI',
     signal: stochLong ? 1 : stochShort ? -1 : 0,
@@ -686,15 +686,15 @@ function makeMeanReversionDecision(
     shortScore += volStrength * 0.3;
   }
 
-  // ── STRICT: require ALL 3 indicators to agree (was 2 of 3) ──
-  if (longCount < 3 && shortCount < 3) {
+  // ── Require 2 of 3 indicators to agree (was 3 — too strict, almost never triggered) ──
+  if (longCount < 2 && shortCount < 2) {
     return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
   }
 
-  // ── EMA-50 trend filter for longs: don't buy below EMA-50 (falling knife) ──
-  // For shorts: don't sell above EMA-50
-  const longEntry = longCount >= 3 && aboveEma50;
-  const shortEntry = shortCount >= 3 && !aboveEma50;
+  // ── EMA-50 trend filter: allow if above EMA-50 OR within 1% of it ──
+  const nearEma50 = !isNaN(ema50) && Math.abs(price - ema50) / ema50 < 0.01;
+  const longEntry = longCount >= 2 && (aboveEma50 || nearEma50);
+  const shortEntry = shortCount >= 2 && (!aboveEma50 || nearEma50);
 
   let direction: 'long' | 'short' | 'none' = 'none';
   let score = 0;
