@@ -339,6 +339,13 @@ export async function updateStopLoss(tradeId: string, newStopLoss: number): Prom
   );
 }
 
+export async function updateTakeProfit(tradeId: string, newTakeProfit: number): Promise<void> {
+  await tursoDb.execute(
+    "UPDATE trades SET take_profit = ? WHERE id = ? AND status = 'open'",
+    [newTakeProfit, tradeId]
+  );
+}
+
 export async function getRecentTrades(userId: string, limit: number = 20, strategyId?: string) {
   const sql = strategyId
     ? 'SELECT * FROM trades WHERE user_id = ? AND strategy_id = ? ORDER BY opened_at DESC LIMIT ?'

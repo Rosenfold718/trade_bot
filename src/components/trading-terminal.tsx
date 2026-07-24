@@ -279,7 +279,7 @@ export default function TradingTerminal() {
             message: string;
             closedTrades: Array<{ tradeId: string; symbol: string; direction: string; pnl: number; reason: string; exitPrice: number }>;
             trailingUpdates: Array<{ tradeId: string; newStopLoss: number; reason: string }>;
-            newTrade?: { symbol: string; direction: string; price: number; leverage: number; stopLoss: number; takeProfit: number; amount: number; strategyId: string };
+            newTrades?: Array<{ symbol: string; direction: string; price: number; leverage: number; stopLoss: number; takeProfit: number; amount: number; strategyId: string; label: string }>;
           };
 
           console.log(`[AutoTrade][${strategyId}]`, r.message);
@@ -312,9 +312,8 @@ export default function TradingTerminal() {
             } catch { /* silent */ }
           }
 
-          // Open new trade
-          if (r.newTrade) {
-            const nt = r.newTrade;
+          // Open new trades (may be multiple: secure + runner)
+          for (const nt of (r.newTrades ?? [])) {
             try {
               const openRes = await fetch('/api/trader', {
                 method: 'POST',
@@ -329,7 +328,7 @@ export default function TradingTerminal() {
               });
               const openData = await openRes.json();
               if (openData.success) {
-                addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Открыта ${nt.direction.toUpperCase()} ${nt.symbol.replace('USDT', '')} @ $${nt.price.toFixed(2)} | ${nt.leverage}x | $${nt.amount.toFixed(2)}`, 'trade');
+                addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Открыта ${nt.label === 'secure' ? '🔒' : '🏃'} ${nt.direction.toUpperCase()} ${nt.symbol.replace('USDT', '')} @ $${nt.price.toFixed(2)} | ${nt.leverage}x | $${nt.amount.toFixed(2)}`, 'trade');
               } else {
                 addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Ошибка открытия: ${openData.error || 'unknown'}`, 'error');
               }
@@ -937,9 +936,19 @@ function DraggableTradePanel({ focusedTradeId, symbol, onClose }: { focusedTrade
   const panelRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ startX: number; startY: number; startLeft: number; startTop: number } | null>(null);
   const containerRef = useRef<HTMLElement | null>(null);
+  const prevFocusedId = useRef(focusedTradeId);
 
   const [pos, setPos] = useState({ x: 8, y: 36 });
   const [isDragging, setIsDragging] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+
+  // Reset dismissed state when a new trade is focused
+  useEffect(() => {
+    if (focusedTradeId && focusedTradeId !== prevFocusedId.current) {
+      prevFocusedId.current = focusedTradeId;
+      setDismissed(false);
+    }
+  }, [focusedTradeId]);
 
   // Get container ref
   useEffect(() => {
@@ -994,7 +1003,7 @@ function DraggableTradePanel({ focusedTradeId, symbol, onClose }: { focusedTrade
   }, [isDragging]);
 
   // Early return after all hooks
-  if (!activeTrade) return null;
+  if (!activeTrade || dismissed) return null;
 
   const isLong = activeTrade.direction === 'long';
   const isOpen = activeTrade.status === 'open';
@@ -1060,7 +1069,7 @@ function DraggableTradePanel({ focusedTradeId, symbol, onClose }: { focusedTrade
           )}>
             {isOpen ? 'ОТКР' : 'ЗАКР'}
           </span>
-            <button onClick={onClose} className="p-0.5 text-white/30 hover:text-white/60 transition-colors rounded">
+            <button onClick={() => { setDismissed(true); onClose?.(); }} className="p-0.5 text-white/30 hover:text-white/60 transition-colors rounded">
               <X className="w-3.5 h-3.5" />
             </button>
         </div>

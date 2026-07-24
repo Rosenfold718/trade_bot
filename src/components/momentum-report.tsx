@@ -28,6 +28,8 @@ interface AccountState {
   currentBalance: number;
   borrowedFunds: number;
   debtToRepay: number;
+  openTradeAmounts: number;
+  unrealizedPnl: number;
   totalEquity: number;
   startingBalance: number;
   totalReturn: number;
@@ -259,11 +261,13 @@ export default function MomentumReport({ onClose, strategyId = 'momentum' }: { o
             <SheetSection title="БАЛАНСОВЫЙ ОТЧЁТ">
               <ExcelTable>
                 <ExcelRow label="Начальный баланс" value={`$${accountState.startingBalance.toFixed(2)}`} align="right" />
-                <ExcelRow label="Текущий баланс" value={`$${accountState.currentBalance.toFixed(2)}`} align="right" className={pnlColor(accountState.totalReturn)} bold />
+                <ExcelRow label="Текущий баланс" value={`$${accountState.currentBalance.toFixed(2)}`} align="right" />
+                <ExcelRow label="В открытых сделках" value={`$${accountState.openTradeAmounts.toFixed(2)}`} align="right" />
+                <ExcelRow label="Нереализованный PnL" value={`${pnlSign(accountState.unrealizedPnl)}$${accountState.unrealizedPnl.toFixed(2)}`} align="right" className={pnlColor(accountState.unrealizedPnl)} />
                 <ExcelRow label="Заемные средства" value={`$${accountState.borrowedFunds.toFixed(2)}`} align="right" />
                 <ExcelRow label="Долг к возврату" value={`$${accountState.debtToRepay.toFixed(2)}`} align="right" className={accountState.debtToRepay > 0 ? 'text-red-400' : 'text-white/50'} />
-                <ExcelRow label="Общий капитал" value={`$${accountState.totalEquity.toFixed(2)}`} align="right" bold />
                 <ExcelDivider />
+                <ExcelRow label="Общий капитал" value={`$${accountState.totalEquity.toFixed(2)}`} align="right" bold />
                 <ExcelRow label="Итого прибыль/убыток $" value={`${pnlSign(accountState.totalReturn)}$${accountState.totalReturn.toFixed(2)}`} align="right" className={pnlColor(accountState.totalReturn)} bold />
                 <ExcelRow label="Итого прибыль/убыток %" value={`${pnlSign(accountState.totalReturnPct)}${accountState.totalReturnPct.toFixed(2)}%`} align="right" className={pnlColor(accountState.totalReturnPct)} bold />
               </ExcelTable>

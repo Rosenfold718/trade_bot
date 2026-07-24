@@ -170,6 +170,9 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
   const priceLinesRef = useRef<any[]>([]);
   const srLinesRef = useRef<any[]>([]);
   const indicatorSeriesRef = useRef<Map<string, any>>(new Map());
+  // TP line drag state
+  const tpLinesMap = useRef<Map<string, { line: any; price: number; tradeId: string }>>(new Map());
+  const dragState = useRef<{ active: boolean; tradeId: string; startY: number; startPrice: number; lastPrice: number; previewLine: any | null }>({ active: false, tradeId: '', startY: 0, startPrice: 0, lastPrice: 0, previewLine: null });
   const [mounted, setMounted] = useState(false);
   const [chartReady, setChartReady] = useState(false);
 
@@ -309,23 +312,30 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
       try { cs.removePriceLine(line); } catch { /* ok */ }
     }
     priceLinesRef.current = [];
+    tpLinesMap.current.clear();
 
-    const addLine = (price: number, color: string, lineStyle: number, title: string) => {
+    const addLine = (price: number, color: string, lineStyle: number, lineWidth: number, title: string, draggable?: boolean) => {
       try {
-        const line = cs.createPriceLine({ price, color, lineWidth: 1, lineStyle, axisLabelVisible: true, title });
+        const line = cs.createPriceLine({ price, color, lineWidth, lineStyle, axisLabelVisible: true, title, draggable: draggable ?? false });
         priceLinesRef.current.push(line);
+        return line;
       } catch { /* ignore invalid price */ }
+      return null;
     };
 
     for (const trade of (openTrades ?? []).filter(t => t.symbol === symbol && t.status === 'open')) {
-      if (trade.entry_price != null) addLine(trade.entry_price, '#ffffff', 2, `ENTRY $${fmtPrice(trade.entry_price)}`);
-      if (trade.take_profit != null) addLine(trade.take_profit, '#22c55e', 0, `TP $${fmtPrice(trade.take_profit)}`);
-      if (trade.stop_loss != null) addLine(trade.stop_loss, '#ef4444', 0, `SL $${fmtPrice(trade.stop_loss)}`);
+      if (trade.entry_price != null) addLine(trade.entry_price, '#ffffff', 2, 1, `ENTRY $${fmtPrice(trade.entry_price)}`);
+      // TP line — draggable, tracked in map
+      if (trade.take_profit != null) {
+        const tpLine = addLine(trade.take_profit, '#22c55e', 0, 2, `↕ TP $${fmtPrice(trade.take_profit)}`);
+        if (tpLine) tpLinesMap.current.set(trade.id, { line: tpLine, price: trade.take_profit, tradeId: trade.id });
+      }
+      if (trade.stop_loss != null) addLine(trade.stop_loss, '#ef4444', 0, 1, `SL $${fmtPrice(trade.stop_loss)}`);
     }
 
     for (const trade of (recentTrades ?? []).filter(t => t.symbol === symbol && t.status === 'closed' && t.exit_price != null)) {
-      if (trade.entry_price != null) addLine(trade.entry_price, 'rgba(255,255,255,0.25)', 2, `IN $${fmtPrice(trade.entry_price)}`);
-      addLine(trade.exit_price!, '#eab308', 1, `EXIT $${fmtPrice(trade.exit_price!)}`);
+      if (trade.entry_price != null) addLine(trade.entry_price, 'rgba(255,255,255,0.25)', 2, 1, `IN $${fmtPrice(trade.entry_price)}`);
+      addLine(trade.exit_price!, '#eab308', 1, 1, `EXIT $${fmtPrice(trade.exit_price!)}`);
     }
   }, [openTrades, recentTrades, symbol]);
 
@@ -454,6 +464,130 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
 
     return () => { cancelled = true; };
   }, [data, indicators, symbol, chartReady]);
+
+  // ============================================================
+  // 5. Draggable TP lines — mouse interaction on chart
+  // ============================================================
+  useEffect(() => {
+    const container = chartContainerRef.current;
+    const chart = chartRef.current;
+    if (!container || !chart) return;
+
+    const TOLERANCE_PX = 12; // px tolerance for detecting TP line proximity
+
+    const findNearestTP = (mouseY: number): { tradeId: string; price: number } | null => {
+      for (const [, info] of tpLinesMap.current) {
+        try {
+          const coordY = chart.priceToCoordinate(info.price);
+          if (coordY !== null && Math.abs(mouseY - coordY) < TOLERANCE_PX) {
+            return { tradeId: info.tradeId, price: info.price };
+          }
+        } catch { continue; }
+      }
+      return null;
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const rect = container.getBoundingClientRect();
+      const mouseY = e.clientY - rect.top;
+
+      if (dragState.current.active) {
+        // During drag — update preview line price
+        try {
+          const newPrice = chart.coordinateToPrice(mouseY);
+          if (newPrice !== null && newPrice > 0) {
+            dragState.current.lastPrice = newPrice;
+            if (dragState.current.previewLine) {
+              dragState.current.previewLine.applyOptions({
+                price: newPrice,
+                title: `↕ TP $${fmtPrice(newPrice)}`,
+              });
+            }
+            container.style.cursor = 'ns-resize';
+          }
+        } catch { /* ignore */ }
+        return;
+      }
+
+      // Not dragging — check if near TP line to show cursor hint
+      const nearest = findNearestTP(mouseY);
+      container.style.cursor = nearest ? 'ns-resize' : '';
+    };
+
+    const handleMouseDown = (e: MouseEvent) => {
+      const rect = container.getBoundingClientRect();
+      const mouseY = e.clientY - rect.top;
+      const nearest = findNearestTP(mouseY);
+      if (!nearest) return;
+
+      e.preventDefault();
+      // Create a preview line (dashed) to show during drag
+      const cs = candleSeriesRef.current;
+      if (!cs) return;
+
+      try {
+        const previewLine = cs.createPriceLine({
+          price: nearest.price,
+          color: '#4ade80',
+          lineWidth: 2,
+          lineStyle: 2, // dashed
+          axisLabelVisible: true,
+          title: `↕ TP $${fmtPrice(nearest.price)}`,
+        });
+        dragState.current = {
+          active: true,
+          tradeId: nearest.tradeId,
+          startY: mouseY,
+          startPrice: nearest.price,
+          lastPrice: nearest.price,
+          previewLine,
+        };
+        container.style.cursor = 'ns-resize';
+      } catch { /* ignore */ }
+    };
+
+    const handleMouseUp = async () => {
+      if (!dragState.current.active) return;
+      const { tradeId, previewLine, lastPrice, startPrice } = dragState.current;
+      dragState.current = { active: false, tradeId: '', startY: 0, startPrice: 0, lastPrice: 0, previewLine: null };
+      container.style.cursor = '';
+
+      // Remove preview line
+      const cs = candleSeriesRef.current;
+      if (cs && previewLine) {
+        try { cs.removePriceLine(previewLine); } catch { /* ok */ }
+      }
+
+      // Save new TP price via API only if dragged more than 0.1% from start
+      if (lastPrice > 0 && startPrice > 0 && Math.abs(lastPrice - startPrice) / startPrice > 0.001) {
+        try {
+          await fetch('/api/trader', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'update-tp', tradeId, newTakeProfit: lastPrice }),
+          });
+          console.log(`[Chart] TP updated for ${tradeId}: $${fmtPrice(lastPrice)}`);
+        } catch (err) {
+          console.error('[Chart] Failed to update TP:', err);
+        }
+      }
+    };
+
+    container.addEventListener('mousemove', handleMouseMove);
+    container.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      container.removeEventListener('mousemove', handleMouseMove);
+      container.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('mouseup', handleMouseUp);
+      // Clean up any leftover preview line
+      if (dragState.current.previewLine && candleSeriesRef.current) {
+        try { candleSeriesRef.current.removePriceLine(dragState.current.previewLine); } catch { /* ok */ }
+      }
+      dragState.current = { active: false, tradeId: '', startY: 0, startPrice: 0, lastPrice: 0, previewLine: null };
+    };
+  }, [chartReady, symbol]); // Re-attach when chart rebuilds
 
   return (
     <div className="w-full h-full min-h-[300px]">
