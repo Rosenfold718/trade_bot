@@ -170,10 +170,8 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
   const priceLinesRef = useRef<any[]>([]);
   const srLinesRef = useRef<any[]>([]);
   const indicatorSeriesRef = useRef<Map<string, any>>(new Map());
-  // TP line drag state
-  const tpLinesMap = useRef<Map<string, { line: any; price: number; tradeId: string }>>(new Map());
-  const overlayRef = useRef<HTMLDivElement>(null);
-  const dragState = useRef<{ active: boolean; tradeId: string; startY: number; startPrice: number; lastPrice: number }>({ active: false, tradeId: '', startY: 0, startPrice: 0, lastPrice: 0 });
+  // TP line tracking for native drag
+  const tpLinesMap = useRef<Map<string, { line: any; lastSavedPrice: number; tradeId: string }>>(new Map());
   const [mounted, setMounted] = useState(false);
   const [chartReady, setChartReady] = useState(false);
 
@@ -304,6 +302,7 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
 
   // ============================================================
   // 3. Dynamic price lines — re-runs when openTrades/recentTrades/symbol change
+  //    TP lines use native draggable (user grabs the green label on price axis)
   // ============================================================
   useEffect(() => {
     const cs = candleSeriesRef.current;
@@ -324,12 +323,18 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
       return null;
     };
 
+    // Current price line (prominent white label)
+    if (data.length > 0) {
+      const lastPrice = data[data.length - 1].close;
+      addLine(lastPrice, 'rgba(255,255,255,0.9)', 2, 2, `💰 $${fmtPrice(lastPrice)}`);
+    }
+
     for (const trade of (openTrades ?? []).filter(t => t.symbol === symbol && t.status === 'open')) {
-      if (trade.entry_price != null) addLine(trade.entry_price, '#ffffff', 2, 1, `ENTRY $${fmtPrice(trade.entry_price)}`);
-      // TP line — draggable, tracked in map
+      if (trade.entry_price != null) addLine(trade.entry_price, 'rgba(255,255,255,0.4)', 2, 1, `ENTRY $${fmtPrice(trade.entry_price)}`);
+      // TP line — NATIVELY DRAGGABLE via the green label on price axis
       if (trade.take_profit != null) {
-        const tpLine = addLine(trade.take_profit, '#22c55e', 0, 2, `↕ TP $${fmtPrice(trade.take_profit)}`);
-        if (tpLine) tpLinesMap.current.set(trade.id, { line: tpLine, price: trade.take_profit, tradeId: trade.id });
+        const tpLine = addLine(trade.take_profit, '#22c55e', 0, 2, `↕ TP $${fmtPrice(trade.take_profit)}`, true);
+        if (tpLine) tpLinesMap.current.set(trade.id, { line: tpLine, lastSavedPrice: trade.take_profit, tradeId: trade.id });
       }
       if (trade.stop_loss != null) addLine(trade.stop_loss, '#ef4444', 0, 1, `SL $${fmtPrice(trade.stop_loss)}`);
     }
@@ -338,7 +343,7 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
       if (trade.entry_price != null) addLine(trade.entry_price, 'rgba(255,255,255,0.25)', 2, 1, `IN $${fmtPrice(trade.entry_price)}`);
       addLine(trade.exit_price!, '#eab308', 1, 1, `EXIT $${fmtPrice(trade.exit_price!)}`);
     }
-  }, [openTrades, recentTrades, symbol]);
+  }, [openTrades, recentTrades, symbol, data]);
 
   // ============================================================
   // 4. Technical indicators + Swing Trendlines + S/R Levels
@@ -467,128 +472,52 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
   }, [data, indicators, symbol, chartReady]);
 
   // ============================================================
-  // 5. Draggable TP lines — overlay grab zones above chart canvas
-  //    The chart library intercepts all canvas mouse events for scroll/zoom,
-  //    so we place invisible HTML grab zones on top of the chart at each TP
-  //    line's Y coordinate. Only these zones capture mouse events;
-  //    everything else passes through to the chart as normal.
+  // 5. Native TP drag detection — after user drags a TP label,
+  //    lightweight-charts updates the price internally.
+  //    On mouseup, we detect if the price changed and save to DB.
   // ============================================================
   useEffect(() => {
-    const overlay = overlayRef.current;
     const chart = chartRef.current;
-    if (!overlay || !chart) return;
+    if (!chart) return;
 
-    const GRAB_ZONE_H = 24; // pixels tall grab zone per TP line
-
-    const positionGrabZones = () => {
-      // Remove old grab zones
-      overlay.innerHTML = '';
-
-      for (const [, info] of tpLinesMap.current) {
+    const handleMouseUp = () => {
+      for (const [tradeId, info] of tpLinesMap.current) {
         try {
-          const coordY = chart.priceToCoordinate(info.price);
-          if (coordY === null || coordY < 0) continue;
+          // Read the current price from the native draggable price line
+          const opts = info.line.options() as any;
+          const currentPrice = opts?.price;
+          if (currentPrice == null || currentPrice <= 0) continue;
 
-          const el = document.createElement('div');
-          el.style.cssText = `position:absolute;top:${coordY - GRAB_ZONE_H / 2}px;left:0;right:56px;height:${GRAB_ZONE_H}px;cursor:ns-resize;z-index:20;pointer-events:auto;`;
-          el.title = 'Перетащите для изменения TP';
+          // If price moved more than 0.1% from last saved, persist it
+          if (Math.abs(currentPrice - info.lastSavedPrice) / info.lastSavedPrice > 0.001) {
+            const newPrice = currentPrice;
+            info.lastSavedPrice = newPrice;
 
-          el.addEventListener('mousedown', (e: MouseEvent) => {
-            e.preventDefault();
-            e.stopPropagation();
-            dragState.current = {
-              active: true,
-              tradeId: info.tradeId,
-              startY: e.clientY,
-              startPrice: info.price,
-              lastPrice: info.price,
-            };
-            // Disable chart scroll/zoom during drag to prevent interference
-            try {
-              chart.applyOptions({ handleScroll: false, handleScale: false });
-            } catch { /* ignore */ }
-          });
+            // Update the label title with new price
+            info.line.applyOptions({ title: `↕ TP $${fmtPrice(newPrice)}` });
 
-          overlay.appendChild(el);
+            // Save to API (fire and forget)
+            fetch('/api/trader', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'update-tp', tradeId, newTakeProfit: newPrice }),
+            }).then(() => {
+              console.log(`[Chart] TP dragged to $${fmtPrice(newPrice)} for trade ${tradeId}`);
+            }).catch((err) => {
+              console.error('[Chart] Failed to save TP:', err);
+            });
+          }
         } catch { /* ignore */ }
       }
     };
 
-    // Position initially
-    positionGrabZones();
-
-    // Reposition when chart visible range changes (scroll / zoom)
-    let cleanupRange: (() => void) | null = null;
-    try {
-      const ts = chart.timeScale();
-      if (ts && typeof ts.subscribeVisibleLogicalRangeChange === 'function') {
-        ts.subscribeVisibleLogicalRangeChange(() => positionGrabZones());
-        cleanupRange = () => { try { (ts as any).unsubscribeVisibleLogicalRangeChange(() => positionGrabZones()); } catch { /* */ } };
-      }
-    } catch { /* older API */ }
-
-    const handleMove = (e: MouseEvent) => {
- const d = dragState.current;
-      if (!d.active) return;
-      try {
-        const rect = overlay.getBoundingClientRect();
-        const mouseY = e.clientY - rect.top;
-        const newPrice = chart.coordinateToPrice(mouseY);
-        if (newPrice !== null && newPrice > 0) {
-          d.lastPrice = newPrice;
-          // Update the TP line position visually
-          const info = tpLinesMap.current.get(d.tradeId);
-          if (info) {
-            info.line.applyOptions({ price: newPrice, title: `↕ TP $${fmtPrice(newPrice)}` });
-            info.price = newPrice;
-          }
-        }
-      } catch { /* ignore */ }
-    };
-
-    const handleUp = async () => {
-      const d = dragState.current;
-      if (!d.active) return;
-      d.active = false;
-
-      // Re-enable chart scroll/zoom after drag ends
-      try {
-        chart.applyOptions({ handleScroll: true, handleScale: true });
-      } catch { /* ignore */ }
-
-      // Re-position grab zones to new location
-      positionGrabZones();
-
-      // Save new TP price via API if moved >0.1%
-      if (d.lastPrice > 0 && d.startPrice > 0 && Math.abs(d.lastPrice - d.startPrice) / d.startPrice > 0.001) {
-        try {
-          await fetch('/api/trader', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'update-tp', tradeId: d.tradeId, newTakeProfit: d.lastPrice }),
-          });
-          console.log(`[Chart] TP updated for ${d.tradeId}: $${fmtPrice(d.lastPrice)}`);
-        } catch (err) {
-          console.error('[Chart] Failed to update TP:', err);
-        }
-      }
-    };
-
-    window.addEventListener('mousemove', handleMove);
-    window.addEventListener('mouseup', handleUp);
-
-    return () => {
-      overlay.innerHTML = '';
-      cleanupRange?.();
-      window.removeEventListener('mousemove', handleMove);
-      window.removeEventListener('mouseup', handleUp);
-    };
-  }, [chartReady, symbol, openTrades]); // Re-attach when chart rebuilds or trades change
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => window.removeEventListener('mouseup', handleMouseUp);
+  }, [chartReady, openTrades]);
 
   return (
     <div className="w-full h-full min-h-[300px] relative">
       <div ref={chartContainerRef} className="w-full h-full" />
-      <div ref={overlayRef} className="absolute inset-0 pointer-events-none z-10" />
     </div>
   );
 }
