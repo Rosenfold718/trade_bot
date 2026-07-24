@@ -5,13 +5,17 @@ import dynamic from 'next/dynamic';
 import { useTerminalStore } from '@/lib/store';
 import { STRATEGIES, getStrategy } from '@/lib/strategies';
 import { cn } from '@/lib/utils';
-import { Menu, X, ChevronDown } from 'lucide-react';
+import { Menu, X, ChevronDown, BarChart3 } from 'lucide-react';
 import CoinList from '@/components/coin-list';
 import TradingDashboard from '@/components/trading-dashboard';
 import ControlPanel from '@/components/control-panel';
 import OrderBook from '@/components/order-book';
 import { DEFAULT_INDICATORS, type IndicatorConfig } from '@/components/chart';
 import type { CandleData, TraderState, Trade, IndicatorWeight } from '@/lib/types';
+
+const MomentumReport = dynamic(() => import('@/components/momentum-report'), {
+  ssr: false,
+});
 
 const TradingChart = dynamic(() => import('@/components/chart'), {
   ssr: false,
@@ -95,6 +99,7 @@ export default function TradingTerminal() {
   const [timeframe, setTimeframe] = useState<Timeframe>(TIMEFRAMES[3]);
   const [focusedTradeId, setFocusedTradeId] = useState<string | null>(null);
   const [showCoinSheet, setShowCoinSheet] = useState(false);
+  const [showReport, setShowReport] = useState(false);
 
   // Indicator state — derived from active strategy, with localStorage override
   const [indicators, setIndicators] = useState<Record<string, IndicatorConfig>>(() => {
@@ -415,6 +420,15 @@ export default function TradingTerminal() {
               )}
             </div>
           )}
+          {/* Strategy Report Button */}
+          <button
+            onClick={() => setShowReport(true)}
+            className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400/80 hover:bg-amber-500/15 hover:text-amber-400 transition-all duration-200"
+            title="Отчёт по Импульс Pro"
+          >
+            <BarChart3 className="w-3.5 h-3.5" />
+            <span className="text-[10px] font-medium tracking-wide hidden sm:inline">ОТЧЁТ</span>
+          </button>
         </div>
       </header>
 
@@ -576,6 +590,9 @@ export default function TradingTerminal() {
 
         {/* Mobile Coin List Sheet */}
         <CoinListSheet open={showCoinSheet} onClose={() => setShowCoinSheet(false)} />
+
+        {/* Momentum Pro Strategy Report */}
+        {showReport && <MomentumReport onClose={() => setShowReport(false)} />}
       </div>
     </div>
   );
