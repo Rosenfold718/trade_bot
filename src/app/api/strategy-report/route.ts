@@ -349,16 +349,18 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Calculate true equity: balance + open trade amounts + unrealized PnL + borrowed - debt
+    // Calculate true equity: balance + open trade amounts + unrealized PnL - debt
+    // NOTE: borrowed_funds is NOT added because it's already counted in balance
+    // (addCredit increments both borrowed_funds and balance simultaneously)
     const openTradeAmounts = openTrades.reduce((s, t) => s + t.amount, 0);
     const unrealizedPnl = openTradeDetails.reduce((s, t) => {
       const isLong = t.direction === 'long';
       const priceChange = isLong
         ? (t.currentPrice - t.entry_price) / t.entry_price
         : (t.entry_price - t.currentPrice) / t.entry_price;
-      return s + (t.amount * priceChange * t.leverage - t.amount * 0.001);
+      return s + (t.amount * priceChange * t.leverage); // no fee deduction for unrealized
     }, 0);
-    const totalEquity = state.balance + openTradeAmounts + unrealizedPnl + state.borrowed_funds - state.debt_to_repay;
+    const totalEquity = state.balance + openTradeAmounts + unrealizedPnl - state.debt_to_repay;
     const startingBalance = 100;
     const totalReturn = totalEquity - startingBalance;
     const totalReturnPct = startingBalance > 0 ? (totalReturn / startingBalance) * 100 : 0;

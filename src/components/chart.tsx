@@ -492,7 +492,9 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
       const mouseY = e.clientY - rect.top;
 
       if (dragState.current.active) {
-        // During drag — update preview line price
+        // During drag — update preview line price, stop chart from scrolling
+        e.preventDefault();
+        e.stopPropagation();
         try {
           const newPrice = chart.coordinateToPrice(mouseY);
           if (newPrice !== null && newPrice > 0) {
@@ -520,7 +522,9 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
       const nearest = findNearestTP(mouseY);
       if (!nearest) return;
 
+      // Stop chart from starting its own scroll/pan
       e.preventDefault();
+      e.stopPropagation();
       // Create a preview line (dashed) to show during drag
       const cs = candleSeriesRef.current;
       if (!cs) return;
@@ -573,13 +577,17 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
       }
     };
 
-    container.addEventListener('mousemove', handleMouseMove);
-    container.addEventListener('mousedown', handleMouseDown);
+    // Use CAPTURE phase so we intercept before lightweight-charts handles scroll/zoom
+    const moveOpts: AddEventListenerOptions = { capture: true, passive: false };
+    const downOpts: AddEventListenerOptions = { capture: true };
+
+    container.addEventListener('mousemove', handleMouseMove, moveOpts);
+    container.addEventListener('mousedown', handleMouseDown, downOpts);
     window.addEventListener('mouseup', handleMouseUp);
 
     return () => {
-      container.removeEventListener('mousemove', handleMouseMove);
-      container.removeEventListener('mousedown', handleMouseDown);
+      container.removeEventListener('mousemove', handleMouseMove, moveOpts);
+      container.removeEventListener('mousedown', handleMouseDown, downOpts);
       window.removeEventListener('mouseup', handleMouseUp);
       // Clean up any leftover preview line
       if (dragState.current.previewLine && candleSeriesRef.current) {
@@ -587,7 +595,7 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
       }
       dragState.current = { active: false, tradeId: '', startY: 0, startPrice: 0, lastPrice: 0, previewLine: null };
     };
-  }, [chartReady, symbol]); // Re-attach when chart rebuilds
+  }, [chartReady, symbol, openTrades]); // Re-attach when chart rebuilds or trades change
 
   return (
     <div className="w-full h-full min-h-[300px]">

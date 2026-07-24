@@ -145,7 +145,7 @@ function calcEMA50(data: number[], period: number): number {
 
 // ============================================================
 // Client-side TP/SL monitoring
-// Uses LAST COMPLETED 1H candle close — aligns exit with signal timeframe
+// Uses LAST COMPLETED candle close — aligned with strategy's monitor interval
 // ============================================================
 
 export interface MonitorResult {
@@ -162,21 +162,25 @@ async function fetchLastCandleClose(symbol: string, interval: string = '1h'): Pr
   return parseFloat(String(completedCandle[4]));
 }
 
-export function getCurrentCandleHour(): number {
-  return Math.floor(Date.now() / 3600000);
+// Get a "candle slot" number based on the interval for throttling checks
+function getCurrentCandleSlot(interval: string): number {
+  const now = Date.now();
+  const msMap: Record<string, number> = { '1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000, '4h': 14400000, '1d': 86400000 };
+  const ms = msMap[interval] ?? 3600000;
+  return Math.floor(now / ms);
 }
 
 export async function monitorTradesClient(
   openTrades: Trade[],
-  lastCandleHour: number,
+  lastCandleSlot: number,
   monitorInterval: string = '1h',
   maxHoldMinutes: number = 720,
 ): Promise<MonitorResult> {
   const closedTrades: MonitorResult['closedTrades'] = [];
   const trailingUpdates: MonitorResult['trailingUpdates'] = [];
-  const currentCandleHour = getCurrentCandleHour();
+  const currentSlot = getCurrentCandleSlot(monitorInterval);
 
-  if (currentCandleHour <= lastCandleHour) {
+  if (currentSlot <= lastCandleSlot) {
     return { closedTrades: [], trailingUpdates: [] };
   }
 
@@ -266,7 +270,7 @@ export async function runAutoTradeCycle(
   strategyId: string,
   _interval: string,
   balance: number,
-  lastCandleHour: number = 0,
+  lastCandleSlot: number = 0,
   recentPnl24h: number = 0,
 ): Promise<{
     action: 'monitor' | 'new-trade' | 'idle';
@@ -281,7 +285,7 @@ export async function runAutoTradeCycle(
   const strategy = getStrategy(strategyId);
   const maxTrades = strategy?.maxOpenTrades ?? 10;
   const tradeSizePct = strategy?.tradeSizePercent ?? 0.10;
-  const currentCandleHour = getCurrentCandleHour();
+  const currentSlot = getCurrentCandleSlot(strategy?.monitorInterval ?? '1h');
 
   // Use strategy-specific interval and candle limit
   const strategyInterval = strategy?.defaultInterval ?? '1h';
@@ -295,35 +299,35 @@ export async function runAutoTradeCycle(
     return {
       action: 'idle', closedTrades: [], trailingUpdates: [],
       message: `Дневной лимит: -$${Math.abs(recentPnl24h).toFixed(2)} (>5%). Пауза до завтра.`,
-      scannedCount: 0, bestScore: 0, newCandleHour: currentCandleHour,
+      scannedCount: 0, bestScore: 0, newCandleHour: currentSlot,
     };
   }
 
   // Step 1: Monitor open trades
-  const { closedTrades, trailingUpdates } = await monitorTradesClient(openTrades, lastCandleHour, monitorInterval, maxHoldMinutes);
+  const { closedTrades, trailingUpdates } = await monitorTradesClient(openTrades, lastCandleSlot, monitorInterval, maxHoldMinutes);
   const updatedOpenTrades = openTrades.filter(t => !closedTrades.some(c => c.tradeId === t.id));
 
   if (closedTrades.length > 0 || trailingUpdates.length > 0) {
     const parts: string[] = [];
     if (closedTrades.length > 0) parts.push(`Закрыто ${closedTrades.length}: ${closedTrades.map(c => `${c.symbol.replace('USDT', '')} (${c.reason})`).join(', ')}`);
     if (trailingUpdates.length > 0) parts.push(`Trailing SL: ${trailingUpdates.length}`);
-    return { action: 'monitor', closedTrades, trailingUpdates, message: parts.join(' | '), scannedCount: 0, bestScore: 0, newCandleHour: currentCandleHour };
+    return { action: 'monitor', closedTrades, trailingUpdates, message: parts.join(' | '), scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
   }
 
   // Each signal opens 2 trades (secure + runner), need room for the pair
   if (updatedOpenTrades.length + 2 > maxTrades) {
-    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: `Лимит: ${updatedOpenTrades.length}/${maxTrades}, жду...`, scannedCount: 0, bestScore: 0, newCandleHour: currentCandleHour };
+    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: `Лимит: ${updatedOpenTrades.length}/${maxTrades}, жду...`, scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
   }
 
   if (balance < 1) {
-    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: 'Баланс исчерпан (<$1)', scannedCount: 0, bestScore: 0, newCandleHour: currentCandleHour };
+    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: 'Баланс исчерпан (<$1)', scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
   }
 
   const openSymbols = new Set(updatedOpenTrades.map(t => t.symbol));
 
   const best = await findBestSignal(openSymbols, strategyId, strategyInterval, strategyLimit);
   if (!best || best.decision.direction === 'none') {
-    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: 'Сигналов не найдено, сканирую...', scannedCount: 20, bestScore: 0, newCandleHour: currentCandleHour };
+    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: 'Сигналов не найдено, сканирую...', scannedCount: 20, bestScore: 0, newCandleHour: currentSlot };
   }
 
   // ============================================================
@@ -350,6 +354,6 @@ export async function runAutoTradeCycle(
   return {
     action: 'new-trade', closedTrades: [], trailingUpdates: [], newTrades,
     message: `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${coinName} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x | Secure 1.5R + Runner ${strategy?.riskRewardRatio ?? 3}R`,
-    scannedCount: 20, bestScore: Math.abs(best.decision.score), newCandleHour: currentCandleHour,
+    scannedCount: 20, bestScore: Math.abs(best.decision.score), newCandleHour: currentSlot,
   };
 }

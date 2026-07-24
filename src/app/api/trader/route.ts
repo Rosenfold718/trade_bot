@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, openTrade, closeTrade, updateStopLoss, updateTakeProfit, updateBalance, repayDebt, initUserTradingData } from '@/lib/db';
 import { fetchKlines, makeStrategyDecision, fetchTopSymbols } from '@/lib/trading-engine';
 import { getAuthUserId } from '@/lib/auth-helpers';
+import { getStrategy } from '@/lib/strategies';
 
 export async function GET(request: NextRequest) {
   try {
@@ -146,13 +147,17 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'monitor-trades') {
+      const strategy = getStrategy(strategyId);
+      const monitorInterval = strategy?.monitorInterval ?? '1h';
+      const maxHoldMinutes = strategy?.maxHoldMinutes ?? 720;
+
       const openTrades = await getOpenTrades(userId, strategyId);
       const closedTrades: Array<{ tradeId: string; symbol: string; direction: string; pnl: number; reason: string }> = [];
 
       for (const trade of openTrades) {
         try {
-          // Use last completed 1H candle close — aligns with signal timeframe
-          const klineUrl = `https://api.binance.com/api/v3/klines?symbol=${trade.symbol}&interval=1h&limit=2`;
+          // Use strategy-specific monitor interval for candle close
+          const klineUrl = `https://api.binance.com/api/v3/klines?symbol=${trade.symbol}&interval=${monitorInterval}&limit=2`;
           const klineRes = await fetch(klineUrl);
           if (!klineRes.ok) continue;
           const klineData = await klineRes.json();
@@ -163,16 +168,30 @@ export async function POST(request: NextRequest) {
           let shouldClose = false;
           let reason = '';
 
+          // TIME-BASED EXIT: close losing trades after maxHoldMinutes
+          const openMs = Date.now() - new Date(trade.opened_at).getTime();
+          const openMinutes = openMs / 60000;
+          if (openMinutes > maxHoldMinutes) {
+            const unrealizedPnl = trade.direction === 'long'
+              ? (candleClose - trade.entry_price) / trade.entry_price
+              : (trade.entry_price - candleClose) / trade.entry_price;
+            if (unrealizedPnl < 0) {
+              shouldClose = true;
+              const hours = Math.round(openMinutes / 60);
+              reason = `Тайм-эксит (${hours}ч)`;
+            }
+          }
+
           if (trade.direction === 'long' && trade.take_profit && candleClose >= trade.take_profit) {
-            shouldClose = true; reason = 'TP hit (1H close)';
+            shouldClose = true; reason = 'TP hit';
           } else if (trade.direction === 'short' && trade.take_profit && candleClose <= trade.take_profit) {
-            shouldClose = true; reason = 'TP hit (1H close)';
+            shouldClose = true; reason = 'TP hit';
           }
 
           if (trade.direction === 'long' && trade.stop_loss && candleClose <= trade.stop_loss) {
-            shouldClose = true; reason = 'SL hit (1H close)';
+            shouldClose = true; reason = 'SL hit';
           } else if (trade.direction === 'short' && trade.stop_loss && candleClose >= trade.stop_loss) {
-            shouldClose = true; reason = 'SL hit (1H close)';
+            shouldClose = true; reason = 'SL hit';
           }
 
           if (shouldClose) {

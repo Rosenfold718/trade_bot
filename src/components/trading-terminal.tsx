@@ -1069,7 +1069,11 @@ function DraggableTradePanel({ focusedTradeId, symbol, onClose }: { focusedTrade
           )}>
             {isOpen ? 'ОТКР' : 'ЗАКР'}
           </span>
-            <button onClick={() => { setDismissed(true); onClose?.(); }} className="p-0.5 text-white/30 hover:text-white/60 transition-colors rounded">
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={() => { setDismissed(true); onClose?.(); }}
+              className="p-0.5 text-white/30 hover:text-white/60 transition-colors rounded"
+            >
               <X className="w-3.5 h-3.5" />
             </button>
         </div>
