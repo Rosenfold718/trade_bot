@@ -331,29 +331,49 @@ export async function runAutoTradeCycle(
   }
 
   // ============================================================
-  // MULTI-LEVEL TP: Secure (50%) + Runner (50%)
-  // Secure: TP at 1.5× SL distance → locks profit early
-  // Runner: TP at full R:R → lets winners run
-  // Trailing logic automatically moves runner SL to breakeven
+  // Trade sizing and TP levels
+  //   Momentum (1:3 R:R): split into Secure 1.5R + Runner full R:R
+  //   Scalper (1:1.5 R:R): single trade, fast in/out
+  //   Position Alpha (1:5 R:R): single trade, capped at 1:3 R:R
   // ============================================================
-  const totalAmount = Math.max(1.5, Math.min(balance * tradeSizePct, 20));
-  // For scalper: allow even smaller amounts, increase frequency
-  const secureAmount = Math.round(totalAmount * 0.5 * 100) / 100;
-  const runnerAmount = Math.round((totalAmount - secureAmount) * 100) / 100;
-
   const slDist = Math.abs(best.price - best.decision.stopLoss);
   const isLong = best.decision.direction === 'long';
-  const secureTP = isLong ? best.price + slDist * 1.5 : best.price - slDist * 1.5;
 
-  const newTrades: NewTradeInfo[] = [
-    { symbol: best.symbol, direction: best.decision.direction, price: best.price, leverage: best.decision.leverage, stopLoss: best.decision.stopLoss, takeProfit: secureTP, amount: secureAmount, strategyId, label: 'secure' },
-    { symbol: best.symbol, direction: best.decision.direction, price: best.price, leverage: best.decision.leverage, stopLoss: best.decision.stopLoss, takeProfit: best.decision.takeProfit, amount: runnerAmount, strategyId, label: 'runner' },
-  ];
+  // Cap TP distance: max 8% from entry (prevents absurd TP levels)
+  const maxTPDistance = best.price * 0.08;
+
+  const runnerTP = isLong
+    ? Math.min(best.decision.takeProfit, best.price + maxTPDistance)
+    : Math.max(best.decision.takeProfit, best.price - maxTPDistance);
+
+  const rawSecureTP = isLong ? best.price + slDist * 1.5 : best.price - slDist * 1.5;
+  const secureTP = isLong
+    ? Math.min(rawSecureTP, best.price + maxTPDistance)
+    : Math.max(rawSecureTP, best.price - maxTPDistance);
+
+  const totalAmount = Math.max(1.5, Math.min(balance * tradeSizePct, 20));
+
+  let newTrades: NewTradeInfo[];
+
+  if (strategyId === 'momentum') {
+    // Momentum: split into Secure + Runner (two trades)
+    const secureAmount = Math.round(totalAmount * 0.5 * 100) / 100;
+    const runnerAmount = Math.round((totalAmount - secureAmount) * 100) / 100;
+    newTrades = [
+      { symbol: best.symbol, direction: best.decision.direction, price: best.price, leverage: best.decision.leverage, stopLoss: best.decision.stopLoss, takeProfit: secureTP, amount: secureAmount, strategyId, label: 'secure' },
+      { symbol: best.symbol, direction: best.decision.direction, price: best.price, leverage: best.decision.leverage, stopLoss: best.decision.stopLoss, takeProfit: runnerTP, amount: runnerAmount, strategyId, label: 'runner' },
+    ];
+  } else {
+    // Scalper / Position Alpha: single trade
+    newTrades = [
+      { symbol: best.symbol, direction: best.decision.direction, price: best.price, leverage: best.decision.leverage, stopLoss: best.decision.stopLoss, takeProfit: runnerTP, amount: totalAmount, strategyId, label: 'secure' },
+    ];
+  }
 
   const coinName = best.symbol.replace('USDT', '');
   return {
     action: 'new-trade', closedTrades: [], trailingUpdates: [], newTrades,
-    message: `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${coinName} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x | Secure 1.5R + Runner ${strategy?.riskRewardRatio ?? 3}R`,
+    message: `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${coinName} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x${newTrades.length > 1 ? ' | Secure 1.5R + Runner' : ' |'} ${strategy?.riskRewardRatio ?? 3}R`,
     scannedCount: 20, bestScore: Math.abs(best.decision.score), newCandleHour: currentSlot,
   };
 }

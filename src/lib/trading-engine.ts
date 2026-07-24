@@ -940,7 +940,8 @@ function makePositionAlphaDecision(
   const leverage = Math.min(strategy.maxLeverage, Math.max(1, Math.round(score * 1.2)));
 
   // Wide stop: 4× ATR — give position room to breathe for days
-  const stopLossPercent = 4 * atr / price;
+  // Cap SL at 5% max from entry to prevent absurdly wide stops
+  const stopLossPercent = Math.min(4 * atr / price, 0.05);
   const takeProfitPercent = stopLossPercent * strategy.riskRewardRatio;
 
   const stopLoss = direction === 'long'
