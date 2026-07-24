@@ -26,6 +26,10 @@ export interface StrategyConfig {
   timeFilterEnabled: boolean;
   timeFilterStart: number;    // час по московскому времени (0-23)
   timeFilterEnd: number;
+  defaultInterval: string;    // таймфрейм свечей для этой стратегии ('1m', '5m', '15m', '1h', '4h', '1d')
+  candleLimit: number;        // лимит свечей для запроса
+  monitorInterval: string;     // таймфрейм для мониторинга SL/TP ('1m', '5m', '1h')
+  maxHoldMinutes: number;     // максимальное время удержания сделки в минутах
 }
 
 export const STRATEGIES: StrategyConfig[] = [
@@ -60,6 +64,10 @@ export const STRATEGIES: StrategyConfig[] = [
     timeFilterEnabled: false,
     timeFilterStart: 0,
     timeFilterEnd: 0,
+    defaultInterval: '1h',
+    candleLimit: 1440,
+    monitorInterval: '1h',
+    maxHoldMinutes: 720, // 12 часов
   },
 
   // ──────────────────────────────────────────────────────────────
@@ -94,6 +102,10 @@ export const STRATEGIES: StrategyConfig[] = [
     timeFilterEnabled: false,
     timeFilterStart: 0,
     timeFilterEnd: 0,
+    defaultInterval: '5m',
+    candleLimit: 500,
+    monitorInterval: '5m',
+    maxHoldMinutes: 60, // 1 час максимальное удержание
   },
 
   // ──────────────────────────────────────────────────────────────
@@ -128,6 +140,10 @@ export const STRATEGIES: StrategyConfig[] = [
     timeFilterEnabled: false,
     timeFilterStart: 0,
     timeFilterEnd: 0,
+    defaultInterval: '4h',
+    candleLimit: 500,
+    monitorInterval: '4h',
+    maxHoldMinutes: 10080, // 7 дней максимальное удержание
   },
 ];
 

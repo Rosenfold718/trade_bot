@@ -9,7 +9,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Trade Terminal — Авторизация",
+  title: "Trade Terminal",
   description: "Мультистратегический торговый терминал",
   icons: {
     icon: "/favicon.svg",

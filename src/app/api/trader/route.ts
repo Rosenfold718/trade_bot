@@ -118,11 +118,15 @@ export async function POST(request: NextRequest) {
       const state = await getTraderState(userId, strategyId);
       let newBalance = state.balance + trade.amount + pnl;
 
+      // Debt repayment: 10% of positive PnL goes to debt, but don't block trading
       if (pnl > 0 && state.debt_to_repay > 0) {
-        const repayAmount = pnl * 0.1;
+        const repayAmount = Math.min(pnl * 0.1, state.debt_to_repay);
         await repayDebt(userId, repayAmount, strategyId);
-        newBalance -= Math.min(repayAmount, state.debt_to_repay);
+        newBalance -= repayAmount;
       }
+
+      // Ensure balance never goes below 0 (safety floor)
+      if (newBalance < 0) newBalance = 0;
 
       await updateBalance(userId, newBalance, strategyId);
 
@@ -177,10 +181,12 @@ export async function POST(request: NextRequest) {
             let newBalance = state.balance + trade.amount + pnl;
 
             if (pnl > 0 && state.debt_to_repay > 0) {
-              const repayAmount = pnl * 0.1;
+              const repayAmount = Math.min(pnl * 0.1, state.debt_to_repay);
               await repayDebt(userId, repayAmount, strategyId);
-              newBalance -= Math.min(repayAmount, state.debt_to_repay);
+              newBalance -= repayAmount;
             }
+
+            if (newBalance < 0) newBalance = 0;
 
             await updateBalance(userId, newBalance, strategyId);
 

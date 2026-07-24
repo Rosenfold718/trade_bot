@@ -3,6 +3,85 @@ import { initDB, getTraderState, getOpenTrades, getRecentTrades, getIndicatorWei
 import { getAuthUserId } from '@/lib/auth-helpers';
 import { makeStrategyDecision, fetchKlines } from '@/lib/trading-engine';
 import type { Trade } from '@/lib/types';
+import { getStrategy } from '@/lib/strategies';
+
+// Per-strategy descriptions for reports
+const STRATEGY_DESCRIPTIONS: Record<string, {
+  philosophy: string;
+  entryRules: string[];
+  exitRules: string[];
+  riskManagement: string[];
+}> = {
+  momentum: {
+    philosophy: 'Следование за сильным трендом на основе мультивременframe-анализа и консенсуса 10 технических индикаторов.',
+    entryRules: [
+      'ADX > 25 — требуется сильный тренд, флэт торговля запрещена',
+      '≥6 из 10 индикаторов должны согласованно указывать одно направление',
+      'Score ≥ 0.35 — порог конfluence для входа',
+      'RSI < 78 для Long и RSI > 22 для Short — фильтр истощения тренда',
+      'Мульти-таймфрейм подтверждение (MTF enabled)',
+    ],
+    exitRules: [
+      'Стоп-лосс: 2.5× ATR — широкий стоп для 1H таймфрейма',
+      'Тейк-профит: 1:3 Risk/Reward — трипликация риска',
+      'Trailing stop: 3 уровня (безубыток → lock profit → lock 2× profit)',
+      'Тайм-эксит через 12 часов при отрицательном PnL',
+    ],
+    riskManagement: [
+      'Макс. плечо: 3x — консервативный подход',
+      'Размер позиции: 6% от баланса',
+      'Макс. открытых сделок: 5',
+      'Дневной лимит убытков: 5% от баланса',
+      'Комиссия: 0.1% за сделку',
+    ],
+  },
+  scalper: {
+    philosophy: 'Скальпинг: множество быстрых сделок на микро-движениях. Использует 5-минутные свечи, StochRSI(5,5), BB squeeze, volume spikes.',
+    entryRules: [
+      'StochRSI(5,5) < 0.15 для Long, > 0.85 для Short — быстрая перекупленность/перепроданность',
+      '≥3 из 6 индикаторов должны согласованно указывать одно направление',
+      'Score ≥ 0.15 — низкий порог для частых входов',
+      'Volume spike > 1.8× от среднего — подтверждение движения',
+      'RSI(7) < 25 / > 75 — агрессивные пороги для быстрого реагирования',
+    ],
+    exitRules: [
+      'Стоп-лосс: 0.8× ATR — узкий стоп для быстрых сделок',
+      'Тейк-профит: 1:1.5 Risk/Reward — быстрая фиксация прибыли',
+      'Trailing stop: безубыток при движении 1× SL',
+      'Тайм-эксит через 1 час при отрицательном PnL',
+    ],
+    riskManagement: [
+      'Макс. плечо: 2x — ограничение риска на быстрых сделках',
+      'Размер позиции: 3% от баланса',
+      'Макс. открытых сделок: 5',
+      'Таймфрейм: 5 минут',
+      'Комиссия: 0.1% за сделку',
+    ],
+  },
+  'position-alpha': {
+    philosophy: 'Позиционная торговля: редкие входы на сильных разворотах тренда. Использует 4-часовые свечи, EMA50/200 crossover как главный сигнал.',
+    entryRules: [
+      'EMA50/200 crossover (Golden/Death cross) — основной сигнал',
+      '≥3 из 5 дополнительных индикаторов подтверждают направление',
+      'Score ≥ 0.40 — высокий порог, только сильные сигналы',
+      'ADX > 30 — требуется очень сильный тренд',
+      'MACD подтверждает направление EMA crossover',
+    ],
+    exitRules: [
+      'Стоп-лосс: 4× ATR — очень широкий стоп для удержания дней/недель',
+      'Тейк-профит: 1:5 Risk/Reward — амбициозная цель',
+      'Trailing stop: 3 уровня с широкими шагами',
+      'Тайм-эксит через 7 дней при отрицательном PnL',
+    ],
+    riskManagement: [
+      'Макс. плечо: 2x — консервативное плечо для долгосрочных позиций',
+      'Размер позиции: 4% от баланса',
+      'Макс. открытых сделок: 2',
+      'Таймфрейм: 4 часа',
+      'Комиссия: 0.1% за сделку',
+    ],
+  },
+};
 
 // Reconstruct decision narrative for a trade by re-analyzing candles at open time
 function generateDecisionNarrative(trade: Trade): string {
@@ -228,29 +307,16 @@ export async function GET(request: NextRequest) {
       closeNarrative: generateCloseNarrative(t),
     }));
 
-    // Strategy description
+    // Strategy description — per-strategy from STRATEGY_DESCRIPTIONS
+    const strategyDesc = STRATEGY_DESCRIPTIONS[strategyId] ?? STRATEGY_DESCRIPTIONS['momentum'];
+    const strategyDef = getStrategy(strategyId);
     const strategyDescription = {
-      id: 'momentum',
-      name: 'Импульс Pro',
-      philosophy: 'Следование за сильным трендом на основе мультивременframe-анализа и консенсуса 10 технических индикаторов.',
-      entryRules: [
-        'ADX > 25 — требуется сильный тренд, флэт торговля запрещена',
-        '≥6 из 10 индикаторов должны согласованно указывать одно направление',
-        'Score ≥ 0.35 — порог конfluence для входа',
-        'RSI < 78 для Long и RSI > 22 для Short — фильтр истощения тренда',
-        'Мульти-таймфрейм подтверждение (MTF enabled)',
-      ],
-      exitRules: [
-        'Стоп-лосс: 2.5× ATR — широкий стоп для 1H таймфрейма',
-        'Тейк-профит: 1:3 Risk/Reward — триADAция риска',
-        'Проверка SL/TP по закрытию 1H свечи (не по тикам)',
-      ],
-      riskManagement: [
-        `Макс. плечо: 3x — консервативный подход`,
-        `Размер позиции: 6% от баланса`,
-        `Макс. открытых сделок: 5`,
-        `Комиссия: 0.1% за сделку`,
-      ],
+      id: strategyId,
+      name: strategyDef?.name ?? 'Unknown',
+      philosophy: strategyDesc.philosophy,
+      entryRules: strategyDesc.entryRules,
+      exitRules: strategyDesc.exitRules,
+      riskManagement: strategyDesc.riskManagement,
     };
 
     // Potential assessment

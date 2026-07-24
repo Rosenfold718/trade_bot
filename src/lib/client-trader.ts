@@ -69,6 +69,10 @@ export async function findBestSignal(
   const strategy = getStrategy(strategyId);
   if (!strategy) return null;
 
+  // Use strategy-specific interval if no override provided matching strategy default
+  const effectiveInterval = interval;
+  const effectiveLimit = limit;
+
   const symbols = TOP_50_SYMBOLS;
   const available = symbols.filter(s => !openTradeSymbols.has(s));
   const checkSymbols = available.sort(() => Math.random() - 0.5).slice(0, 20);
@@ -89,7 +93,7 @@ export async function findBestSignal(
 
   for (const sym of checkSymbols) {
     try {
-      const candles = await fetchCandlesClient(sym, interval, limit);
+      const candles = await fetchCandlesClient(sym, effectiveInterval, effectiveLimit);
       if (candles.length < 50) continue;
       const decision = makeStrategyDecision(strategyId, sym, candles, 0);
       if (decision.direction === 'none') { noneCount++; continue; }
@@ -102,17 +106,21 @@ export async function findBestSignal(
 
       if (strategy.mtfEnabled) {
         try {
-          const h4candles = await fetchCandlesClient(sym, '4h', 200);
-          if (h4candles.length >= 50) {
-            const ema50 = calcEMA50(h4candles.map(c => c.close), 50);
-            const h4price = h4candles[h4candles.length - 1].close;
+          // Use higher timeframe for MTF confirmation
+          const mtfInterval = effectiveInterval === '1m' || effectiveInterval === '5m' ? '1h' 
+            : effectiveInterval === '15m' ? '4h' 
+            : '1d';
+          const mtfCandles = await fetchCandlesClient(sym, mtfInterval, 200);
+          if (mtfCandles.length >= 50) {
+            const ema50 = calcEMA50(mtfCandles.map(c => c.close), 50);
+            const mtfPrice = mtfCandles[mtfCandles.length - 1].close;
             if (!isNaN(ema50)) {
-              const h4Bullish = h4price > ema50;
+              const h4Bullish = mtfPrice > ema50;
               if (decision.direction === 'long' && !h4Bullish) { mtfRejected++; continue; }
               if (decision.direction === 'short' && h4Bullish) { mtfRejected++; continue; }
             }
           }
-        } catch { /* 4H fetch failed — allow trade without MTF filter */ }
+        } catch { /* MTF fetch failed — allow trade without MTF filter */ }
       }
 
       if (Math.abs(decision.score) > bestScore) {
@@ -122,7 +130,7 @@ export async function findBestSignal(
     } catch { continue; }
   }
 
-  console.log(`[findBestSignal][${strategyId}] Checked ${checkSymbols.length}, none=${noneCount}, mtf_rejected=${mtfRejected}, best=${best?.symbol ?? 'null'} score=${bestScore.toFixed(2)}`);
+  console.log(`[findBestSignal][${strategyId}] Interval:${effectiveInterval} Checked ${checkSymbols.length}, none=${noneCount}, mtf_rejected=${mtfRejected}, best=${best?.symbol ?? 'null'} score=${bestScore.toFixed(2)}`);
 
   return best;
 }
@@ -145,8 +153,8 @@ export interface MonitorResult {
   trailingUpdates: Array<{ tradeId: string; newStopLoss: number; reason: string }>;
 }
 
-async function fetchLastCandleClose(symbol: string): Promise<number> {
-  const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1h&limit=2`);
+async function fetchLastCandleClose(symbol: string, interval: string = '1h'): Promise<number> {
+  const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=2`);
   if (!res.ok) throw new Error(`Failed to fetch klines for ${symbol}`);
   const data = await res.json();
   if (!Array.isArray(data) || data.length < 1) throw new Error('No kline data');
@@ -161,6 +169,8 @@ export function getCurrentCandleHour(): number {
 export async function monitorTradesClient(
   openTrades: Trade[],
   lastCandleHour: number,
+  monitorInterval: string = '1h',
+  maxHoldMinutes: number = 720,
 ): Promise<MonitorResult> {
   const closedTrades: MonitorResult['closedTrades'] = [];
   const trailingUpdates: MonitorResult['trailingUpdates'] = [];
@@ -172,20 +182,21 @@ export async function monitorTradesClient(
 
   for (const trade of openTrades) {
     try {
-      const candleClose = await fetchLastCandleClose(trade.symbol);
+      const candleClose = await fetchLastCandleClose(trade.symbol, monitorInterval);
       let shouldClose = false;
       let reason = '';
 
-      // TIME-BASED EXIT: close losing trades after 12 hours
+      // TIME-BASED EXIT: close losing trades after maxHoldMinutes
       const openMs = Date.now() - new Date(trade.opened_at).getTime();
-      const openHours = openMs / 3600000;
-      if (openHours > 12) {
+      const openMinutes = openMs / 60000;
+      if (openMinutes > maxHoldMinutes) {
         const unrealizedPnl = trade.direction === 'long'
           ? (candleClose - trade.entry_price) / trade.entry_price
           : (trade.entry_price - candleClose) / trade.entry_price;
         if (unrealizedPnl < 0) {
           shouldClose = true;
-          reason = `Тайм-эксит (${Math.round(openHours)}ч)`;
+          const hours = Math.round(openMinutes / 60);
+          reason = `Тайм-эксит (${hours}ч)`;
         }
       }
 
@@ -253,7 +264,7 @@ export type NewTradeInfo = {
 export async function runAutoTradeCycle(
   openTrades: Trade[],
   strategyId: string,
-  interval: string,
+  _interval: string,
   balance: number,
   lastCandleHour: number = 0,
   recentPnl24h: number = 0,
@@ -272,6 +283,12 @@ export async function runAutoTradeCycle(
   const tradeSizePct = strategy?.tradeSizePercent ?? 0.10;
   const currentCandleHour = getCurrentCandleHour();
 
+  // Use strategy-specific interval and candle limit
+  const strategyInterval = strategy?.defaultInterval ?? '1h';
+  const strategyLimit = strategy?.candleLimit ?? 1440;
+  const monitorInterval = strategy?.monitorInterval ?? '1h';
+  const maxHoldMinutes = strategy?.maxHoldMinutes ?? 720;
+
   // DAILY LOSS LIMIT: stop trading if lost >5% in 24h
   const dailyLossLimit = balance * 0.05;
   if (recentPnl24h < -dailyLossLimit) {
@@ -283,7 +300,7 @@ export async function runAutoTradeCycle(
   }
 
   // Step 1: Monitor open trades
-  const { closedTrades, trailingUpdates } = await monitorTradesClient(openTrades, lastCandleHour);
+  const { closedTrades, trailingUpdates } = await monitorTradesClient(openTrades, lastCandleHour, monitorInterval, maxHoldMinutes);
   const updatedOpenTrades = openTrades.filter(t => !closedTrades.some(c => c.tradeId === t.id));
 
   if (closedTrades.length > 0 || trailingUpdates.length > 0) {
@@ -298,15 +315,13 @@ export async function runAutoTradeCycle(
     return { action: 'idle', closedTrades: [], trailingUpdates: [], message: `Лимит: ${updatedOpenTrades.length}/${maxTrades}, жду...`, scannedCount: 0, bestScore: 0, newCandleHour: currentCandleHour };
   }
 
-  if (balance < 10) {
-    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: 'Недостаточно баланса ($<10)', scannedCount: 0, bestScore: 0, newCandleHour: currentCandleHour };
+  if (balance < 1) {
+    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: 'Баланс исчерпан (<$1)', scannedCount: 0, bestScore: 0, newCandleHour: currentCandleHour };
   }
 
   const openSymbols = new Set(updatedOpenTrades.map(t => t.symbol));
-  const limitMap: Record<string, number> = { '1m': 1000, '5m': 1000, '15m': 1000, '1h': 1440, '4h': 500 };
-  const limit = limitMap[interval] || 1440;
 
-  const best = await findBestSignal(openSymbols, strategyId, interval, limit);
+  const best = await findBestSignal(openSymbols, strategyId, strategyInterval, strategyLimit);
   if (!best || best.decision.direction === 'none') {
     return { action: 'idle', closedTrades: [], trailingUpdates: [], message: 'Сигналов не найдено, сканирую...', scannedCount: 20, bestScore: 0, newCandleHour: currentCandleHour };
   }
@@ -317,7 +332,8 @@ export async function runAutoTradeCycle(
   // Runner: TP at full R:R → lets winners run
   // Trailing logic automatically moves runner SL to breakeven
   // ============================================================
-  const totalAmount = Math.max(3, Math.min(balance * tradeSizePct, 15));
+  const totalAmount = Math.max(1.5, Math.min(balance * tradeSizePct, 20));
+  // For scalper: allow even smaller amounts, increase frequency
   const secureAmount = Math.round(totalAmount * 0.5 * 100) / 100;
   const runnerAmount = Math.round((totalAmount - secureAmount) * 100) / 100;
 

@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic';
 import { useTerminalStore } from '@/lib/store';
 import { STRATEGIES, getStrategy } from '@/lib/strategies';
 import { cn } from '@/lib/utils';
-import { Menu, X, ChevronDown, BarChart3 } from 'lucide-react';
+import { Menu, X, ChevronDown, BarChart3, RotateCcw, FileSpreadsheet } from 'lucide-react';
 import CoinList from '@/components/coin-list';
 import TradingDashboard from '@/components/trading-dashboard';
 import ControlPanel from '@/components/control-panel';
@@ -100,6 +100,7 @@ export default function TradingTerminal() {
   const [focusedTradeId, setFocusedTradeId] = useState<string | null>(null);
   const [showCoinSheet, setShowCoinSheet] = useState(false);
   const [showReport, setShowReport] = useState(false);
+  const [reportStrategyId, setReportStrategyId] = useState<string | null>(null);
   const [showMobilePanel, setShowMobilePanel] = useState<string | null>(null);
 
   // Indicator state — derived from active strategy, with localStorage override
@@ -469,6 +470,37 @@ export default function TradingTerminal() {
               <div className={cn('text-[10px] mt-0.5 font-mono', isActive ? 'text-zinc-300' : 'text-zinc-600')}>
                 ${balance.toFixed(2)}
               </div>
+              {isActive && (
+                <div className="flex items-center gap-1 mt-1.5 pt-1.5 border-t border-white/[0.06]">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setReportStrategyId(s.id); setShowReport(true); }}
+                    className={cn('p-1 rounded-md transition-colors', s.bgColor, s.color)}
+                    title={`Отчёт: ${s.name}`}
+                  >
+                    <FileSpreadsheet className="w-3 h-3" />
+                  </button>
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      try {
+                        await fetch('/api/reset', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ strategyId: s.id }),
+                        });
+                        setStrategyTraderState(s.id, { id: s.id, strategy_id: s.id, balance: 100, borrowed_funds: 0, debt_to_repay: 0, is_active: true });
+                        setStrategyOpenTrades(s.id, []);
+                        setStrategyRecentTrades(s.id, []);
+                        addLog(`[${s.name}] Стратегия сброшена`, 'info');
+                      } catch { /* silent */ }
+                    }}
+                    className="p-1 rounded-md text-white/30 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                    title={`Сбросить: ${s.name}`}
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
             </button>
           );
         })}
@@ -486,7 +518,7 @@ export default function TradingTerminal() {
           {/* Center — Chart + Order Book + Trades Table */}
           <main className="xl:flex-1 xl:flex xl:flex-col xl:min-h-0 xl:overflow-hidden">
           {/* Chart + Order Book Row */}
-          <div className="h-[50dvh] xl:h-auto xl:flex-1 flex min-h-0 shrink-0">
+          <div className="h-[40dvh] xl:h-auto xl:flex-1 flex min-h-0 shrink-0">
             {/* Chart Area */}
             <div className="flex-1 relative min-h-0 overflow-hidden" id="chart-area">
               {chartLoading && (
@@ -563,7 +595,7 @@ export default function TradingTerminal() {
           </div>
 
           {/* Bottom Trades Table */}
-          <div className="border-t border-white/[0.06] bg-[#0d0d14] xl:h-48 xl:shrink-0 xl:overflow-auto overflow-x-auto" style={{ maxHeight: '25dvh' }}>
+          <div className="border-t border-white/[0.06] bg-[#0d0d14] xl:h-48 xl:shrink-0 xl:overflow-auto overflow-x-auto" style={{ maxHeight: '30dvh' }}>
             <TradesTable openTrades={openTrades} recentTrades={recentTrades} coins={coins} onSelectTrade={(trade) => {
               setSelectedSymbol(trade.symbol);
               setFocusedTradeId(trade.id);
@@ -641,7 +673,7 @@ export default function TradingTerminal() {
         </MobileSheet>
 
         {/* Strategy Report */}
-        {showReport && <MomentumReport onClose={() => setShowReport(false)} strategyId={activeStrategy} />}
+        {showReport && <MomentumReport onClose={() => { setShowReport(false); setReportStrategyId(null); }} strategyId={reportStrategyId ?? activeStrategy} />}
       </div>
     </div>
   );
@@ -764,7 +796,7 @@ function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
               <th className="text-right font-medium py-2.5 px-1.5 md:px-2 hidden lg:table-cell">Выход</th>
               <th className="text-right font-medium py-2.5 px-1.5 md:px-2 hidden lg:table-cell">Плечо</th>
               <th className="text-right font-medium py-2.5 px-2">PnL</th>
-              <th className="text-center font-medium py-2.5 px-1.5 hidden sm:table-cell">Открыта</th>
+              <th className="text-center font-medium py-2.5 px-1.5">Открыта</th>
               <th className="text-center font-medium py-2.5 px-2">Статус</th>
             </tr>
           </thead>
@@ -815,7 +847,7 @@ function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
                     ? `${displayPnl >= 0 ? '+' : ''}$${displayPnl.toFixed(2)}`
                     : '—'}
                 </td>
-                <td className="py-1.5 px-1.5 text-center font-mono text-white/25 text-[10px] hidden sm:table-cell">
+                <td className="py-1.5 px-1.5 text-center font-mono text-white/25 text-[10px]">
                   {new Date(trade.opened_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
                 </td>
                 <td className="py-1.5 px-2 text-center">
@@ -1028,11 +1060,9 @@ function DraggableTradePanel({ focusedTradeId, symbol, onClose }: { focusedTrade
           )}>
             {isOpen ? 'ОТКР' : 'ЗАКР'}
           </span>
-          {onClose && (
             <button onClick={onClose} className="p-0.5 text-white/30 hover:text-white/60 transition-colors rounded">
               <X className="w-3.5 h-3.5" />
             </button>
-          )}
         </div>
         </div>
 
