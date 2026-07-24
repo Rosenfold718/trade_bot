@@ -478,7 +478,7 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
     const chart = chartRef.current;
     if (!overlay || !chart) return;
 
-    const GRAB_ZONE_H = 18; // pixels tall grab zone per TP line
+    const GRAB_ZONE_H = 24; // pixels tall grab zone per TP line
 
     const positionGrabZones = () => {
       // Remove old grab zones
@@ -490,7 +490,7 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
           if (coordY === null || coordY < 0) continue;
 
           const el = document.createElement('div');
-          el.style.cssText = `position:absolute;top:${coordY - GRAB_ZONE_H / 2}px;left:0;right:56px;height:${GRAB_ZONE_H}px;cursor:ns-resize;z-index:20;`;
+          el.style.cssText = `position:absolute;top:${coordY - GRAB_ZONE_H / 2}px;left:0;right:56px;height:${GRAB_ZONE_H}px;cursor:ns-resize;z-index:20;pointer-events:auto;`;
           el.title = 'Перетащите для изменения TP';
 
           el.addEventListener('mousedown', (e: MouseEvent) => {
@@ -503,6 +503,10 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
               startPrice: info.price,
               lastPrice: info.price,
             };
+            // Disable chart scroll/zoom during drag to prevent interference
+            try {
+              chart.applyOptions({ handleScroll: false, handleScale: false });
+            } catch { /* ignore */ }
           });
 
           overlay.appendChild(el);
@@ -546,6 +550,11 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
       const d = dragState.current;
       if (!d.active) return;
       d.active = false;
+
+      // Re-enable chart scroll/zoom after drag ends
+      try {
+        chart.applyOptions({ handleScroll: true, handleScale: true });
+      } catch { /* ignore */ }
 
       // Re-position grab zones to new location
       positionGrabZones();

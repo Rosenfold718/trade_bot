@@ -284,6 +284,50 @@ export async function openTrade(
   takeProfit: number,
   strategyId: string = 'momentum',
 ): Promise<void> {
+  // ── Direction-aware SL/TP validation & auto-correction ──
+  const slCap = entryPrice * 0.05;  // max 5% distance
+  const tpCap = entryPrice * 0.10;  // max 10% distance
+
+  if (direction === 'long') {
+    // SL must be BELOW entry, TP must be ABOVE entry
+    if (stopLoss >= entryPrice) {
+      console.warn(`[openTrade] Fixing inverted SL for LONG: SL=${stopLoss} >= entry=${entryPrice}, resetting to entry - 2%`);
+      stopLoss = Math.round((entryPrice * 0.98) * 1e8) / 1e8;
+    }
+    if (takeProfit <= entryPrice) {
+      console.warn(`[openTrade] Fixing inverted TP for LONG: TP=${takeProfit} <= entry=${entryPrice}, resetting to entry + 5%`);
+      takeProfit = Math.round((entryPrice * 1.05) * 1e8) / 1e8;
+    }
+    // Cap distances
+    if (entryPrice - stopLoss > slCap) {
+      stopLoss = Math.round((entryPrice - slCap) * 1e8) / 1e8;
+    }
+    if (takeProfit - entryPrice > tpCap) {
+      takeProfit = Math.round((entryPrice + tpCap) * 1e8) / 1e8;
+    }
+  } else {
+    // SHORT: SL must be ABOVE entry, TP must be BELOW entry
+    if (stopLoss <= entryPrice) {
+      console.warn(`[openTrade] Fixing inverted SL for SHORT: SL=${stopLoss} <= entry=${entryPrice}, resetting to entry + 2%`);
+      stopLoss = Math.round((entryPrice * 1.02) * 1e8) / 1e8;
+    }
+    if (takeProfit >= entryPrice) {
+      console.warn(`[openTrade] Fixing inverted TP for SHORT: TP=${takeProfit} >= entry=${entryPrice}, resetting to entry - 5%`);
+      takeProfit = Math.round((entryPrice * 0.95) * 1e8) / 1e8;
+    }
+    // Cap distances
+    if (stopLoss - entryPrice > slCap) {
+      stopLoss = Math.round((entryPrice + slCap) * 1e8) / 1e8;
+    }
+    if (entryPrice - takeProfit > tpCap) {
+      takeProfit = Math.round((entryPrice - tpCap) * 1e8) / 1e8;
+    }
+  }
+
+  // Ensure SL and TP are not zero or NaN
+  if (!stopLoss || !isFinite(stopLoss)) stopLoss = direction === 'long' ? entryPrice * 0.98 : entryPrice * 1.02;
+  if (!takeProfit || !isFinite(takeProfit)) takeProfit = direction === 'long' ? entryPrice * 1.05 : entryPrice * 0.95;
+
   const id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   await tursoDb.execute(
     `INSERT INTO trades (id, user_id, symbol, strategy_id, entry_price, amount, leverage, direction, status, stop_loss, take_profit, opened_at)

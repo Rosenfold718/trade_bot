@@ -588,9 +588,9 @@ function makeMomentumDecision(
     ? 1
     : Math.min(strategy.maxLeverage, Math.max(1, Math.round(maxScore * 1.5)));
 
-  // Wide stop loss: 2.5× ATR to give trades room to breathe on 1H timeframe
-  const stopLossPercent = 2.5 * atr / price;
-  const takeProfitPercent = stopLossPercent * strategy.riskRewardRatio;
+  // Wide stop loss: 2.5× ATR, capped at 5% max from entry
+  const stopLossPercent = Math.min(2.5 * atr / price, 0.05);
+  const takeProfitPercent = Math.min(stopLossPercent * strategy.riskRewardRatio, 0.10);
 
   const stopLoss = direction === 'long'
     ? price * (1 - stopLossPercent)
@@ -745,9 +745,9 @@ function makeScalpHunterDecision(
   }
 
   const leverage = Math.min(strategy.maxLeverage, Math.max(1, Math.round(score * 2)));
-  // Narrow stop: 0.8× ATR for scalping
-  const stopLossPercent = 0.8 * atr / price;
-  const takeProfitPercent = stopLossPercent * strategy.riskRewardRatio;
+  // Narrow stop: 0.8× ATR for scalping, capped at 3% max
+  const stopLossPercent = Math.min(0.8 * atr / price, 0.03);
+  const takeProfitPercent = Math.min(stopLossPercent * strategy.riskRewardRatio, 0.06);
 
   const stopLoss = direction === 'long'
     ? price * (1 - stopLossPercent)
@@ -940,9 +940,9 @@ function makePositionAlphaDecision(
   const leverage = Math.min(strategy.maxLeverage, Math.max(1, Math.round(score * 1.2)));
 
   // Wide stop: 4× ATR — give position room to breathe for days
-  // Cap SL at 5% max from entry to prevent absurdly wide stops
+  // Cap SL at 5% max, TP at 15% max from entry
   const stopLossPercent = Math.min(4 * atr / price, 0.05);
-  const takeProfitPercent = stopLossPercent * strategy.riskRewardRatio;
+  const takeProfitPercent = Math.min(stopLossPercent * strategy.riskRewardRatio, 0.15);
 
   const stopLoss = direction === 'long'
     ? price * (1 - stopLossPercent)

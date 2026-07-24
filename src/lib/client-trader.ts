@@ -151,6 +151,7 @@ function calcEMA50(data: number[], period: number): number {
 export interface MonitorResult {
   closedTrades: Array<{ tradeId: string; symbol: string; direction: string; pnl: number; reason: string; exitPrice: number }>;
   trailingUpdates: Array<{ tradeId: string; newStopLoss: number; reason: string }>;
+  tpRepairs: Array<{ tradeId: string; newTakeProfit: number; reason: string }>;
 }
 
 async function fetchLastCandleClose(symbol: string, interval: string = '1h'): Promise<number> {
@@ -178,10 +179,11 @@ export async function monitorTradesClient(
 ): Promise<MonitorResult> {
   const closedTrades: MonitorResult['closedTrades'] = [];
   const trailingUpdates: MonitorResult['trailingUpdates'] = [];
+  const tpRepairs: MonitorResult['tpRepairs'] = [];
   const currentSlot = getCurrentCandleSlot(monitorInterval);
 
   if (currentSlot <= lastCandleSlot) {
-    return { closedTrades: [], trailingUpdates: [] };
+    return { closedTrades: [], trailingUpdates: [], tpRepairs: [] };
   }
 
   for (const trade of openTrades) {
@@ -189,6 +191,42 @@ export async function monitorTradesClient(
       const candleClose = await fetchLastCandleClose(trade.symbol, monitorInterval);
       let shouldClose = false;
       let reason = '';
+
+      // ── AUTO-REPAIR: Fix inverted or excessive SL/TP ──
+      let repairedTP = false;
+      let repairedSL = false;
+      if (trade.stop_loss && trade.take_profit && trade.entry_price) {
+        const isLong = trade.direction === 'long';
+        const slBad = isLong ? trade.stop_loss >= trade.entry_price : trade.stop_loss <= trade.entry_price;
+        const tpBad = isLong ? trade.take_profit <= trade.entry_price : trade.take_profit >= trade.entry_price;
+        if (slBad || tpBad) {
+          console.warn(`[monitorClient] Auto-repairing inverted SL/TP for ${trade.id}`);
+          if (slBad) {
+            const fixedSL = isLong ? trade.entry_price * 0.98 : trade.entry_price * 1.02;
+            trailingUpdates.push({ tradeId: trade.id, newStopLoss: fixedSL, reason: 'Auto-repair: inverted SL' });
+            repairedSL = true;
+          }
+          if (tpBad) {
+            const fixedTP = isLong ? trade.entry_price * 1.05 : trade.entry_price * 0.95;
+            tpRepairs.push({ tradeId: trade.id, newTakeProfit: fixedTP, reason: 'Auto-repair: inverted TP' });
+          }
+        }
+        // Cap excessive distances
+        if (!repairedSL && trade.stop_loss) {
+          const slDist = Math.abs(trade.stop_loss - trade.entry_price) / trade.entry_price;
+          if (slDist > 0.05) {
+            const cappedSL = isLong ? trade.entry_price * 0.95 : trade.entry_price * 1.05;
+            trailingUpdates.push({ tradeId: trade.id, newStopLoss: cappedSL, reason: 'Auto-repair: excessive SL capped' });
+          }
+        }
+        if (!repairedTP && trade.take_profit) {
+          const tpDist = Math.abs(trade.take_profit - trade.entry_price) / trade.entry_price;
+          if (tpDist > 0.10) {
+            const cappedTP = isLong ? trade.entry_price * 1.10 : trade.entry_price * 0.90;
+            tpRepairs.push({ tradeId: trade.id, newTakeProfit: cappedTP, reason: 'Auto-repair: excessive TP capped' });
+          }
+        }
+      }
 
       // TIME-BASED EXIT: close losing trades after maxHoldMinutes
       const openMs = Date.now() - new Date(trade.opened_at).getTime();
@@ -252,7 +290,7 @@ export async function monitorTradesClient(
     } catch { continue; }
   }
 
-  return { closedTrades, trailingUpdates };
+  return { closedTrades, trailingUpdates, tpRepairs };
 }
 
 // ============================================================
@@ -276,6 +314,7 @@ export async function runAutoTradeCycle(
     action: 'monitor' | 'new-trade' | 'idle';
     closedTrades: MonitorResult['closedTrades'];
     trailingUpdates: MonitorResult['trailingUpdates'];
+    tpRepairs: MonitorResult['tpRepairs'];
     newTrades?: NewTradeInfo[];
     message: string;
     scannedCount: number;
@@ -297,37 +336,38 @@ export async function runAutoTradeCycle(
   const dailyLossLimit = balance * 0.05;
   if (recentPnl24h < -dailyLossLimit) {
     return {
-      action: 'idle', closedTrades: [], trailingUpdates: [],
+      action: 'idle', closedTrades: [], trailingUpdates: [], tpRepairs: [],
       message: `Дневной лимит: -$${Math.abs(recentPnl24h).toFixed(2)} (>5%). Пауза до завтра.`,
       scannedCount: 0, bestScore: 0, newCandleHour: currentSlot,
     };
   }
 
   // Step 1: Monitor open trades
-  const { closedTrades, trailingUpdates } = await monitorTradesClient(openTrades, lastCandleSlot, monitorInterval, maxHoldMinutes);
+  const { closedTrades, trailingUpdates, tpRepairs } = await monitorTradesClient(openTrades, lastCandleSlot, monitorInterval, maxHoldMinutes);
   const updatedOpenTrades = openTrades.filter(t => !closedTrades.some(c => c.tradeId === t.id));
 
-  if (closedTrades.length > 0 || trailingUpdates.length > 0) {
+  if (closedTrades.length > 0 || trailingUpdates.length > 0 || tpRepairs.length > 0) {
     const parts: string[] = [];
     if (closedTrades.length > 0) parts.push(`Закрыто ${closedTrades.length}: ${closedTrades.map(c => `${c.symbol.replace('USDT', '')} (${c.reason})`).join(', ')}`);
     if (trailingUpdates.length > 0) parts.push(`Trailing SL: ${trailingUpdates.length}`);
-    return { action: 'monitor', closedTrades, trailingUpdates, message: parts.join(' | '), scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
+    if (tpRepairs.length > 0) parts.push(`TP ремонт: ${tpRepairs.length}`);
+    return { action: 'monitor', closedTrades, trailingUpdates, tpRepairs, message: parts.join(' | '), scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
   }
 
   // Each signal opens 2 trades (secure + runner), need room for the pair
   if (updatedOpenTrades.length + 2 > maxTrades) {
-    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: `Лимит: ${updatedOpenTrades.length}/${maxTrades}, жду...`, scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
+    return { action: 'idle', closedTrades: [], trailingUpdates: [], tpRepairs: [], message: `Лимит: ${updatedOpenTrades.length}/${maxTrades}, жду...`, scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
   }
 
   if (balance < 1) {
-    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: 'Баланс исчерпан (<$1)', scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
+    return { action: 'idle', closedTrades: [], trailingUpdates: [], tpRepairs: [], message: 'Баланс исчерпан (<$1)', scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
   }
 
   const openSymbols = new Set(updatedOpenTrades.map(t => t.symbol));
 
   const best = await findBestSignal(openSymbols, strategyId, strategyInterval, strategyLimit);
   if (!best || best.decision.direction === 'none') {
-    return { action: 'idle', closedTrades: [], trailingUpdates: [], message: 'Сигналов не найдено, сканирую...', scannedCount: 20, bestScore: 0, newCandleHour: currentSlot };
+    return { action: 'idle', closedTrades: [], trailingUpdates: [], tpRepairs: [], message: 'Сигналов не найдено, сканирую...', scannedCount: 20, bestScore: 0, newCandleHour: currentSlot };
   }
 
   // ============================================================
@@ -372,7 +412,7 @@ export async function runAutoTradeCycle(
 
   const coinName = best.symbol.replace('USDT', '');
   return {
-    action: 'new-trade', closedTrades: [], trailingUpdates: [], newTrades,
+    action: 'new-trade', closedTrades: [], trailingUpdates: [], tpRepairs: [], newTrades,
     message: `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${coinName} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x${newTrades.length > 1 ? ' | Secure 1.5R + Runner' : ' |'} ${strategy?.riskRewardRatio ?? 3}R`,
     scannedCount: 20, bestScore: Math.abs(best.decision.score), newCandleHour: currentSlot,
   };

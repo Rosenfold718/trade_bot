@@ -156,6 +156,54 @@ export async function POST(request: NextRequest) {
 
       for (const trade of openTrades) {
         try {
+          // ── AUTO-REPAIR: Fix inverted SL/TP for existing trades ──
+          let needsRepair = false;
+          if (trade.stop_loss && trade.take_profit && trade.entry_price) {
+            const isLong = trade.direction === 'long';
+            const slBad = isLong ? trade.stop_loss >= trade.entry_price : trade.stop_loss <= trade.entry_price;
+            const tpBad = isLong ? trade.take_profit <= trade.entry_price : trade.take_profit >= trade.entry_price;
+            if (slBad || tpBad) {
+              console.warn(`[monitor-trades] Auto-repairing inverted SL/TP for ${trade.id}: dir=${trade.direction} entry=${trade.entry_price} SL=${trade.stop_loss} TP=${trade.take_profit}`);
+              if (slBad) {
+                const fixedSL = isLong ? Math.round(trade.entry_price * 0.98 * 1e8) / 1e8 : Math.round(trade.entry_price * 1.02 * 1e8) / 1e8;
+                await updateStopLoss(trade.id, fixedSL);
+                trade.stop_loss = fixedSL;
+              }
+              if (tpBad) {
+                const fixedTP = isLong ? Math.round(trade.entry_price * 1.05 * 1e8) / 1e8 : Math.round(trade.entry_price * 0.95 * 1e8) / 1e8;
+                await updateTakeProfit(trade.id, fixedTP);
+                trade.take_profit = fixedTP;
+              }
+              needsRepair = true;
+            }
+            // Also cap excessive distances (>10%)
+            if (trade.take_profit) {
+              const tpDist = Math.abs(trade.take_profit - trade.entry_price) / trade.entry_price;
+              if (tpDist > 0.10) {
+                const cappedTP = isLong
+                  ? Math.round((trade.entry_price * 1.10) * 1e8) / 1e8
+                  : Math.round((trade.entry_price * 0.90) * 1e8) / 1e8;
+                console.warn(`[monitor-trades] Capping excessive TP for ${trade.id}: ${trade.take_profit} -> ${cappedTP}`);
+                await updateTakeProfit(trade.id, cappedTP);
+                trade.take_profit = cappedTP;
+                needsRepair = true;
+              }
+            }
+            if (trade.stop_loss) {
+              const slDist = Math.abs(trade.stop_loss - trade.entry_price) / trade.entry_price;
+              if (slDist > 0.05) {
+                const cappedSL = isLong
+                  ? Math.round((trade.entry_price * 0.95) * 1e8) / 1e8
+                  : Math.round((trade.entry_price * 1.05) * 1e8) / 1e8;
+                console.warn(`[monitor-trades] Capping excessive SL for ${trade.id}: ${trade.stop_loss} -> ${cappedSL}`);
+                await updateStopLoss(trade.id, cappedSL);
+                trade.stop_loss = cappedSL;
+                needsRepair = true;
+              }
+            }
+          }
+          if (needsRepair) continue; // skip TP/SL check this cycle, repaired next cycle
+
           // Use strategy-specific monitor interval for candle close
           const klineUrl = `https://api.binance.com/api/v3/klines?symbol=${trade.symbol}&interval=${monitorInterval}&limit=2`;
           const klineRes = await fetch(klineUrl);

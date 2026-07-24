@@ -279,6 +279,7 @@ export default function TradingTerminal() {
             message: string;
             closedTrades: Array<{ tradeId: string; symbol: string; direction: string; pnl: number; reason: string; exitPrice: number }>;
             trailingUpdates: Array<{ tradeId: string; newStopLoss: number; reason: string }>;
+            tpRepairs: Array<{ tradeId: string; newTakeProfit: number; reason: string }>;
             newTrades?: Array<{ symbol: string; direction: string; price: number; leverage: number; stopLoss: number; takeProfit: number; amount: number; strategyId: string; label: string }>;
           };
 
@@ -309,6 +310,18 @@ export default function TradingTerminal() {
                 body: JSON.stringify({ action: 'update-sl', tradeId: tu.tradeId, newStopLoss: tu.newStopLoss, strategyId }),
               });
               addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Trailing SL: ${tu.reason}`, 'info');
+            } catch { /* silent */ }
+          }
+
+          // Apply TP repairs
+          for (const tpr of r.tpRepairs ?? []) {
+            try {
+              await fetch('/api/trader', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'update-tp', tradeId: tpr.tradeId, newTakeProfit: tpr.newTakeProfit, strategyId }),
+              });
+              addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] TP ремонт: ${tpr.reason}`, 'warn');
             } catch { /* silent */ }
           }
 
