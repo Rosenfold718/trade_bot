@@ -115,6 +115,16 @@ interface ReportData {
 }
 
 // ============================================================
+// Helpers
+// ============================================================
+
+function calcOpenPnl(trade: OpenTradeDetail): number {
+  return trade.direction === 'long'
+    ? (trade.currentPrice - trade.entry_price) / trade.entry_price * trade.amount * trade.leverage
+    : (trade.entry_price - trade.currentPrice) / trade.entry_price * trade.amount * trade.leverage;
+}
+
+// ============================================================
 // Main Component
 // ============================================================
 
@@ -176,7 +186,6 @@ export default function MomentumReport({ onClose }: { onClose: () => void }) {
   const { strategy, accountState, performance, symbolPerformance, balanceHistory, openTrades, closedTrades, potentialAssessment } = data;
   const p = performance;
 
-  // Sort symbols by PnL
   const topSymbols = Object.entries(symbolPerformance)
     .sort(([, a], [, b]) => b.pnl - a.pnl);
 
@@ -228,7 +237,7 @@ export default function MomentumReport({ onClose }: { onClose: () => void }) {
           {/* ====================== OVERVIEW TAB ====================== */}
           {activeTab === 'overview' && (
             <>
-              {/* Account State + Key Metrics Row */}
+              {/* Key Metrics Row */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                 <MetricCard
                   label="БАЛАНС"
@@ -277,7 +286,6 @@ export default function MomentumReport({ onClose }: { onClose: () => void }) {
 
                   <Separator className="bg-white/[0.04]" />
 
-                  {/* Direction breakdown */}
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
@@ -389,18 +397,15 @@ export default function MomentumReport({ onClose }: { onClose: () => void }) {
                   </CardHeader>
                   <CardContent className="space-y-3">
                     {openTrades.map(trade => {
-                      const isLong = trade.direction === 'long';
-                      const pnl = isLong
-                        ? (trade.currentPrice - trade.entry_price) / trade.entry_price * trade.amount * trade.leverage
-                        : (trade.entry_price - trade.currentPrice) / trade.entry_price * trade.amount * trade.leverage;
+                      const pnl = calcOpenPnl(trade);
                       return (
                         <div key={trade.id} className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.04] hover:border-white/[0.08] transition-colors">
                           <div className="flex items-center justify-between mb-2">
                             <div className="flex items-center gap-2">
                               <Badge variant="outline" className={cn('text-[9px] font-mono font-bold px-1.5 py-0.5',
-                                isLong ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/5' : 'border-red-500/30 text-red-400 bg-red-500/5'
+                                trade.direction === 'long' ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/5' : 'border-red-500/30 text-red-400 bg-red-500/5'
                               )}>
-                                {isLong ? '▲ LONG' : '▼ SHORT'}
+                                {trade.direction === 'long' ? '▲ LONG' : '▼ SHORT'}
                               </Badge>
                               <span className="text-sm font-semibold text-white/90">{trade.symbol.replace('USDT', '')}</span>
                               <span className="text-[10px] text-white/30 font-mono">{trade.leverage}x</span>
@@ -422,7 +427,6 @@ export default function MomentumReport({ onClose }: { onClose: () => void }) {
           {/* ====================== TRADES TAB ====================== */}
           {activeTab === 'trades' && (
             <>
-              {/* Open Trades */}
               {openTrades.length > 0 && (
                 <Card className="bg-[#0d0d14] border-white/[0.06]">
                   <CardHeader className="pb-3">
@@ -430,10 +434,9 @@ export default function MomentumReport({ onClose }: { onClose: () => void }) {
                   </CardHeader>
                   <CardContent className="space-y-3">
                     {openTrades.map(trade => (
-                      <TradeCard
+                      <OpenTradeCard
                         key={trade.id}
                         trade={trade}
-                        isOpen
                         expanded={expandedTrade === trade.id}
                         onToggle={() => setExpandedTrade(expandedTrade === trade.id ? null : trade.id)}
                       />
@@ -442,7 +445,6 @@ export default function MomentumReport({ onClose }: { onClose: () => void }) {
                 </Card>
               )}
 
-              {/* Closed Trades */}
               <Card className="bg-[#0d0d14] border-white/[0.06]">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-xs font-semibold text-white/60 tracking-widest">ИСТОРИЯ СДЕЛОК ({closedTrades.length})</CardTitle>
@@ -454,10 +456,9 @@ export default function MomentumReport({ onClose }: { onClose: () => void }) {
                     </div>
                   ) : (
                     closedTrades.map(trade => (
-                      <TradeCard
+                      <ClosedTradeCard
                         key={trade.id}
                         trade={trade}
-                        isOpen={false}
                         expanded={expandedTrade === trade.id}
                         onToggle={() => setExpandedTrade(expandedTrade === trade.id ? null : trade.id)}
                       />
@@ -471,7 +472,6 @@ export default function MomentumReport({ onClose }: { onClose: () => void }) {
           {/* ====================== STRATEGY TAB ====================== */}
           {activeTab === 'strategy' && (
             <>
-              {/* Philosophy */}
               <Card className="bg-[#0d0d14] border-white/[0.06]">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-xs font-semibold text-white/60 tracking-widest">ФИЛОСОФИЯ СТРАТЕГИИ</CardTitle>
@@ -481,7 +481,6 @@ export default function MomentumReport({ onClose }: { onClose: () => void }) {
                 </CardContent>
               </Card>
 
-              {/* Entry Rules */}
               <Card className="bg-[#0d0d14] border-white/[0.06]">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-xs font-semibold text-emerald-400 tracking-widest flex items-center gap-2">
@@ -501,7 +500,6 @@ export default function MomentumReport({ onClose }: { onClose: () => void }) {
                 </CardContent>
               </Card>
 
-              {/* Exit Rules */}
               <Card className="bg-[#0d0d14] border-white/[0.06]">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-xs font-semibold text-red-400 tracking-widest flex items-center gap-2">
@@ -521,7 +519,6 @@ export default function MomentumReport({ onClose }: { onClose: () => void }) {
                 </CardContent>
               </Card>
 
-              {/* Risk Management */}
               <Card className="bg-[#0d0d14] border-white/[0.06]">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-xs font-semibold text-amber-400 tracking-widest flex items-center gap-2">
@@ -541,7 +538,6 @@ export default function MomentumReport({ onClose }: { onClose: () => void }) {
                 </CardContent>
               </Card>
 
-              {/* Indicator Weights */}
               <Card className="bg-[#0d0d14] border-white/[0.06]">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-xs font-semibold text-white/60 tracking-widest flex items-center gap-2">
@@ -583,7 +579,7 @@ function MetricCard({ label, value, subtext, icon, accent }: {
   return (
     <div className="p-4 rounded-xl bg-[#0d0d14] border border-white/[0.06]">
       <div className="flex items-center gap-2 mb-2">
-        <div className={cn('text-white/30', accent.replace('text-', 'text-'))}>{icon}</div>
+        <div className={accent}>{icon}</div>
         <span className="text-[10px] text-white/30 tracking-widest font-medium">{label}</span>
       </div>
       <div className={cn('text-xl font-bold font-mono tracking-tight', accent)}>{value}</div>
@@ -618,8 +614,6 @@ function EquityCurve({ data }: { data: BalancePoint[] }) {
   });
 
   const pathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
-
-  // Fill area
   const fillD = `${pathD} L ${points[points.length - 1].x.toFixed(1)} ${height - padding} L ${padding} ${height - padding} Z`;
 
   const isProfit = data[data.length - 1].balance >= data[0].balance;
@@ -629,7 +623,6 @@ function EquityCurve({ data }: { data: BalancePoint[] }) {
   return (
     <div className="overflow-x-auto">
       <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto min-w-[400px]" preserveAspectRatio="none">
-        {/* Grid lines */}
         {[0.25, 0.5, 0.75].map(pct => {
           const y = height - padding - pct * (height - 2 * padding);
           const val = minBal + pct * range;
@@ -642,46 +635,34 @@ function EquityCurve({ data }: { data: BalancePoint[] }) {
             </g>
           );
         })}
-        {/* Area fill */}
         <path d={fillD} fill={fillColor} />
-        {/* Line */}
         <path d={pathD} fill="none" stroke={strokeColor} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        {/* End point */}
         {points.length > 0 && (
-          <circle
-            cx={points[points.length - 1].x}
-            cy={points[points.length - 1].y}
-            r="3"
-            fill={strokeColor}
-          />
+          <circle cx={points[points.length - 1].x} cy={points[points.length - 1].y} r="3" fill={strokeColor} />
         )}
-        {/* Start point */}
         <circle cx={points[0].x} cy={points[0].y} r="2.5" fill="rgba(255,255,255,0.3)" />
       </svg>
     </div>
   );
 }
 
-function TradeCard({ trade, isOpen, expanded, onToggle }: {
-  trade: OpenTradeDetail | ClosedTradeDetail;
-  isOpen: boolean;
+// ============================================================
+// Open Trade Card (separate component to avoid IIFE in JSX)
+// ============================================================
+
+function OpenTradeCard({ trade, expanded, onToggle }: {
+  trade: OpenTradeDetail;
   expanded: boolean;
   onToggle: () => void;
 }) {
   const isLong = trade.direction === 'long';
-  const isClosed = !isOpen && trade.status === 'closed';
-  const pnl = trade.pnl ?? 0;
-  const pnlPct = trade.amount > 0 ? (pnl / trade.amount * 100) : 0;
-
+  const pnl = calcOpenPnl(trade);
   const entryTime = new Date(trade.opened_at).toLocaleString('ru-RU', {
     month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
   });
 
   return (
-    <div className={cn(
-      'rounded-xl border transition-all duration-200',
-      'bg-white/[0.015] border-white/[0.04] hover:border-white/[0.08]',
-    )}>
+    <div className="rounded-xl border bg-white/[0.015] border-white/[0.04] hover:border-white/[0.08] transition-all duration-200">
       <button onClick={onToggle} className="w-full p-3 text-left">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -692,33 +673,12 @@ function TradeCard({ trade, isOpen, expanded, onToggle }: {
             </Badge>
             <span className="text-sm font-semibold text-white/90">{trade.symbol.replace('USDT', '')}</span>
             <span className="text-[10px] text-white/25 font-mono">{trade.leverage}x</span>
-            {isClosed && (
-              pnl >= 0
-                ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400/60" />
-                : <XCircle className="w-3.5 h-3.5 text-red-400/60" />
-            )}
           </div>
           <div className="flex items-center gap-3">
             <div className="text-right">
-              {isClosed ? (
-                <span className={cn('text-sm font-mono font-bold', pnl >= 0 ? 'text-emerald-400' : 'text-red-400')}>
-                  {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}$
-                </span>
-              ) : ('currentPrice' in trade) ? (
-                <span className={cn('text-sm font-mono font-bold', (() => {
-                  const p = isLong
-                    ? (trade.currentPrice - trade.entry_price) / trade.entry_price * trade.amount * trade.leverage
-                    : (trade.entry_price - trade.currentPrice) / trade.entry_price * trade.amount * trade.leverage;
-                  return p >= 0 ? 'text-emerald-400' : 'text-red-400';
-                })()}>
-                  {(() => {
-                    const p = isLong
-                      ? (trade.currentPrice - trade.entry_price) / trade.entry_price * trade.amount * trade.leverage
-                      : (trade.entry_price - trade.currentPrice) / trade.entry_price * trade.amount * trade.leverage;
-                    return `${p >= 0 ? '+' : ''}${p.toFixed(2)}$`;
-                  })()}
-                </span>
-              ) : null}
+              <span className={cn('text-sm font-mono font-bold', pnl >= 0 ? 'text-emerald-400' : 'text-red-400')}>
+                {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}$
+              </span>
               <div className="text-[10px] text-white/25 font-mono">${trade.entry_price.toFixed(4)}</div>
             </div>
             {expanded ? <ChevronUp className="w-4 h-4 text-white/20" /> : <ChevronDown className="w-4 h-4 text-white/20" />}
@@ -728,30 +688,16 @@ function TradeCard({ trade, isOpen, expanded, onToggle }: {
 
       {expanded && (
         <div className="px-3 pb-3 space-y-3 border-t border-white/[0.04] pt-3">
-          {/* Trade details grid */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <DetailItem label="Вход" value={`$${trade.entry_price.toFixed(4)}`} />
-            {isClosed && trade.exit_price && (
-              <DetailItem label="Выход" value={`$${trade.exit_price.toFixed(4)}`} />
-            )}
-            {('currentPrice' in trade) && (
-              <DetailItem label="Текущая" value={`$${trade.currentPrice.toFixed(4)}`} />
-            )}
+            <DetailItem label="Текущая" value={`$${trade.currentPrice.toFixed(4)}`} />
             <DetailItem label="Объём" value={`$${trade.amount.toFixed(2)}`} />
             <DetailItem label="Плечо" value={`${trade.leverage}x → $${(trade.amount * trade.leverage).toFixed(2)}`} />
             {trade.stop_loss && <DetailItem label="Стоп-лосс" value={`$${trade.stop_loss.toFixed(4)}`} />}
             {trade.take_profit && <DetailItem label="Тейк-профит" value={`$${trade.take_profit.toFixed(4)}`} />}
-            {isClosed && (
-              <DetailItem label="PnL %" value={`${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%`} />
-            )}
-            <DetailItem
-              label="Время входа"
-              value={entryTime}
-              icon={<Clock className="w-3 h-3" />}
-            />
+            <DetailItem label="Время входа" value={entryTime} icon={<Clock className="w-3 h-3" />} />
           </div>
 
-          {/* Decision Narrative */}
           <div className="p-3 rounded-lg bg-amber-500/[0.03] border border-amber-500/[0.08]">
             <div className="flex items-center gap-1.5 mb-1.5">
               <Target className="w-3 h-3 text-amber-400/60" />
@@ -760,43 +706,109 @@ function TradeCard({ trade, isOpen, expanded, onToggle }: {
             <p className="text-[11px] text-white/50 leading-relaxed">{trade.decisionNarrative}</p>
           </div>
 
-          {/* Close Narrative (closed trades only) */}
-          {isClosed && 'closeNarrative' in trade && trade.closeNarrative && (
-            <div className={cn('p-3 rounded-lg border',
-              pnl >= 0
-                ? 'bg-emerald-500/[0.03] border-emerald-500/[0.08]'
-                : 'bg-red-500/[0.03] border-red-500/[0.08]'
-            )}>
-              <div className="flex items-center gap-1.5 mb-1.5">
-                {pnl >= 0
-                  ? <CheckCircle2 className="w-3 h-3 text-emerald-400/60" />
-                  : <XCircle className="w-3 h-3 text-red-400/60" />
-                }
-                <span className={cn('text-[10px] font-medium tracking-wider',
-                  pnl >= 0 ? 'text-emerald-400/60' : 'text-red-400/60'
-                )}>
-                  РЕЗУЛЬТАТ И ПРИЧИНА ЗАКРЫТИЯ
-                </span>
-              </div>
-              <p className="text-[11px] text-white/50 leading-relaxed">{trade.closeNarrative}</p>
+          <div className="p-3 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <Zap className="w-3 h-3 text-amber-400/60" />
+              <span className="text-[10px] text-amber-400/60 font-medium tracking-wider">ПОТЕНЦИАЛ ПОЗИЦИИ</span>
             </div>
-          )}
-
-          {/* Potential (open trades only) */}
-          {isOpen && 'potential' in trade && trade.potential && (
-            <div className="p-3 rounded-lg bg-white/[0.02] border border-white/[0.04]">
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <Zap className="w-3 h-3 text-amber-400/60" />
-                <span className="text-[10px] text-amber-400/60 font-medium tracking-wider">ПОТЕНЦИАЛ ПОЗИЦИИ</span>
-              </div>
-              <p className="text-[11px] text-white/50 leading-relaxed">{trade.potential}</p>
-            </div>
-          )}
+            <p className="text-[11px] text-white/50 leading-relaxed">{trade.potential}</p>
+          </div>
         </div>
       )}
     </div>
   );
 }
+
+// ============================================================
+// Closed Trade Card
+// ============================================================
+
+function ClosedTradeCard({ trade, expanded, onToggle }: {
+  trade: ClosedTradeDetail;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const isLong = trade.direction === 'long';
+  const pnl = trade.pnl ?? 0;
+  const pnlPct = trade.amount > 0 ? (pnl / trade.amount * 100) : 0;
+
+  const entryTime = new Date(trade.opened_at).toLocaleString('ru-RU', {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+
+  return (
+    <div className="rounded-xl border bg-white/[0.015] border-white/[0.04] hover:border-white/[0.08] transition-all duration-200">
+      <button onClick={onToggle} className="w-full p-3 text-left">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <Badge variant="outline" className={cn('text-[9px] font-mono font-bold px-1.5 py-0.5 shrink-0',
+              isLong ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/5' : 'border-red-500/30 text-red-400 bg-red-500/5'
+            )}>
+              {isLong ? '▲ LONG' : '▼ SHORT'}
+            </Badge>
+            <span className="text-sm font-semibold text-white/90">{trade.symbol.replace('USDT', '')}</span>
+            <span className="text-[10px] text-white/25 font-mono">{trade.leverage}x</span>
+            {pnl >= 0
+              ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400/60" />
+              : <XCircle className="w-3.5 h-3.5 text-red-400/60" />}
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="text-right">
+              <span className={cn('text-sm font-mono font-bold', pnl >= 0 ? 'text-emerald-400' : 'text-red-400')}>
+                {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}$
+              </span>
+              <div className="text-[10px] text-white/25 font-mono">${trade.entry_price.toFixed(4)}</div>
+            </div>
+            {expanded ? <ChevronUp className="w-4 h-4 text-white/20" /> : <ChevronDown className="w-4 h-4 text-white/20" />}
+          </div>
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="px-3 pb-3 space-y-3 border-t border-white/[0.04] pt-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <DetailItem label="Вход" value={`$${trade.entry_price.toFixed(4)}`} />
+            {trade.exit_price && <DetailItem label="Выход" value={`$${trade.exit_price.toFixed(4)}`} />}
+            <DetailItem label="Объём" value={`$${trade.amount.toFixed(2)}`} />
+            <DetailItem label="Плечо" value={`${trade.leverage}x → $${(trade.amount * trade.leverage).toFixed(2)}`} />
+            {trade.stop_loss && <DetailItem label="Стоп-лосс" value={`$${trade.stop_loss.toFixed(4)}`} />}
+            {trade.take_profit && <DetailItem label="Тейк-профит" value={`$${trade.take_profit.toFixed(4)}`} />}
+            <DetailItem label="PnL %" value={`${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%`} />
+            <DetailItem label="Время входа" value={entryTime} icon={<Clock className="w-3 h-3" />} />
+          </div>
+
+          <div className="p-3 rounded-lg bg-amber-500/[0.03] border border-amber-500/[0.08]">
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <Target className="w-3 h-3 text-amber-400/60" />
+              <span className="text-[10px] text-amber-400/60 font-medium tracking-wider">ЛОГИКА ОТКРЫТИЯ</span>
+            </div>
+            <p className="text-[11px] text-white/50 leading-relaxed">{trade.decisionNarrative}</p>
+          </div>
+
+          <div className={cn('p-3 rounded-lg border',
+            pnl >= 0 ? 'bg-emerald-500/[0.03] border-emerald-500/[0.08]' : 'bg-red-500/[0.03] border-red-500/[0.08]'
+          )}>
+            <div className="flex items-center gap-1.5 mb-1.5">
+              {pnl >= 0
+                ? <CheckCircle2 className="w-3 h-3 text-emerald-400/60" />
+                : <XCircle className="w-3 h-3 text-red-400/60" />}
+              <span className={cn('text-[10px] font-medium tracking-wider',
+                pnl >= 0 ? 'text-emerald-400/60' : 'text-red-400/60'
+              )}>
+                РЕЗУЛЬТАТ И ПРИЧИНА ЗАКРЫТИЯ
+              </span>
+            </div>
+            <p className="text-[11px] text-white/50 leading-relaxed">{trade.closeNarrative}</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// Detail Item
+// ============================================================
 
 function DetailItem({ label, value, icon }: { label: string; value: string; icon?: React.ReactNode }) {
   return (
