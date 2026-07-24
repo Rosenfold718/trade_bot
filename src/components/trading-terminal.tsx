@@ -455,7 +455,7 @@ export default function TradingTerminal() {
         })}
       </div>
 
-      {/* Main Content */
+      {/* Main Content */}
       <div className="xl:flex-1 xl:flex xl:flex-col xl:min-h-0 xl:overflow-hidden">
         {/* Row: Coin List (sidebar) + Center + Right Panel */}
         <div className="xl:flex-1 xl:flex xl:min-h-0 xl:overflow-hidden">
