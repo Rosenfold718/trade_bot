@@ -128,7 +128,7 @@ function calcOpenPnl(trade: OpenTradeDetail): number {
 // Main Component
 // ============================================================
 
-export default function MomentumReport({ onClose }: { onClose: () => void }) {
+export default function MomentumReport({ onClose, strategyId = 'momentum' }: { onClose: () => void; strategyId?: string }) {
   const [data, setData] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -139,7 +139,7 @@ export default function MomentumReport({ onClose }: { onClose: () => void }) {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch('/api/strategy-report');
+      const res = await fetch(`/api/strategy-report?strategyId=${strategyId}`);
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.error || 'Failed to load report');

@@ -12,7 +12,8 @@ export const metadata: Metadata = {
   title: "Trade Terminal — Авторизация",
   description: "Мультистратегический торговый терминал",
   icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+    icon: "/favicon.svg",
+    apple: "/favicon.svg",
   },
 };
 

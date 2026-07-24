@@ -60,32 +60,17 @@ export default function ControlPanel() {
   const handleReset = async () => {
     setIsLoading(true);
     try {
-      // Reset all strategies
-      await Promise.all(STRATEGIES.map(async (s) => {
-        await fetch('/api/reset', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ strategyId: s.id }),
-        });
-      }));
+      // Reset only the active strategy
+      await fetch('/api/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ strategyId: activeStrategy }),
+      });
       // Reset the active strategy's local state
       setTraderState({ id: activeStrategy, strategy_id: activeStrategy, balance: 100, borrowed_funds: 0, debt_to_repay: 0, is_active: true });
       setOpenTrades([]);
       setRecentTrades([]);
       setBacktestResults([]);
-      setAutoTrading(false);
-      setWeights([
-        { id: 'rsi', indicator_name: 'RSI', weight: 1, calculated_winrate: null },
-        { id: 'macd', indicator_name: 'MACD', weight: 1, calculated_winrate: null },
-        { id: 'ema50', indicator_name: 'EMA_50', weight: 1, calculated_winrate: null },
-        { id: 'ema200', indicator_name: 'EMA_200', weight: 1, calculated_winrate: null },
-        { id: 'bollinger', indicator_name: 'Bollinger', weight: 1, calculated_winrate: null },
-        { id: 'volume', indicator_name: 'Volume', weight: 1, calculated_winrate: null },
-        { id: 'stochrsi', indicator_name: 'StochRSI', weight: 1, calculated_winrate: null },
-        { id: 'adx', indicator_name: 'ADX', weight: 1, calculated_winrate: null },
-        { id: 'obv', indicator_name: 'OBV', weight: 1, calculated_winrate: null },
-        { id: 'vwap', indicator_name: 'VWAP', weight: 1, calculated_winrate: null },
-      ]);
     } catch (err) {
       console.error('Reset error:', err);
     } finally {
@@ -191,12 +176,12 @@ export default function ControlPanel() {
             )}
           >
             <Power className={cn('h-3.5 w-3.5 mr-2', autoTrading ? 'animate-pulse' : '')} />
-            {autoTrading ? `● 3 СТРАТЕГИИ АКТИВНЫ` : 'Включить авто-трейдинг'}
+            {autoTrading ? '● LIVE' : 'Включить авто-трейдинг'}
           </Button>
           {autoTrading && (
             <div className="flex items-center justify-between">
               <p className="text-[10px] text-green-400/60 font-mono animate-pulse">
-                Сканирует 3 стратегии каждые 30 сек...
+                3 стратегии активны...
               </p>
             </div>
           )}
@@ -286,14 +271,14 @@ export default function ControlPanel() {
                 className="w-full h-8 text-xs rounded-md border-red-500/30 text-red-400/70 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/50"
               >
                 <RotateCcw className="h-3 w-3 mr-1.5" />
-                Перезапуск
+                Перезапуск {strategy?.name ?? ''}
               </Button>
             </AlertDialogTrigger>
             <AlertDialogContent className="bg-[#1a1a2e] border-white/10">
               <AlertDialogHeader>
-                <AlertDialogTitle className="text-white">Перезапустить все стратегии?</AlertDialogTitle>
+                <AlertDialogTitle className="text-white">Перезапустить {strategy?.name ?? ''}?</AlertDialogTitle>
                 <AlertDialogDescription className="text-white/60">
-                  Все данные 3 стратегий будут сброшены. Баланс: $100 каждая, кредит: $0, все сделки очищены.
+                  Баланс: $100, кредит: $0, все сделки очищены. Остальные стратегии не затронуты.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>

@@ -136,7 +136,7 @@ export async function GET(request: NextRequest) {
     if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     await initDB();
-    const strategyId = 'momentum'; // Импульс Pro
+    const strategyId = request.nextUrl.searchParams.get('strategyId') || 'momentum';
 
     // Get all trades (not just recent 20) — use large limit
     const [state, openTrades, allTrades, weights] = await Promise.all([

@@ -100,6 +100,7 @@ export default function TradingTerminal() {
   const [focusedTradeId, setFocusedTradeId] = useState<string | null>(null);
   const [showCoinSheet, setShowCoinSheet] = useState(false);
   const [showReport, setShowReport] = useState(false);
+  const [showMobilePanel, setShowMobilePanel] = useState<string | null>(null);
 
   // Indicator state — derived from active strategy, with localStorage override
   const [indicators, setIndicators] = useState<Record<string, IndicatorConfig>>(() => {
@@ -383,10 +384,10 @@ export default function TradingTerminal() {
         <div className="flex items-center gap-2 sm:gap-3 md:gap-4 min-w-0">
           <div className="flex items-center gap-2.5">
             <div className={`w-2 h-2 rounded-full ${autoTrading ? 'bg-emerald-400 animate-pulse shadow-lg shadow-emerald-400/30' : 'bg-emerald-400/30'}`} />
-            <span className="text-xs sm:text-sm font-bold text-white/90 tracking-tight">ТРЕЙД-БОТ</span>
+            <span className="text-xs sm:text-sm font-bold text-white/90 tracking-tight">Trade Terminal</span>
             {autoTrading && (
               <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 animate-pulse">
-                АВТО LIVE
+                LIVE
               </span>
             )}
           </div>
@@ -420,11 +421,15 @@ export default function TradingTerminal() {
               )}
             </div>
           )}
-          {/* Strategy Report Button */}
+          {/* Strategy Report Button — per strategy */}
           <button
             onClick={() => setShowReport(true)}
-            className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400/80 hover:bg-amber-500/15 hover:text-amber-400 transition-all duration-200"
-            title="Отчёт по Импульс Pro"
+            className={cn(
+              'flex items-center gap-1.5 px-2 py-1 rounded-lg border transition-all duration-200',
+              strategy?.bgColor ?? 'bg-amber-500/10', strategy?.borderColor ?? 'border-amber-500/20',
+              strategy?.color ?? 'text-amber-400/80',
+            )}
+            title={`Отчёт: ${strategy?.name ?? ''}`}
           >
             <BarChart3 className="w-3.5 h-3.5" />
             <span className="text-[10px] font-medium tracking-wide hidden sm:inline">ОТЧЁТ</span>
@@ -547,7 +552,7 @@ export default function TradingTerminal() {
 
               {/* Draggable trade info — desktop only (not touch-friendly) */}
               <div className="hidden md:block">
-                <DraggableTradePanel focusedTradeId={focusedTradeId} symbol={selectedSymbol} />
+                <DraggableTradePanel focusedTradeId={focusedTradeId} symbol={selectedSymbol} onClose={() => setFocusedTradeId(null)} />
               </div>
             </div>
 
@@ -558,20 +563,53 @@ export default function TradingTerminal() {
           </div>
 
           {/* Bottom Trades Table */}
-          <div className="border-t border-white/[0.06] bg-[#0d0d14] xl:h-48 xl:shrink-0 xl:overflow-auto overflow-x-auto" style={{ maxHeight: '35dvh' }}>
+          <div className="border-t border-white/[0.06] bg-[#0d0d14] xl:h-48 xl:shrink-0 xl:overflow-auto overflow-x-auto" style={{ maxHeight: '25dvh' }}>
             <TradesTable openTrades={openTrades} recentTrades={recentTrades} coins={coins} onSelectTrade={(trade) => {
               setSelectedSymbol(trade.symbol);
               setFocusedTradeId(trade.id);
             }} />
           </div>
-          {/* Dashboard + Controls — visible on mobile/tablet below trades */}
-          <div className="xl:hidden border-t border-white/[0.06]">
+          {/* Dashboard + Controls — visible on tablet below trades, hidden on mobile */}
+          <div className="xl:hidden lg:block border-t border-white/[0.06]">
             <div className="p-2.5 sm:p-3">
               <TradingDashboard />
             </div>
             <ActivityLog />
             <div className="border-t border-white/[0.06]">
               <ControlPanel />
+            </div>
+          </div>
+          {/* Mobile-only bottom control bar */}
+          <div className="lg:hidden xl:hidden border-t border-white/[0.06] bg-[#0d0d14] p-2.5 flex items-center justify-between gap-2 safe-bottom">
+            <div className="flex items-center gap-2">
+              <div className={cn('w-2 h-2 rounded-full', autoTrading ? 'bg-emerald-400 animate-pulse' : 'bg-white/20')} />
+              <span className="text-[11px] text-white/40 font-mono">
+                {traderState ? `$${traderState.balance.toFixed(0)}` : '---'}
+              </span>
+              {traderState && traderState.debt_to_repay > 0 && (
+                <span className="text-[10px] text-red-400/60 font-mono">
+                  Д: ${traderState.debt_to_repay.toFixed(0)}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowMobilePanel('dashboard')}
+                className="px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] text-[10px] text-white/50 active:bg-white/[0.08]"
+              >Аналитика</button>
+              <button
+                onClick={() => setShowMobilePanel('control')}
+                className="px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] text-[10px] text-white/50 active:bg-white/[0.08]"
+              >Управление</button>
+              <button
+                onClick={() => setAutoTrading(!autoTrading)}
+                className={cn(
+                  'px-3 py-1.5 rounded-lg text-[10px] font-semibold min-h-[36px]',
+                  autoTrading
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-white/[0.04] border border-white/[0.06] text-white/50',
+                )}
+              >{autoTrading ? '● LIVE' : 'СТАРТ'}</button>
             </div>
           </div>
         </main>
@@ -591,8 +629,49 @@ export default function TradingTerminal() {
         {/* Mobile Coin List Sheet */}
         <CoinListSheet open={showCoinSheet} onClose={() => setShowCoinSheet(false)} />
 
-        {/* Momentum Pro Strategy Report */}
-        {showReport && <MomentumReport onClose={() => setShowReport(false)} />}
+        {/* Mobile Dashboard Sheet */}
+        <MobileSheet open={showMobilePanel === 'dashboard'} onClose={() => setShowMobilePanel(null)}>
+          <div className="p-3"><TradingDashboard /></div>
+          <ActivityLog />
+        </MobileSheet>
+
+        {/* Mobile Control Sheet */}
+        <MobileSheet open={showMobilePanel === 'control'} onClose={() => setShowMobilePanel(null)}>
+          <div className="p-3"><ControlPanel /></div>
+        </MobileSheet>
+
+        {/* Strategy Report */}
+        {showReport && <MomentumReport onClose={() => setShowReport(false)} strategyId={activeStrategy} />}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Generic Mobile Sheet
+// ============================================================
+
+function MobileSheet({ open, onClose, children }: { open: boolean; onClose: () => void; children: React.ReactNode }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 lg:hidden animate-fade-in" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+      <div
+        className="absolute bottom-0 left-0 right-0 bg-[#0d0d14] border-t border-white/10 rounded-t-2xl flex flex-col animate-slide-up safe-bottom"
+        style={{ height: '70vh', maxHeight: '600px' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-end px-4 py-2 border-b border-white/5 shrink-0">
+          <button
+            onClick={onClose}
+            className="p-2 -mr-2 text-white/40 hover:text-white/70 transition-colors rounded-lg active:bg-white/10"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -684,8 +763,8 @@ function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
               <th className="text-right font-medium py-2.5 px-1.5 md:px-2 hidden md:table-cell">Вход</th>
               <th className="text-right font-medium py-2.5 px-1.5 md:px-2 hidden lg:table-cell">Выход</th>
               <th className="text-right font-medium py-2.5 px-1.5 md:px-2 hidden lg:table-cell">Плечо</th>
-              <th className="text-right font-medium py-2.5 px-1.5 md:px-2 hidden xl:table-cell">Объём</th>
               <th className="text-right font-medium py-2.5 px-2">PnL</th>
+              <th className="text-center font-medium py-2.5 px-1.5 hidden sm:table-cell">Открыта</th>
               <th className="text-center font-medium py-2.5 px-2">Статус</th>
             </tr>
           </thead>
@@ -731,11 +810,13 @@ function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
                     : '—'}
                 </td>
                 <td className="py-1.5 px-2 text-right font-mono text-white/50">{trade.leverage ?? '—'}x</td>
-                <td className="py-1.5 px-2 text-right font-mono text-white/60">${typeof trade.amount === 'number' ? trade.amount.toFixed(2) : '—'}</td>
                 <td className={cn('py-1.5 px-2 text-right font-mono font-bold', displayPnl == null ? 'text-white/30' : displayPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
                   {displayPnl != null && typeof displayPnl === 'number'
                     ? `${displayPnl >= 0 ? '+' : ''}$${displayPnl.toFixed(2)}`
                     : '—'}
+                </td>
+                <td className="py-1.5 px-1.5 text-center font-mono text-white/25 text-[10px] hidden sm:table-cell">
+                  {new Date(trade.opened_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
                 </td>
                 <td className="py-1.5 px-2 text-center">
                   <span className={cn('text-[9px] font-mono px-1.5 py-0.5 rounded', isOpen
@@ -819,7 +900,7 @@ function fmtP(price: number): string {
 // Draggable Trade Info Panel
 // ============================================================
 
-function DraggableTradePanel({ focusedTradeId, symbol }: { focusedTradeId: string | null; symbol: string }) {
+function DraggableTradePanel({ focusedTradeId, symbol, onClose }: { focusedTradeId: string | null; symbol: string; onClose?: () => void }) {
   const { openTrades, recentTrades, coins } = useTerminalStore();
   const panelRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ startX: number; startY: number; startLeft: number; startTop: number } | null>(null);
@@ -940,13 +1021,20 @@ function DraggableTradePanel({ focusedTradeId, symbol }: { focusedTradeId: strin
             {activeTrade.symbol.replace('USDT', '')}
           </span>
         </div>
-        <span className={cn('text-[9px] font-mono px-1.5 py-0.5 rounded', isOpen
-          ? 'bg-yellow-500/10 text-yellow-400/80 border border-yellow-500/20'
-          : 'bg-white/5 text-white/40 border border-white/10'
-        )}>
-          {isOpen ? 'ОТКР' : 'ЗАКР'}
-        </span>
-      </div>
+        <div className="flex items-center gap-1.5">
+          <span className={cn('text-[9px] font-mono px-1.5 py-0.5 rounded', isOpen
+            ? 'bg-yellow-500/10 text-yellow-400/80 border border-yellow-500/20'
+            : 'bg-white/5 text-white/40 border border-white/10'
+          )}>
+            {isOpen ? 'ОТКР' : 'ЗАКР'}
+          </span>
+          {onClose && (
+            <button onClick={onClose} className="p-0.5 text-white/30 hover:text-white/60 transition-colors rounded">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+        </div>
 
       {/* Content */}
       <div className="px-3 py-2 space-y-1.5">
@@ -983,6 +1071,10 @@ function DraggableTradePanel({ focusedTradeId, symbol }: { focusedTradeId: strin
         <div className="flex items-center justify-between">
           <span className="text-[10px] text-white/40">Длительность</span>
           <span className="text-[10px] font-mono text-white/50">{durationStr}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-white/40">Открыта</span>
+          <span className="text-[9px] font-mono text-white/30">{new Date(activeTrade.opened_at).toLocaleString('ru-RU', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' } as Intl.DateTimeFormatOptions)}</span>
         </div>
       </div>
     </div>

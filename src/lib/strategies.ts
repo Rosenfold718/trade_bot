@@ -63,66 +63,67 @@ export const STRATEGIES: StrategyConfig[] = [
   },
 
   // ──────────────────────────────────────────────────────────────
-  // Стратегия 2: Возврат к среднему
-  // Все 3 индикатора должны соглашаться + фильтр EMA-50
+  // Стратегия 2: Scalp Hunter
+  // Скальпинг: множество быстрых сделок на микро-движениях
   // ──────────────────────────────────────────────────────────────
   {
-    id: 'mean-reversion',
-    name: 'Возврат к среднему',
-    description: 'Торговля на экстремальных отклонениях. Все 3 индикатора + EMA-50 тренд. Стоп 2.5× ATR, TP 1:2.5. Время 10:00–23:00 МСК. Проверка SL/TP по закрытию 1H свечи.',
-    color: 'text-emerald-400',
-    bgColor: 'bg-emerald-500/10',
-    borderColor: 'border-emerald-500/30',
-    chartIndicators: {
-      sma7: { visible: false },
-      sma25: { visible: true, color: '#10b981' },
-      sma99: { visible: false },
-      ema12: { visible: false },
-      ema26: { visible: false },
-      bb: { visible: true, color: '#34d399' },
-      'bb-middle': { visible: true, color: '#6ee7b7' },
-      sr: { visible: true },
-      swings: { visible: false },
-    },
-    maxLeverage: 2,
-    riskRewardRatio: 2.5,
-    tradeSizePercent: 0.05,
-    maxOpenTrades: 3,
-    scoreThreshold: 0.25,
-    adxMin: null,
-    mtfEnabled: false,
-    timeFilterEnabled: true,
-    timeFilterStart: 10,
-    timeFilterEnd: 23,
-  },
-
-  // ──────────────────────────────────────────────────────────────
-  // Стратегия 3: Тренд на откатах
-  // Более широкая зона отката, RSI фильтр истощения
-  // ──────────────────────────────────────────────────────────────
-  {
-    id: 'trend-pullback',
-    name: 'Тренд на откатах',
-    description: 'Вход на откатах к EMA21 в сильном тренде. ADX > 25, ≥4/6 согласия, RSI фильтр. Стоп 2.5× ATR, TP 1:3. Проверка SL/TP по закрытию 1H свечи.',
-    color: 'text-cyan-400',
-    bgColor: 'bg-cyan-500/10',
-    borderColor: 'border-cyan-500/30',
+    id: 'scalper',
+    name: 'Scalp Hunter',
+    description: 'Скальпинг: множество быстрых сделок на микро-движениях. StochRSI, Bollinger squeeze, volume spikes, VWAP deviation. Узкий стоп 0.8× ATR, TP 1:1.5. Удержание: минуты–часы.',
+    color: 'text-violet-400',
+    bgColor: 'bg-violet-500/10',
+    borderColor: 'border-violet-500/30',
     chartIndicators: {
       sma7: { visible: false },
       sma25: { visible: false },
       sma99: { visible: false },
-      ema12: { visible: true, color: '#06b6d4' },
-      ema26: { visible: true, color: '#22d3ee' },
+      ema12: { visible: true, color: '#a78bfa' },
+      ema26: { visible: false },
+      bb: { visible: true, color: '#c084fc' },
+      'bb-middle': { visible: true, color: '#a78bfa' },
+      sr: { visible: false },
+      swings: { visible: false },
+    },
+    maxLeverage: 2,
+    riskRewardRatio: 1.5,
+    tradeSizePercent: 0.03,
+    maxOpenTrades: 5,
+    scoreThreshold: 0.15,
+    adxMin: null,
+    mtfEnabled: false,
+    timeFilterEnabled: false,
+    timeFilterStart: 0,
+    timeFilterEnd: 0,
+  },
+
+  // ──────────────────────────────────────────────────────────────
+  // Стратегия 3: Position Alpha
+  // Позиционная торговля: редкие входы на сильных разворотах
+  // ──────────────────────────────────────────────────────────────
+  {
+    id: 'position-alpha',
+    name: 'Position Alpha',
+    description: 'Позиционная торговля: редкие входы на сильных разворотах. EMA50/200 crossover, MACD divergence, OBV долгосрочный тренд. Широкий стоп 4× ATR, TP 1:5. Удержание: дни–неделя.',
+    color: 'text-blue-400',
+    bgColor: 'bg-blue-500/10',
+    borderColor: 'border-blue-500/30',
+    chartIndicators: {
+      sma7: { visible: false },
+      sma25: { visible: false },
+      sma99: { visible: false },
+      ema12: { visible: true, color: '#60a5fa' },
+      ema26: { visible: true, color: '#93c5fd' },
       bb: { visible: false },
+      'bb-middle': { visible: false },
       sr: { visible: true },
       swings: { visible: true },
     },
-    maxLeverage: 3,
-    riskRewardRatio: 3,
-    tradeSizePercent: 0.06,
-    maxOpenTrades: 3,
-    scoreThreshold: 0.30,
-    adxMin: 25,
+    maxLeverage: 2,
+    riskRewardRatio: 5,
+    tradeSizePercent: 0.04,
+    maxOpenTrades: 2,
+    scoreThreshold: 0.40,
+    adxMin: 30,
     mtfEnabled: true,
     timeFilterEnabled: false,
     timeFilterStart: 0,

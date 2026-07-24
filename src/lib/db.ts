@@ -136,7 +136,7 @@ export async function initDB(): Promise<void> {
 // User Initialization — called after registration
 // ============================================================
 
-const STRATEGY_IDS = ['momentum', 'mean-reversion', 'trend-pullback'];
+const STRATEGY_IDS = ['momentum', 'scalper', 'position-alpha'];
 
 export async function initUserTradingData(userId: string): Promise<void> {
   await initDB();
