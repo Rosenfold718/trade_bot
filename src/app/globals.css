@@ -143,17 +143,17 @@
   scrollbar-color: rgba(255,255,255,0.08) transparent;
 }
 .coin-list-scroll::-webkit-scrollbar {
-  width: 4px;
+  width: 5px;
 }
 .coin-list-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
 .coin-list-scroll::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.08);
-  border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 6px;
 }
 .coin-list-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.12);
 }
 
 /* Hide scrollbar utility for horizontal scroll areas */
@@ -171,17 +171,17 @@
   scrollbar-color: rgba(255,255,255,0.08) transparent;
 }
 .custom-scrollbar::-webkit-scrollbar {
-  width: 4px;
+  width: 5px;
 }
 .custom-scrollbar::-webkit-scrollbar-track {
   background: transparent;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.08);
-  border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 6px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.12);
 }
 
 /* Slide up animation for bottom sheets */

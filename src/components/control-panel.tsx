@@ -119,7 +119,7 @@ export default function ControlPanel() {
   const totalOpen = allBalances.reduce((sum, s) => sum + s.openCount, 0);
 
   return (
-    <div className="p-2.5 sm:p-3 space-y-2 max-w-lg">
+    <div className="p-3 space-y-2 max-w-lg">
       {/* Active Strategy Info */}
       {strategy && (
         <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/[0.06] rounded-xl">
@@ -134,16 +134,16 @@ export default function ControlPanel() {
             </p>
             <div className="flex items-center gap-3 text-[10px] font-mono">
               <div className="flex items-center gap-1">
-                <span className="text-white/30">Макс плечо:</span>
-                <span className="text-white/70">{strategy.maxLeverage}x</span>
+                <span className="text-white/25">Макс плечо:</span>
+                <span className="text-white/50">{strategy.maxLeverage}x</span>
               </div>
               <div className="flex items-center gap-1">
-                <span className="text-white/30">Риск:</span>
-                <span className="text-white/70">1:{strategy.riskRewardRatio}</span>
+                <span className="text-white/25">Риск:</span>
+                <span className="text-white/50">1:{strategy.riskRewardRatio}</span>
               </div>
               <div className="flex items-center gap-1">
-                <span className="text-white/30">Лимит:</span>
-                <span className="text-white/70">{strategy.maxOpenTrades}</span>
+                <span className="text-white/25">Лимит:</span>
+                <span className="text-white/50">{strategy.maxOpenTrades}</span>
               </div>
             </div>
           </CardContent>
@@ -153,12 +153,12 @@ export default function ControlPanel() {
       {/* Auto Trading Toggle */}
       <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/[0.06] rounded-xl">
         <CardHeader className="p-3 pb-2">
-          <CardTitle className="text-[10px] uppercase tracking-widest text-white/30 font-medium flex items-center justify-between">
+          <CardTitle className="text-[10px] uppercase tracking-widest text-white/25 font-medium flex items-center justify-between">
             <div className="flex items-center gap-1.5">
               <Power className="h-3 w-3" />
               Авто-трейдинг
             </div>
-            <div className="flex items-center gap-2 text-[10px] font-mono text-white/30">
+            <div className="flex items-center gap-2 text-[10px] font-mono text-white/20">
               <span>Всего: ${totalBalance.toFixed(0)}</span>
               <span>·</span>
               <span>{totalOpen} откр.</span>
@@ -169,10 +169,10 @@ export default function ControlPanel() {
           <Button
             onClick={handleToggleAutoTrading}
             className={cn(
-              'w-full h-9 text-xs rounded-lg font-semibold transition-all duration-300',
+              'w-full h-10 text-xs rounded-lg font-semibold transition-all duration-200',
               autoTrading
-                ? 'bg-green-600 hover:bg-green-700 text-white shadow-lg shadow-green-600/20'
-                : 'bg-white/5 hover:bg-white/10 text-white/70 border border-white/10',
+                ? 'bg-green-600 hover:bg-green-700 text-white shadow-sm shadow-green-600/20'
+                : 'bg-white/[0.04] hover:bg-white/[0.08] text-white/50 border border-white/[0.08]',
             )}
           >
             <Power className={cn('h-3.5 w-3.5 mr-2', autoTrading ? 'animate-pulse' : '')} />
@@ -180,7 +180,7 @@ export default function ControlPanel() {
           </Button>
           {autoTrading && (
             <div className="flex items-center justify-between">
-              <p className="text-[10px] text-green-400/60 font-mono animate-pulse">
+              <p className="text-[10px] text-green-400/50 font-mono animate-pulse">
                 3 стратегии активны...
               </p>
             </div>
@@ -191,12 +191,12 @@ export default function ControlPanel() {
             <div className="grid grid-cols-3 gap-1.5 pt-1">
               {allBalances.map(s => (
                 <div key={s.id} className="text-center">
-                  <div className={cn('text-[9px] font-mono font-bold', s.id === activeStrategy ? s.color : 'text-white/40')}>
+                  <div className={cn('text-[10px] font-mono font-bold', s.id === activeStrategy ? s.color : 'text-white/40')}>
                     {s.name.split(' ')[0]}
                   </div>
-                  <div className="text-[10px] font-mono text-white/60">${s.balance.toFixed(0)}</div>
+                  <div className="text-[10px] font-mono text-white/50">${s.balance.toFixed(0)}</div>
                   {s.openCount > 0 && (
-                    <div className="text-[8px] font-mono text-yellow-400/60">{s.openCount} откр.</div>
+                    <div className="text-[9px] font-mono text-yellow-400/50">{s.openCount} откр.</div>
                   )}
                 </div>
               ))}
@@ -208,9 +208,9 @@ export default function ControlPanel() {
       {/* Credit */}
       <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/[0.06] rounded-xl">
         <CardHeader className="p-3 pb-2">
-          <CardTitle className="text-[10px] uppercase tracking-widest text-white/30 font-medium flex items-center gap-1.5">
+          <CardTitle className="text-[10px] uppercase tracking-widest text-white/25 font-medium flex items-center gap-1.5">
             <CreditCard className="h-3 w-3" /> Кредит
-            {strategy && <span className="text-[9px] font-mono ml-auto text-white/25">({strategy.name})</span>}
+            {strategy && <span className="text-[10px] font-mono ml-auto text-white/20">({strategy.name})</span>}
           </CardTitle>
         </CardHeader>
         <CardContent className="p-3 pt-0 space-y-2">
@@ -220,7 +220,7 @@ export default function ControlPanel() {
               placeholder="Сумма $"
               value={creditAmount}
               onChange={(e) => setCreditAmount(e.target.value)}
-              className="h-8 bg-white/5 border-white/10 text-xs text-white/90 placeholder:text-white/30 rounded-md"
+              className="h-10 bg-white/[0.04] border-white/[0.06] text-xs text-white/90 placeholder:text-white/25 rounded-lg"
               min="0"
               step="10"
             />
@@ -228,13 +228,13 @@ export default function ControlPanel() {
               size="sm"
               onClick={handleCredit}
               disabled={isLoading || !creditAmount}
-              className="h-8 px-3 bg-green-600 hover:bg-green-700 text-white text-xs rounded-md"
+              className="h-10 px-3 bg-green-600 hover:bg-green-700 text-white text-xs rounded-lg"
             >
               {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Дать'}
             </Button>
           </div>
           {traderState && traderState.debt_to_repay > 0 && (
-            <p className="text-[10px] text-red-400/70 font-mono">
+            <p className="text-[10px] text-red-400/60 font-mono">
               Долг: ${traderState.debt_to_repay.toFixed(2)} (10% от прибыли)
             </p>
           )}
@@ -244,7 +244,7 @@ export default function ControlPanel() {
       {/* Actions */}
       <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/[0.06] rounded-xl">
         <CardHeader className="p-3 pb-2">
-          <CardTitle className="text-[10px] uppercase tracking-widest text-white/30 font-medium flex items-center gap-1.5">
+          <CardTitle className="text-[10px] uppercase tracking-widest text-white/25 font-medium flex items-center gap-1.5">
             <Zap className="h-3 w-3" /> Управление
           </CardTitle>
         </CardHeader>
@@ -253,7 +253,7 @@ export default function ControlPanel() {
             onClick={handleBacktest}
             disabled={backtestLoading}
             variant="outline"
-            className="w-full h-8 text-xs rounded-md border-white/10 text-white/80 hover:bg-white/5 hover:text-white"
+            className="w-full h-10 text-xs rounded-lg border-white/[0.08] text-white/60 hover:bg-white/[0.04] hover:text-white"
           >
             {backtestLoading ? (
               <Loader2 className="h-3 w-3 animate-spin mr-1.5" />
@@ -268,21 +268,21 @@ export default function ControlPanel() {
               <Button
                 variant="outline"
                 disabled={isLoading}
-                className="w-full h-8 text-xs rounded-md border-red-500/30 text-red-400/70 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/50"
+                className="w-full h-10 text-xs rounded-lg border-red-500/30 text-red-400/60 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/50"
               >
                 <RotateCcw className="h-3 w-3 mr-1.5" />
                 Перезапуск {strategy?.name ?? ''}
               </Button>
             </AlertDialogTrigger>
-            <AlertDialogContent className="bg-[#1a1a2e] border-white/10">
+            <AlertDialogContent className="bg-[#1a1a2e] border-white/[0.06]">
               <AlertDialogHeader>
                 <AlertDialogTitle className="text-white">Перезапустить {strategy?.name ?? ''}?</AlertDialogTitle>
-                <AlertDialogDescription className="text-white/60">
+                <AlertDialogDescription className="text-white/50">
                   Баланс: $100, кредит: $0, все сделки очищены. Остальные стратегии не затронуты.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
-                <AlertDialogCancel className="bg-white/5 border-white/10 text-white/80 hover:bg-white/10">
+                <AlertDialogCancel className="bg-white/[0.04] border-white/[0.08] text-white/60 hover:bg-white/[0.08]">
                   Отмена
                 </AlertDialogCancel>
                 <AlertDialogAction

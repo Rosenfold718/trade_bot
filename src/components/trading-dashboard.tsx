@@ -30,13 +30,13 @@ function StatCard({
 }) {
   return (
     <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/[0.06] rounded-xl">
-      <CardContent className="p-3.5">
-        <div className="flex items-center justify-between mb-1.5">
-          <span className="text-[10px] uppercase tracking-widest text-white/30 font-medium">{label}</span>
+      <CardContent className="p-3">
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-[10px] uppercase tracking-widest text-white/25 font-medium">{label}</span>
           <Icon className={cn('h-3.5 w-3.5', color)} />
         </div>
-        <div className="text-lg font-bold text-white/95 font-mono">{value}</div>
-        {subValue && <div className="text-[10px] text-white/35 mt-0.5 font-mono">{subValue}</div>}
+        <div className="text-base font-bold text-white font-mono">{value}</div>
+        {subValue && <div className="text-[10px] text-white/25 mt-0.5 font-mono">{subValue}</div>}
       </CardContent>
     </Card>
   );
@@ -63,7 +63,7 @@ function SignalGauge({ score }: { score: number }) {
 
   return (
     <div className="space-y-2">
-      <div className="relative h-20 flex items-end justify-center overflow-hidden">
+      <div className="relative h-16 flex items-end justify-center overflow-hidden">
         <svg viewBox="0 0 200 110" className="w-full h-full">
           <path d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="10" strokeLinecap="round" />
           <path d="M 20 100 A 80 80 0 0 1 100 20" fill="none" stroke="rgba(239,68,68,0.2)" strokeWidth="10" strokeLinecap="round" />
@@ -98,8 +98,8 @@ function SignalGauge({ score }: { score: number }) {
         </svg>
       </div>
       <div className="text-center">
-        <div className="text-2xl font-bold font-mono text-white/95">{clamped > 0 ? '+' : ''}{clamped.toFixed(1)}</div>
-        <span className={cn('text-[10px] font-mono font-bold tracking-wider', labelColor)}>{label}</span>
+        <div className="text-lg font-bold font-mono text-white">{clamped > 0 ? '+' : ''}{clamped.toFixed(1)}</div>
+        <span className={cn('text-[10px] font-mono font-semibold tracking-wider', labelColor)}>{label}</span>
       </div>
     </div>
   );
@@ -113,9 +113,9 @@ function IndicatorRow({ indicator }: { indicator: IndicatorSignal }) {
   const barWidth = indicator.strength * 100;
 
   return (
-    <div className="flex items-center gap-2 py-1">
+    <div className="flex items-center gap-2 py-0.5">
       <div className="w-20 shrink-0">
-        <span className="text-[10px] text-white/50 font-mono">{indicator.name}</span>
+        <span className="text-[10px] text-white/40 font-mono">{indicator.name}</span>
       </div>
       <div className="flex-1 flex items-center gap-1.5">
         <div className="w-4 shrink-0 flex justify-center">
@@ -124,10 +124,10 @@ function IndicatorRow({ indicator }: { indicator: IndicatorSignal }) {
           ) : indicator.signal < 0 ? (
             <ArrowDownCircle className="w-3.5 h-3.5 text-red-400" />
           ) : (
-            <MinusCircle className="w-3.5 h-3.5 text-white/20" />
+            <MinusCircle className="w-3.5 h-3.5 text-white/15" />
           )}
         </div>
-        <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden relative">
+        <div className="flex-1 h-1.5 bg-white/[0.04] rounded-full overflow-hidden relative">
           {indicator.signal !== 0 && (
             <div
               className={cn(
@@ -144,7 +144,7 @@ function IndicatorRow({ indicator }: { indicator: IndicatorSignal }) {
             />
           )}
         </div>
-        <span className="text-[9px] font-mono text-white/30 w-7 text-right shrink-0">
+        <span className="text-[10px] font-mono text-white/20 w-7 text-right shrink-0">
           {(indicator.strength * 100).toFixed(0)}%
         </span>
       </div>
@@ -222,13 +222,13 @@ export default function TradingDashboard() {
   }
 
   return (
-    <div className="p-2.5 sm:p-3 space-y-3 max-w-lg">
+    <div className="p-3 space-y-3 max-w-lg">
       {/* Strategy badge */}
       {strategy && (
         <div className={cn('flex items-center gap-2 px-3 py-1.5 rounded-lg border', strategy.bgColor, strategy.borderColor)}>
           <div className={cn('w-1.5 h-1.5 rounded-full', strategy.color.replace('text-', 'bg-'))} />
           <span className={cn('text-[10px] font-bold font-mono', strategy.color)}>{strategy.name}</span>
-          <span className="text-[9px] text-white/30 ml-auto font-mono">{strategy.maxLeverage}x · 1:{strategy.riskRewardRatio}</span>
+          <span className="text-[10px] text-white/20 ml-auto font-mono">{strategy.maxLeverage}x · 1:{strategy.riskRewardRatio}</span>
         </div>
       )}
 
@@ -266,7 +266,7 @@ export default function TradingDashboard() {
       {currentAnalysis && currentAnalysis.indicators.length > 0 && (
         <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/[0.06] rounded-xl">
           <CardHeader className="p-3 pb-2">
-            <CardTitle className="text-[10px] uppercase tracking-widest text-white/30 font-medium">
+            <CardTitle className="text-[10px] uppercase tracking-widest text-white/25 font-medium">
               Анализ {currentAnalysis.symbol}
             </CardTitle>
           </CardHeader>
@@ -286,13 +286,13 @@ export default function TradingDashboard() {
                   {currentAnalysis.direction.toUpperCase()} {currentAnalysis.leverage}x
                 </Badge>
               )}
-              <span className="text-[10px] text-white/30 font-mono">
+              <span className="text-[10px] text-white/20 font-mono">
                 Сырой балл: {currentAnalysis.score.toFixed(2)}
               </span>
             </div>
-            <div className="h-px bg-white/5" />
+            <div className="h-px bg-white/[0.04]" />
             <div className="space-y-0.5">
-              <div className="text-[9px] uppercase tracking-wider text-white/30 font-medium mb-1.5">Индикаторы</div>
+              <div className="text-[10px] uppercase tracking-wider text-white/25 font-medium mb-1.5">Индикаторы</div>
               {currentAnalysis.indicators.map((ind) => (
                 <IndicatorRow key={ind.name} indicator={ind} />
               ))}
@@ -304,15 +304,15 @@ export default function TradingDashboard() {
       {/* Weights */}
       <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/[0.06] rounded-xl">
         <CardHeader className="p-3 pb-2">
-          <CardTitle className="text-[10px] uppercase tracking-widest text-white/30 font-medium">Веса индикаторов</CardTitle>
+          <CardTitle className="text-[10px] uppercase tracking-widest text-white/25 font-medium">Веса индикаторов</CardTitle>
         </CardHeader>
         <CardContent className="p-3 pt-0">
           <div className="space-y-1.5">
             {weights.map((w) => (
               <div key={w.id} className="flex items-center justify-between">
-                <span className="text-[10px] text-white/60 font-mono">{w.indicator_name}</span>
+                <span className="text-[10px] text-white/40 font-mono">{w.indicator_name}</span>
                 <div className="flex items-center gap-2">
-                  <div className="w-16 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                  <div className="w-16 h-1.5 bg-white/[0.04] rounded-full overflow-hidden">
                     <div
                       className={cn(
                         'h-full rounded-full transition-all duration-500',
@@ -321,7 +321,7 @@ export default function TradingDashboard() {
                       style={{ width: `${Math.min(w.weight / 2.5 * 100, 100)}%` }}
                     />
                   </div>
-                  <span className="text-[10px] font-mono text-white/60 w-8 text-right">{w.weight.toFixed(2)}</span>
+                  <span className="text-[10px] font-mono text-white/40 w-8 text-right">{w.weight.toFixed(2)}</span>
                 </div>
               </div>
             ))}

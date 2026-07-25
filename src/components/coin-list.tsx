@@ -80,20 +80,20 @@ export default function CoinList() {
   }, [updateCoinPrice]);
 
   return (
-    <div className="flex flex-col h-full bg-[#0d0d14] border-r border-white/5">
-      <div className="p-2 sm:p-3 border-b border-white/5">
+    <div className="flex flex-col h-full bg-[#0d0d14] border-r border-white/[0.06]">
+      <div className="p-2.5 border-b border-white/[0.06]">
         <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-white/30" />
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-white/25" />
           <Input
             placeholder="Поиск..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-8 h-7 sm:h-8 bg-white/5 border-white/10 text-xs text-white/90 placeholder:text-white/30 rounded-md focus:ring-1 focus:ring-white/20"
+            className="pl-8 h-8 bg-white/[0.04] border-white/[0.06] text-xs text-white/90 placeholder:text-white/25 rounded-lg focus:ring-1 focus:ring-white/15"
           />
         </div>
       </div>
       <div className="flex-1 overflow-y-auto coin-list-scroll">
-        <div className="p-1.5 space-y-0.5">
+        <div className="p-1.5 space-y-px">
           {filteredCoins.map((coin) => {
             const isSelected = coin.symbol === selectedSymbol;
             const isPositive = coin.change24h >= 0;
@@ -101,22 +101,22 @@ export default function CoinList() {
               <button
                 key={coin.symbol}
                 onClick={() => setSelectedSymbol(coin.symbol)}
-                className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg transition-all duration-150
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg transition-all duration-150
                   ${isSelected
-                    ? 'bg-white/10 border border-white/10'
-                    : 'hover:bg-white/5 border border-transparent'
+                    ? 'bg-white/[0.08] border-l-2 border-l-emerald-400'
+                    : 'hover:bg-white/[0.04] border-l-2 border-l-transparent'
                   }`}
               >
                 <div className="flex flex-col items-start min-w-0">
-                  <span className="text-xs font-semibold text-white/90 truncate">
+                  <span className={`text-xs font-semibold truncate ${isSelected ? 'text-white' : 'text-white/70'}`}>
                     {coin.symbol.replace('USDT', '')}
                   </span>
-                  <span className="text-[10px] text-white/35 font-mono">USDT</span>
+                  <span className="text-[10px] text-white/20 font-mono">USDT</span>
                 </div>
                 <div className="flex flex-col items-end">
                   <span
                     className={`text-xs font-mono font-medium transition-colors duration-300
-                      ${coin.flashDirection === 'up' ? 'text-green-400' : coin.flashDirection === 'down' ? 'text-red-400' : 'text-white/80'}`}
+                      ${coin.flashDirection === 'up' ? 'text-green-400' : coin.flashDirection === 'down' ? 'text-red-400' : 'text-white/70'}`}
                   >
                     {coin.price < 1
                       ? coin.price.toPrecision(4)
@@ -124,7 +124,7 @@ export default function CoinList() {
                         ? coin.price.toFixed(4)
                         : coin.price.toFixed(2)}
                   </span>
-                  <span className={`text-[10px] font-mono ${isPositive ? 'text-green-400/70' : 'text-red-400/70'}`}>
+                  <span className={`text-[10px] font-mono ${isPositive ? 'text-green-400/60' : 'text-red-400/60'}`}>
                     {isPositive ? '+' : ''}
                     {coin.change24h.toFixed(2)}%
                   </span>
@@ -133,8 +133,8 @@ export default function CoinList() {
             );
           })}
           {filteredCoins.length === 0 && (
-            <div className="py-8 text-center text-xs text-white/30">
-              <div className="w-4 h-4 border-2 border-white/10 border-t-white/30 rounded-full animate-spin mx-auto mb-2" />
+            <div className="py-8 text-center text-xs text-white/25">
+              <div className="w-4 h-4 border-2 border-white/10 border-t-white/25 rounded-full animate-spin mx-auto mb-2" />
               Загрузка монет...
             </div>
           )}
