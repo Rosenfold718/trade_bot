@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initDB, getTraderState, getOpenTrades, getRecentTrades, getIndicatorWeights } from '@/lib/db';
+import { initDB, getTraderState, getOpenTrades, getRecentTrades, getClosedTrades, getTotalClosedPnl, getClosedTradeCount, getIndicatorWeights } from '@/lib/db';
 import { getAuthUserId } from '@/lib/auth-helpers';
 import { makeStrategyDecision, fetchKlines } from '@/lib/trading-engine';
 import type { Trade } from '@/lib/types';
@@ -217,17 +217,16 @@ export async function GET(request: NextRequest) {
     await initDB();
     const strategyId = request.nextUrl.searchParams.get('strategyId') || 'momentum';
 
-    // Get all trades (not just recent 20) — use large limit
-    const [state, openTrades, allTrades, weights] = await Promise.all([
+    // Get all trades (not just recent) — use dedicated closed trades function
+    const [state, openTrades, allClosedTrades, weights] = await Promise.all([
       getTraderState(userId, strategyId),
       getOpenTrades(userId, strategyId),
-      getRecentTrades(userId, 500, strategyId), // get as many as possible
+      getClosedTrades(userId, strategyId),
       getIndicatorWeights(userId),
     ]);
 
-    // Separate closed vs open
-    const closedTrades = allTrades.filter(t => t.status === 'closed');
-    const closedWithPnl = closedTrades.filter(t => t.pnl !== null);
+    // Use closed trades directly (already filtered by status)
+    const closedWithPnl = allClosedTrades.filter(t => t.pnl !== null);
 
     // Performance metrics
     const wins = closedWithPnl.filter(t => t.pnl! > 0);

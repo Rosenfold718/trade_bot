@@ -5,6 +5,8 @@ interface StrategySnapshot {
   traderState: TraderState | null;
   openTrades: Trade[];
   recentTrades: Trade[];
+  totalClosedPnl: number;
+  closedTradeCount: number;
 }
 
 interface TerminalStore {
@@ -40,10 +42,20 @@ interface TerminalStore {
   recentTrades: Trade[];
   setRecentTrades: (trades: Trade[]) => void;
 
+  // Total realized PnL from ALL closed trades (DB-computed)
+  totalClosedPnl: number;
+  setTotalClosedPnl: (pnl: number) => void;
+
+  // Total count of closed trades
+  closedTradeCount: number;
+  setClosedTradeCount: (count: number) => void;
+
   // Per-strategy setters
   setStrategyTraderState: (strategyId: string, state: TraderState) => void;
   setStrategyOpenTrades: (strategyId: string, trades: Trade[]) => void;
   setStrategyRecentTrades: (strategyId: string, trades: Trade[]) => void;
+  setStrategyTotalClosedPnl: (strategyId: string, pnl: number) => void;
+  setStrategyClosedTradeCount: (strategyId: string, count: number) => void;
 
   // Backtest results
   backtestResults: BacktestResult[];
@@ -113,6 +125,8 @@ export const useTerminalStore = create<TerminalStore>((set) => ({
       traderState: ss?.traderState ?? null,
       openTrades: ss?.openTrades ?? [],
       recentTrades: ss?.recentTrades ?? [],
+      totalClosedPnl: ss?.totalClosedPnl ?? 0,
+      closedTradeCount: ss?.closedTradeCount ?? 0,
     };
   }),
 
@@ -161,6 +175,32 @@ export const useTerminalStore = create<TerminalStore>((set) => ({
     };
   }),
 
+  // Total realized PnL — also syncs into strategyStates[activeStrategy]
+  totalClosedPnl: 0,
+  setTotalClosedPnl: (totalClosedPnl) => set((state) => {
+    const id = state.activeStrategy;
+    return {
+      totalClosedPnl,
+      strategyStates: {
+        ...state.strategyStates,
+        [id]: { ...state.strategyStates[id], totalClosedPnl },
+      },
+    };
+  }),
+
+  // Closed trade count
+  closedTradeCount: 0,
+  setClosedTradeCount: (closedTradeCount) => set((state) => {
+    const id = state.activeStrategy;
+    return {
+      closedTradeCount,
+      strategyStates: {
+        ...state.strategyStates,
+        [id]: { ...state.strategyStates[id], closedTradeCount },
+      },
+    };
+  }),
+
   // Per-strategy setters — update strategyStates and sync if active
   setStrategyTraderState: (strategyId, traderState) => set((state) => ({
     strategyStates: {
@@ -185,6 +225,22 @@ export const useTerminalStore = create<TerminalStore>((set) => ({
       [strategyId]: { ...state.strategyStates[strategyId], recentTrades },
     },
     ...(state.activeStrategy === strategyId ? { recentTrades } : {}),
+  })),
+
+  setStrategyTotalClosedPnl: (strategyId, totalClosedPnl) => set((state) => ({
+    strategyStates: {
+      ...state.strategyStates,
+      [strategyId]: { ...state.strategyStates[strategyId], totalClosedPnl },
+    },
+    ...(state.activeStrategy === strategyId ? { totalClosedPnl } : {}),
+  })),
+
+  setStrategyClosedTradeCount: (strategyId, closedTradeCount) => set((state) => ({
+    strategyStates: {
+      ...state.strategyStates,
+      [strategyId]: { ...state.strategyStates[strategyId], closedTradeCount },
+    },
+    ...(state.activeStrategy === strategyId ? { closedTradeCount } : {}),
   })),
 
   backtestResults: [],

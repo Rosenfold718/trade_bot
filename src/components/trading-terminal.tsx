@@ -92,6 +92,10 @@ export default function TradingTerminal() {
     setStrategyTraderState,
     setStrategyOpenTrades,
     setStrategyRecentTrades,
+    setStrategyTotalClosedPnl,
+    setStrategyClosedTradeCount,
+    totalClosedPnl,
+    closedTradeCount,
   } = useTerminalStore();
 
   const strategy = getStrategy(activeStrategy);
@@ -178,6 +182,8 @@ export default function TradingTerminal() {
         }
         if (data.openTrades) setStrategyOpenTrades(strategyId, data.openTrades as Trade[]);
         if (data.recentTrades) setStrategyRecentTrades(strategyId, data.recentTrades as Trade[]);
+        if (data.totalClosedPnl !== undefined) setStrategyTotalClosedPnl(strategyId, data.totalClosedPnl as number);
+        if (data.closedTradeCount !== undefined) setStrategyClosedTradeCount(strategyId, data.closedTradeCount as number);
       }
 
       // Also set the global weights (shared across strategies)
@@ -242,10 +248,12 @@ export default function TradingTerminal() {
         if (data.state) setTraderState(data.state as TraderState);
         if (data.openTrades) setOpenTrades(data.openTrades as Trade[]);
         if (data.recentTrades) setRecentTrades(data.recentTrades as Trade[]);
+        if (data.totalClosedPnl !== undefined) setTotalClosedPnl(data.totalClosedPnl);
+        if (data.closedTradeCount !== undefined) setClosedTradeCount(data.closedTradeCount);
       } catch { /* silent */ }
     }, 15000);
     return () => clearInterval(interval);
-  }, [setTraderState, setOpenTrades, setRecentTrades, activeStrategy]);
+  }, [setTraderState, setOpenTrades, setRecentTrades, setTotalClosedPnl, setClosedTradeCount, activeStrategy]);
 
   // Auto-trading loop — runs for ALL strategies in parallel
   // NOTE: autoTrading and addLog are the ONLY reactive deps — all state is read fresh via refs/callbacks
@@ -373,6 +381,8 @@ export default function TradingTerminal() {
             if (data.state) setStrategyTraderState(strategyId, data.state as TraderState);
             if (data.openTrades) setStrategyOpenTrades(strategyId, data.openTrades as Trade[]);
             if (data.recentTrades) setStrategyRecentTrades(strategyId, data.recentTrades as Trade[]);
+            if (data.totalClosedPnl !== undefined) setStrategyTotalClosedPnl(strategyId, data.totalClosedPnl);
+            if (data.closedTradeCount !== undefined) setStrategyClosedTradeCount(strategyId, data.closedTradeCount);
           } catch { /* silent */ }
         }
       } catch (err) {
@@ -637,7 +647,7 @@ export default function TradingTerminal() {
 
           {/* Bottom Trades Table */}
           <div className="border-t border-white/[0.06] bg-[#0d0d14] lg:h-40 xl:h-48 shrink-0 overflow-x-auto overflow-y-auto custom-scrollbar" style={{ maxHeight: '25dvh' }}>
-            <TradesTable openTrades={openTrades} recentTrades={recentTrades} coins={coins} onSelectTrade={(trade) => {
+            <TradesTable openTrades={openTrades} recentTrades={recentTrades} totalClosedPnl={totalClosedPnl} closedTradeCount={closedTradeCount} coins={coins} onSelectTrade={(trade) => {
               setSelectedSymbol(trade.symbol);
               setFocusedTradeId(trade.id);
             }} />
@@ -788,12 +798,12 @@ function CoinListSheet({ open, onClose }: { open: boolean; onClose: () => void }
 // TradesTable with live PnL and total PnL row
 // ============================================================
 
-function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
-  openTrades: Trade[]; recentTrades: Trade[]; coins: Array<{ symbol: string; price: number }>;
+function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCount, coins, onSelectTrade }: {
+  openTrades: Trade[]; recentTrades: Trade[]; totalClosedPnl?: number; closedTradeCount?: number; coins: Array<{ symbol: string; price: number }>;
   onSelectTrade: (trade: Trade) => void;
 }) {
   const allTrades = useMemo(
-    () => [...openTrades, ...recentTrades.filter(t => t.status === 'closed')].slice(0, 30),
+    () => [...openTrades, ...recentTrades].slice(0, 30),
     [openTrades, recentTrades],
   );
 
@@ -813,14 +823,9 @@ function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
     return total;
   }, [openTrades, coins]);
 
-  // Calculate total realized PnL from recent (closed) trades
-  const totalRealizedPnl = useMemo(() => {
-    return recentTrades
-      .filter(t => t.status === 'closed' && t.pnl !== null)
-      .reduce((sum, t) => sum + (t.pnl ?? 0), 0);
-  }, [recentTrades]);
+  // Total realized PnL now comes from DB (totalClosedPnl prop) — no more computing from recentTrades
 
-  if (allTrades.length === 0) {
+  if (allTrades.length === 0 && openTrades.length === 0) {
     return (
       <div className="h-24 flex items-center justify-center">
         <span className="text-xs text-white/20 font-mono">Нет сделок</span>
@@ -920,8 +925,8 @@ function TradesTable({ openTrades, recentTrades, coins, onSelectTrade }: {
             Нереализ.: {totalOpenPnl >= 0 ? '+' : ''}${totalOpenPnl.toFixed(2)}
           </span>
         </div>
-        <span className={cn('text-[10px] font-mono font-semibold', totalRealizedPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
-          Реализ.: {totalRealizedPnl >= 0 ? '+' : ''}${totalRealizedPnl.toFixed(2)}
+        <span className={cn('text-[10px] font-mono font-semibold', (totalClosedPnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400')}>
+          Реализ.: {(totalClosedPnl ?? 0) >= 0 ? '+' : ''}${(totalClosedPnl ?? 0).toFixed(2)}{closedTradeCount !== undefined ? ` (${closedTradeCount})` : ''}
         </span>
       </div>
     </div>

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, openTrade, closeTrade, updateStopLoss, updateTakeProfit, updateBalance, repayDebt, initUserTradingData } from '@/lib/db';
+import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, getTotalClosedPnl, getClosedTradeCount, openTrade, closeTrade, updateStopLoss, updateTakeProfit, updateBalance, repayDebt, initUserTradingData } from '@/lib/db';
 import { fetchKlines, makeStrategyDecision, fetchTopSymbols } from '@/lib/trading-engine';
 import { getAuthUserId } from '@/lib/auth-helpers';
 import { getStrategy } from '@/lib/strategies';
@@ -19,13 +19,15 @@ export async function GET(request: NextRequest) {
       await initUserTradingData(userId);
     }
 
-    const [state, weights, openTrades, recentTrades] = await Promise.all([
+    const [state, weights, openTrades, recentTrades, totalClosedPnl, closedTradeCount] = await Promise.all([
       getTraderState(userId, strategyId),
       getIndicatorWeights(userId),
       getOpenTrades(userId, strategyId),
-      getRecentTrades(userId, 20, strategyId),
+      getRecentTrades(userId, 50, strategyId),
+      getTotalClosedPnl(userId, strategyId),
+      getClosedTradeCount(userId, strategyId),
     ]);
-    return NextResponse.json({ state, weights, openTrades, recentTrades });
+    return NextResponse.json({ state, weights, openTrades, recentTrades, totalClosedPnl, closedTradeCount });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     console.error('[trader GET] Error:', message);

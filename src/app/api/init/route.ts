@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, initUserTradingData } from '@/lib/db';
+import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, getTotalClosedPnl, getClosedTradeCount, initUserTradingData } from '@/lib/db';
 import { getAuthUserId } from '@/lib/auth-helpers';
 
 export async function GET(request: NextRequest) {
@@ -19,10 +19,12 @@ export async function GET(request: NextRequest) {
       await initUserTradingData(userId);
     }
 
-    const [state, openTrades, recentTrades] = await Promise.all([
+    const [state, openTrades, recentTrades, totalClosedPnl, closedTradeCount] = await Promise.all([
       getTraderState(userId, strategyId),
       getOpenTrades(userId, strategyId),
-      getRecentTrades(userId, 20, strategyId),
+      getRecentTrades(userId, 50, strategyId),
+      getTotalClosedPnl(userId, strategyId),
+      getClosedTradeCount(userId, strategyId),
     ]);
 
     const weights = await getIndicatorWeights(userId);
@@ -32,6 +34,8 @@ export async function GET(request: NextRequest) {
       weights,
       openTrades,
       recentTrades,
+      totalClosedPnl,
+      closedTradeCount,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

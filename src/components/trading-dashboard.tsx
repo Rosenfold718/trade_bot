@@ -196,7 +196,7 @@ function RecommendedAction({ score }: { score: number }) {
 }
 
 export default function TradingDashboard() {
-  const { traderState, openTrades, recentTrades, weights, currentAnalysis, activeStrategy } =
+  const { traderState, openTrades, totalClosedPnl, closedTradeCount, weights, currentAnalysis, activeStrategy } =
     useTerminalStore();
 
   const strategy = getStrategy(activeStrategy);
@@ -221,10 +221,6 @@ export default function TradingDashboard() {
     );
   }
 
-  const totalPnl = recentTrades
-    .filter((t) => t.status === 'closed' && t.pnl !== null)
-    .reduce((sum, t) => sum + (t.pnl ?? 0), 0);
-
   return (
     <div className="p-2.5 sm:p-3 space-y-3 max-w-lg">
       {/* Strategy badge */}
@@ -246,10 +242,11 @@ export default function TradingDashboard() {
           subValue={traderState.borrowed_funds > 0 ? `Кредит: $${traderState.borrowed_funds.toFixed(2)}` : undefined}
         />
         <StatCard
-          label="PnL"
-          value={`${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`}
-          icon={totalPnl >= 0 ? TrendingUp : TrendingDown}
-          color={totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}
+          label="PnL (все)"
+          value={`${totalClosedPnl >= 0 ? '+' : ''}$${totalClosedPnl.toFixed(2)}`}
+          icon={totalClosedPnl >= 0 ? TrendingUp : TrendingDown}
+          color={totalClosedPnl >= 0 ? 'text-green-400' : 'text-red-400'}
+          subValue={`${closedTradeCount} сделок`}
         />
         <StatCard
           label="Открытых"

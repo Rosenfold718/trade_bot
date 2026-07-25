@@ -402,11 +402,12 @@ export async function updateTakeProfit(tradeId: string, newTakeProfit: number): 
   );
 }
 
-export async function getRecentTrades(userId: string, limit: number = 20, strategyId?: string) {
+export async function getRecentTrades(userId: string, limit: number = 50, strategyId?: string) {
+  // Returns CLOSED trades only (for history display and PnL calculation)
   const sql = strategyId
-    ? 'SELECT * FROM trades WHERE user_id = ? AND strategy_id = ? ORDER BY opened_at DESC LIMIT ?'
-    : 'SELECT * FROM trades WHERE user_id = ? ORDER BY opened_at DESC LIMIT ?';
-  const params = strategyId ? [userId, strategyId, limit] : [userId, limit];
+    ? 'SELECT * FROM trades WHERE user_id = ? AND strategy_id = ? AND status = ? ORDER BY opened_at DESC LIMIT ?'
+    : 'SELECT * FROM trades WHERE user_id = ? AND status = ? ORDER BY opened_at DESC LIMIT ?';
+  const params = strategyId ? [userId, strategyId, 'closed', limit] : [userId, 'closed', limit];
   const result = await tursoDb.execute(sql, params);
   return result.rows.map(row => ({
     id: row.id as string,
@@ -418,12 +419,57 @@ export async function getRecentTrades(userId: string, limit: number = 20, strate
     leverage: Number(row.leverage),
     direction: row.direction as 'long' | 'short',
     pnl: row.pnl !== null ? Number(row.pnl) : null,
-    status: row.status as 'open' | 'closed',
+    status: 'closed' as const,
     stop_loss: row.stop_loss !== null ? Number(row.stop_loss) : null,
     take_profit: row.take_profit !== null ? Number(row.take_profit) : null,
     opened_at: row.opened_at as string,
     closed_at: row.closed_at as string | null,
   }));
+}
+
+// Get ALL closed trades for a strategy (no limit) — used for accurate PnL and report
+export async function getClosedTrades(userId: string, strategyId?: string) {
+  const sql = strategyId
+    ? 'SELECT * FROM trades WHERE user_id = ? AND strategy_id = ? AND status = ? ORDER BY opened_at DESC'
+    : 'SELECT * FROM trades WHERE user_id = ? AND status = ? ORDER BY opened_at DESC';
+  const params = strategyId ? [userId, strategyId, 'closed'] : [userId, 'closed'];
+  const result = await tursoDb.execute(sql, params);
+  return result.rows.map(row => ({
+    id: row.id as string,
+    symbol: row.symbol as string,
+    strategy_id: (row.strategy_id as string) ?? 'momentum',
+    entry_price: Number(row.entry_price),
+    exit_price: row.exit_price !== null ? Number(row.exit_price) : null,
+    amount: Number(row.amount),
+    leverage: Number(row.leverage),
+    direction: row.direction as 'long' | 'short',
+    pnl: row.pnl !== null ? Number(row.pnl) : null,
+    status: 'closed' as const,
+    stop_loss: row.stop_loss !== null ? Number(row.stop_loss) : null,
+    take_profit: row.take_profit !== null ? Number(row.take_profit) : null,
+    opened_at: row.opened_at as string,
+    closed_at: row.closed_at as string | null,
+  }));
+}
+
+// Get total realized PnL from ALL closed trades (efficient single SQL query)
+export async function getTotalClosedPnl(userId: string, strategyId?: string): Promise<number> {
+  const sql = strategyId
+    ? 'SELECT COALESCE(SUM(pnl), 0) as total FROM trades WHERE user_id = ? AND strategy_id = ? AND status = ? AND pnl IS NOT NULL'
+    : 'SELECT COALESCE(SUM(pnl), 0) as total FROM trades WHERE user_id = ? AND status = ? AND pnl IS NOT NULL';
+  const params = strategyId ? [userId, strategyId, 'closed'] : [userId, 'closed'];
+  const result = await tursoDb.execute(sql, params);
+  return Number(result.rows[0]?.total ?? 0);
+}
+
+// Get total count of closed trades
+export async function getClosedTradeCount(userId: string, strategyId?: string): Promise<number> {
+  const sql = strategyId
+    ? 'SELECT COUNT(*) as cnt FROM trades WHERE user_id = ? AND strategy_id = ? AND status = ?'
+    : 'SELECT COUNT(*) as cnt FROM trades WHERE user_id = ? AND status = ?';
+  const params = strategyId ? [userId, strategyId, 'closed'] : [userId, 'closed'];
+  const result = await tursoDb.execute(sql, params);
+  return Number(result.rows[0]?.cnt ?? 0);
 }
 
 // ============================================================
