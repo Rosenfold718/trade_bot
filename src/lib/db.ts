@@ -85,6 +85,12 @@ const SCHEMA_SQL = `
     created_at TEXT DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS system_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT '',
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+
   CREATE INDEX IF NOT EXISTS idx_trader_state_user ON trader_state(user_id);
   CREATE INDEX IF NOT EXISTS idx_trades_user ON trades(user_id);
   CREATE INDEX IF NOT EXISTS idx_activity_user ON activity_log(user_id);
@@ -491,4 +497,41 @@ export async function getBacktestResults(userId: string): Promise<Array<{
 export async function getAllUserIds(): Promise<string[]> {
   const result = await tursoDb.execute('SELECT DISTINCT user_id FROM trader_state');
   return result.rows.map(r => r.user_id as string);
+}
+
+// ============================================================
+// System Settings (admin panel)
+// ============================================================
+
+export async function getSetting(key: string): Promise<string | null> {
+  try {
+    const result = await tursoDb.execute('SELECT value FROM system_settings WHERE key = ?', [key]);
+    return result.rows.length > 0 ? (result.rows[0].value as string) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setSetting(key: string, value: string): Promise<void> {
+  await tursoDb.execute(
+    "INSERT OR REPLACE INTO system_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+    [key, value],
+  );
+}
+
+export async function getAllSettings(): Promise<Record<string, string>> {
+  try {
+    const result = await tursoDb.execute('SELECT key, value FROM system_settings');
+    const map: Record<string, string> = {};
+    for (const row of result.rows) {
+      map[row.key as string] = row.value as string;
+    }
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+export async function deleteSetting(key: string): Promise<void> {
+  await tursoDb.execute('DELETE FROM system_settings WHERE key = ?', [key]);
 }

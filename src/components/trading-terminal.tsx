@@ -5,13 +5,14 @@ import dynamic from 'next/dynamic';
 import { useTerminalStore } from '@/lib/store';
 import { STRATEGIES, getStrategy } from '@/lib/strategies';
 import { cn } from '@/lib/utils';
-import { Menu, X, ChevronDown, BarChart3, RotateCcw, FileSpreadsheet } from 'lucide-react';
+import { Menu, X, ChevronDown, BarChart3, RotateCcw, FileSpreadsheet, ShieldCheck } from 'lucide-react';
 import CoinList from '@/components/coin-list';
 import TradingDashboard from '@/components/trading-dashboard';
 import ControlPanel from '@/components/control-panel';
 import OrderBook from '@/components/order-book';
 import { DEFAULT_INDICATORS, type IndicatorConfig } from '@/components/chart';
 import type { CandleData, TraderState, Trade, IndicatorWeight } from '@/lib/types';
+import AdminPanel from '@/components/admin-panel';
 
 const MomentumReport = dynamic(() => import('@/components/momentum-report'), {
   ssr: false,
@@ -102,6 +103,7 @@ export default function TradingTerminal() {
   const [showReport, setShowReport] = useState(false);
   const [reportStrategyId, setReportStrategyId] = useState<string | null>(null);
   const [showMobilePanel, setShowMobilePanel] = useState<string | null>(null);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
 
   // Indicator state — derived from active strategy, with localStorage override
   const [indicators, setIndicators] = useState<Record<string, IndicatorConfig>>(() => {
@@ -447,6 +449,19 @@ export default function TradingTerminal() {
             <BarChart3 className="w-3.5 h-3.5" />
             <span className="text-[10px] font-medium tracking-wide hidden sm:inline">ОТЧЁТ</span>
           </button>
+          {/* Admin Panel Button */}
+          <button
+            onClick={() => setShowAdminPanel(true)}
+            className={cn(
+              'flex items-center gap-1.5 px-2 py-1 rounded-lg border transition-all duration-200',
+              'bg-emerald-500/10 border-emerald-500/20 text-emerald-400/80',
+              'hover:bg-emerald-500/20 hover:border-emerald-500/30',
+            )}
+            title="Админ-панель"
+          >
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span className="text-[10px] font-medium tracking-wide hidden sm:inline">АДМИН</span>
+          </button>
         </div>
       </header>
 
@@ -686,6 +701,9 @@ export default function TradingTerminal() {
 
         {/* Strategy Report */}
         {showReport && <MomentumReport onClose={() => { setShowReport(false); setReportStrategyId(null); }} strategyId={reportStrategyId ?? activeStrategy} />}
+
+        {/* Admin Panel */}
+        <AdminPanel open={showAdminPanel} onClose={() => setShowAdminPanel(false)} />
       </div>
     </div>
   );
