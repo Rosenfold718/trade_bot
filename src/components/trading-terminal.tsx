@@ -407,7 +407,7 @@ export default function TradingTerminal() {
   }, [selectedSymbol, candles.length, timeframe, setCurrentAnalysis, activeStrategy]);
 
   return (
-    <div className="xl:h-full w-full flex flex-col xl:overflow-hidden bg-[#0a0a0f]">
+    <div className="h-full w-full flex flex-col overflow-hidden bg-[#0a0a0f]">
       {/* Top Bar */}
       <header className="h-11 flex items-center justify-between px-3 sm:px-4 md:px-5 border-b border-white/[0.06] bg-[#0d0d14]/95 backdrop-blur-xl shrink-0 z-20 safe-top">
         <div className="flex items-center gap-2 sm:gap-3 md:gap-4 min-w-0">
@@ -479,8 +479,8 @@ export default function TradingTerminal() {
         </div>
       </header>
 
-      {/* Strategy Selector */}
-      <div className="shrink-0 px-1.5 sm:px-3 py-1.5 sm:py-2 border-b border-white/[0.06] bg-[#0d0d14]/80 flex gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar">
+      {/* Strategy Selector — horizontal scroll on mobile, grid on sm+ */}
+      <div className="shrink-0 px-1.5 sm:px-3 py-1.5 sm:py-2 border-b border-white/[0.06] bg-[#0d0d14]/80 flex sm:grid sm:grid-cols-3 gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar" style={{ scrollbarWidth: 'none' }}>
         {STRATEGIES.map(s => {
           const ss = strategyStates[s.id];
           const balance = ss?.traderState?.balance ?? 0;
@@ -491,7 +491,7 @@ export default function TradingTerminal() {
               key={s.id}
               onClick={() => setActiveStrategy(s.id)}
               className={cn(
-                'min-w-0 w-full rounded-xl border px-3 py-2 text-left transition-all duration-200',
+                'min-w-[160px] sm:min-w-0 w-full rounded-xl border px-3 py-2 text-left transition-all duration-200',
                 isActive
                   ? `${s.borderColor} ${s.bgColor}`
                   : 'border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.04]',
@@ -548,18 +548,18 @@ export default function TradingTerminal() {
       </div>
 
       {/* Main Content */}
-      <div className="xl:flex-1 xl:flex xl:flex-col xl:min-h-0 xl:overflow-hidden">
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {/* Row: Coin List (sidebar) + Center + Right Panel */}
-        <div className="xl:flex-1 xl:flex xl:min-h-0 xl:overflow-hidden">
+        <div className="flex-1 flex min-h-0 overflow-hidden">
           {/* Left Panel — hidden on mobile/tablet */}
           <aside className="w-40 lg:w-52 shrink-0 overflow-hidden hidden md:block">
             <CoinList />
           </aside>
 
           {/* Center — Chart + Order Book + Trades Table */}
-          <main className="xl:flex-1 xl:flex xl:flex-col xl:min-h-0 xl:overflow-hidden">
+          <main className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {/* Chart + Order Book Row */}
-          <div className="h-[40dvh] xl:h-auto xl:flex-1 flex min-h-0 shrink-0">
+          <div className="h-[45dvh] sm:h-[50dvh] md:h-[55dvh] lg:flex-1 flex min-h-0 shrink-0">
             {/* Chart Area */}
             <div className="flex-1 relative min-h-0 overflow-hidden" id="chart-area">
               {chartLoading && (
@@ -591,15 +591,15 @@ export default function TradingTerminal() {
                     {tf.label}
                   </button>
                 ))}
-                {/* Separator */}
-                <div className="w-px h-4 bg-white/10 mx-0.5 shrink-0" />
+                {/* Separator — hidden on mobile */}
+                <div className="w-px h-4 bg-white/10 mx-0.5 shrink-0 hidden sm:block" />
                 {/* Strategy name badge */}
                 {strategy && (
                   <div className={cn('px-1.5 py-1 rounded-md text-[9px] font-mono font-bold border shrink-0', strategy.bgColor, strategy.borderColor, strategy.color)}>
                     {strategy.name}
                   </div>
                 )}
-                {/* Indicator toggles — only show indicators defined in the strategy */}
+                {/* Indicator toggles — only show indicators defined in the strategy, hidden on mobile */}
                 {Object.entries(indicators).filter(([, cfg]) => {
                   // Show indicators that are in the strategy's chartIndicators or always shown
                   if (!strategy) return true;
@@ -609,7 +609,7 @@ export default function TradingTerminal() {
                     key={ind.id}
                     onClick={() => toggleIndicator(ind.id)}
                     className={cn(
-                      'px-1.5 py-1 rounded-md text-[9px] font-mono font-medium border transition-all duration-150 shrink-0',
+                      'hidden sm:block px-1.5 py-1 rounded-md text-[9px] font-mono font-medium border transition-all duration-150 shrink-0',
                       ind.visible
                         ? 'border-white/20 bg-white/10 text-white/80'
                         : 'border-white/5 bg-white/[0.02] text-white/25 hover:text-white/40',
@@ -636,14 +636,14 @@ export default function TradingTerminal() {
           </div>
 
           {/* Bottom Trades Table */}
-          <div className="border-t border-white/[0.06] bg-[#0d0d14] xl:h-48 xl:shrink-0 xl:overflow-auto overflow-x-auto" style={{ maxHeight: '30dvh' }}>
+          <div className="border-t border-white/[0.06] bg-[#0d0d14] lg:h-40 xl:h-48 shrink-0 overflow-x-auto overflow-y-auto custom-scrollbar" style={{ maxHeight: '25dvh' }}>
             <TradesTable openTrades={openTrades} recentTrades={recentTrades} coins={coins} onSelectTrade={(trade) => {
               setSelectedSymbol(trade.symbol);
               setFocusedTradeId(trade.id);
             }} />
           </div>
-          {/* Dashboard + Controls — visible on tablet below trades, hidden on mobile */}
-          <div className="xl:hidden lg:block border-t border-white/[0.06]">
+          {/* Dashboard + Controls — visible on tablet (lg) below trades, hidden on mobile & desktop (xl+) */}
+          <div className="xl:hidden lg:block border-t border-white/[0.06] overflow-y-auto max-h-[30dvh]">
             <div className="p-2.5 sm:p-3">
               <TradingDashboard />
             </div>
@@ -653,7 +653,7 @@ export default function TradingTerminal() {
             </div>
           </div>
           {/* Mobile-only bottom control bar */}
-          <div className="lg:hidden xl:hidden border-t border-white/[0.06] bg-[#0d0d14] p-2.5 flex items-center justify-between gap-2 safe-bottom">
+          <div className="lg:hidden border-t border-white/[0.06] bg-[#0d0d14] p-2.5 flex items-center justify-between gap-2 safe-bottom shrink-0">
             <div className="flex items-center gap-2">
               <div className={cn('w-2 h-2 rounded-full', autoTrading ? 'bg-emerald-400 animate-pulse' : 'bg-white/20')} />
               <span className="text-[11px] text-white/40 font-mono">
@@ -734,7 +734,7 @@ function MobileSheet({ open, onClose, children }: { open: boolean; onClose: () =
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div
         className="absolute bottom-0 left-0 right-0 bg-[#0d0d14] border-t border-white/10 rounded-t-2xl flex flex-col animate-slide-up safe-bottom"
-        style={{ height: '70vh', maxHeight: '600px' }}
+        style={{ height: '70vh', maxHeight: 'min(600px, 80dvh)' }}
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-end px-4 py-2 border-b border-white/5 shrink-0">
@@ -764,7 +764,7 @@ function CoinListSheet({ open, onClose }: { open: boolean; onClose: () => void }
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div
         className="absolute bottom-0 left-0 right-0 bg-[#0d0d14] border-t border-white/10 rounded-t-2xl flex flex-col animate-slide-up safe-bottom"
-        style={{ height: '75vh', maxHeight: '600px' }}
+        style={{ height: '75vh', maxHeight: 'min(600px, 80dvh)' }}
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 shrink-0">

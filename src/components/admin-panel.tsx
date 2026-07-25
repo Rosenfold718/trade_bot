@@ -921,7 +921,7 @@ export default function AdminPanel({ open, onClose }: AdminPanelProps) {
         ) : (
           <div className="flex-1 overflow-hidden flex flex-col">
             <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full">
-              <TabsList className="shrink-0 mx-4 sm:mx-6 mt-3 mb-2 bg-white/[0.03] border border-white/[0.06] rounded-xl p-1 h-auto">
+              <TabsList className="shrink-0 mx-4 sm:mx-6 mt-3 mb-2 bg-white/[0.03] border border-white/[0.06] rounded-xl p-1 h-auto overflow-x-auto no-scrollbar">
                 <TabsTrigger
                   value="system"
                   className="text-[11px] font-medium px-3 py-2 rounded-lg data-[state=active]:bg-emerald-500/15 data-[state=active]:text-emerald-400 data-[state=active]:shadow-none"
@@ -950,7 +950,7 @@ export default function AdminPanel({ open, onClose }: AdminPanelProps) {
               </TabsList>
 
               {/* System tab */}
-              <TabsContent value="system" className="flex-1 mt-0 px-4 sm:px-6">
+              <TabsContent value="system" className="flex-1 mt-0 px-4 sm:px-6 overflow-y-auto custom-scrollbar">
                 <SystemTab
                   dbSettings={dbSettings}
                   pendingChanges={pendingChanges}
@@ -960,7 +960,7 @@ export default function AdminPanel({ open, onClose }: AdminPanelProps) {
 
               {/* Strategy tabs */}
               {STRATEGIES.map(s => (
-                <TabsContent key={s.id} value={s.id} className="flex-1 mt-0 px-4 sm:px-6">
+                <TabsContent key={s.id} value={s.id} className="flex-1 mt-0 px-4 sm:px-6 overflow-y-auto custom-scrollbar">
                   <StrategyTab
                     strategy={s}
                     dbSettings={dbSettings}
