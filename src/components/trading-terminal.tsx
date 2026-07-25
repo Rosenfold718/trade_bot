@@ -248,6 +248,7 @@ export default function TradingTerminal() {
   }, [setTraderState, setOpenTrades, setRecentTrades, activeStrategy]);
 
   // Auto-trading loop — runs for ALL strategies in parallel
+  // NOTE: autoTrading and addLog are the ONLY reactive deps — all state is read fresh via refs/callbacks
   useEffect(() => {
     if (!autoTrading) return;
     let cancelled = false;
@@ -257,13 +258,21 @@ export default function TradingTerminal() {
       try {
         const { runAutoTradeCycle } = await import('@/lib/client-trader');
 
-        // Load settings once per cycle for all strategies
-        const sysSettings = await fetchSettings();
+        // Load settings once per cycle for all strategies (non-blocking fallback on failure)
+        let sysSettings: Record<string, string> = {};
+        try {
+          sysSettings = await fetchSettings();
+        } catch (err) {
+          console.warn('[AutoTrade] Settings fetch failed, using defaults:', err);
+        }
+
+        // Read fresh state for each strategy (avoids stale closure)
+        const currentStates = useTerminalStore.getState().strategyStates;
 
         // Run cycle for all strategies in parallel
         const results = await Promise.all(
           STRATEGIES.map(async (s) => {
-            const ss = strategyStates[s.id];
+            const ss = currentStates[s.id];
             const sOpenTrades = ss?.openTrades ?? [];
             const sTraderState = ss?.traderState;
             const balance = sTraderState?.balance ?? 100;
@@ -272,7 +281,8 @@ export default function TradingTerminal() {
               const result = await runAutoTradeCycle(sOpenTrades, s.id, timeframe.interval, balance, 0, 0, sysSettings);
               return { strategyId: s.id, result };
             } catch (err) {
-              return { strategyId: s.id, result: { message: `Error: ${err instanceof Error ? err.message : 'unknown'}`, action: 'idle' as const, closedTrades: [], trailingUpdates: [] } };
+              console.error(`[AutoTrade][${s.id}] Error:`, err);
+              return { strategyId: s.id, result: { message: `Error: ${err instanceof Error ? err.message : 'unknown'}`, action: 'idle' as const, closedTrades: [], trailingUpdates: [], tpRepairs: [] } };
             }
           })
         );
@@ -379,7 +389,7 @@ export default function TradingTerminal() {
       clearInterval(interval);
       addLog('Авто-трейдинг остановлен', 'info');
     };
-  }, [autoTrading, timeframe.interval, setTraderState, setOpenTrades, setRecentTrades, addLog, strategyStates, setStrategyTraderState, setStrategyOpenTrades, setStrategyRecentTrades]);
+  }, [autoTrading, addLog]);
 
   // Analyze on symbol change — uses active strategy
   useEffect(() => {

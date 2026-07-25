@@ -110,6 +110,12 @@ const MIGRATION_SQLS = [
   // Phase 2: add strategy_id (added after initial table creation)
   "ALTER TABLE trader_state ADD COLUMN strategy_id TEXT DEFAULT 'momentum'",
   "ALTER TABLE trades ADD COLUMN strategy_id TEXT DEFAULT 'momentum'",
+  // Phase 3: system_settings table (admin panel)
+  `CREATE TABLE IF NOT EXISTS system_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT '',
+    updated_at TEXT DEFAULT (datetime('now'))
+  )`,
 ];
 
 export async function initDB(): Promise<void> {

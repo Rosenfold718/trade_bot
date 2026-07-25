@@ -373,28 +373,38 @@ export async function runAutoTradeCycle(
   const { closedTrades, trailingUpdates, tpRepairs } = await monitorTradesClient(openTrades, lastCandleSlot, monitorInterval, maxHoldMinutes, settings);
   const updatedOpenTrades = openTrades.filter(t => !closedTrades.some(c => c.tradeId === t.id));
 
-  if (closedTrades.length > 0 || trailingUpdates.length > 0 || tpRepairs.length > 0) {
-    const parts: string[] = [];
-    if (closedTrades.length > 0) parts.push(`Закрыто ${closedTrades.length}: ${closedTrades.map(c => `${c.symbol.replace('USDT', '')} (${c.reason})`).join(', ')}`);
-    if (trailingUpdates.length > 0) parts.push(`Trailing SL: ${trailingUpdates.length}`);
-    if (tpRepairs.length > 0) parts.push(`TP ремонт: ${tpRepairs.length}`);
-    return { action: 'monitor', closedTrades, trailingUpdates, tpRepairs, message: parts.join(' | '), scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
-  }
+  // Collect monitoring messages
+  const monitorParts: string[] = [];
+  if (closedTrades.length > 0) monitorParts.push(`Закрыто ${closedTrades.length}: ${closedTrades.map(c => `${c.symbol.replace('USDT', '')} (${c.reason})`).join(', ')}`);
+  if (trailingUpdates.length > 0) monitorParts.push(`Trailing SL: ${trailingUpdates.length}`);
+  if (tpRepairs.length > 0) monitorParts.push(`TP ремонт: ${tpRepairs.length}`);
+
+  // CRITICAL FIX: Always proceed to find signals, even if monitoring found changes.
+  // Previously, monitoring results blocked signal finding — now both run.
 
   // Each signal opens 2 trades (secure + runner), need room for the pair
   if (updatedOpenTrades.length + 2 > maxTrades) {
-    return { action: 'idle', closedTrades: [], trailingUpdates: [], tpRepairs: [], message: `Лимит: ${updatedOpenTrades.length}/${maxTrades}, жду...`, scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
+    const msg = monitorParts.length > 0
+      ? monitorParts.join(' | ') + ` | Лимит: ${updatedOpenTrades.length}/${maxTrades}`
+      : `Лимит: ${updatedOpenTrades.length}/${maxTrades}, жду...`;
+    return { action: 'monitor', closedTrades, trailingUpdates, tpRepairs, message: msg, scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
   }
 
   if (balance < 1) {
-    return { action: 'idle', closedTrades: [], trailingUpdates: [], tpRepairs: [], message: 'Баланс исчерпан (<$1)', scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
+    const msg = monitorParts.length > 0
+      ? monitorParts.join(' | ') + ' | Баланс исчерпан (<$1)'
+      : 'Баланс исчерпан (<$1)';
+    return { action: 'monitor', closedTrades, trailingUpdates, tpRepairs, message: msg, scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
   }
 
   const openSymbols = new Set(updatedOpenTrades.map(t => t.symbol));
 
   const best = await findBestSignal(openSymbols, strategyId, strategyInterval, strategyLimit, strategy, settings);
   if (!best || best.decision.direction === 'none') {
-    return { action: 'idle', closedTrades: [], trailingUpdates: [], tpRepairs: [], message: 'Сигналов не найдено, сканирую...', scannedCount: 30, bestScore: 0, newCandleHour: currentSlot };
+    const msg = monitorParts.length > 0
+      ? monitorParts.join(' | ') + ' | Сигналов не найдено'
+      : 'Сигналов не найдено, сканирую...';
+    return { action: 'idle', closedTrades, trailingUpdates, tpRepairs, message: msg, scannedCount: 30, bestScore: 0, newCandleHour: currentSlot };
   }
 
   // ============================================================
@@ -436,9 +446,10 @@ export async function runAutoTradeCycle(
   }
 
   const coinName = best.symbol.replace('USDT', '');
+  const signalMsg = `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${coinName} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x${newTrades.length > 1 ? ' | Secure 1.5R + Runner' : ' |'} ${strategy.riskRewardRatio}R`;
   return {
-    action: 'new-trade', closedTrades: [], trailingUpdates: [], tpRepairs: [], newTrades,
-    message: `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${coinName} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x${newTrades.length > 1 ? ' | Secure 1.5R + Runner' : ' |'} ${strategy.riskRewardRatio}R`,
+    action: 'new-trade', closedTrades, trailingUpdates, tpRepairs, newTrades,
+    message: monitorParts.length > 0 ? monitorParts.join(' | ') + ' | ' + signalMsg : signalMsg,
     scannedCount: 30, bestScore: Math.abs(best.decision.score), newCandleHour: currentSlot,
   };
 }
