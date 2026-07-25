@@ -625,12 +625,12 @@ function makeScalpHunterDecision(
 
   // Indicator 1: StochRSI(5, 5) — very fast
   const stochRSI = calcStochRSI(closes, 5, 5);
-  const stochLong = stochRSI < 0.15;
-  const stochShort = stochRSI > 0.85;
+  const stochLong = stochRSI < 0.25;
+  const stochShort = stochRSI > 0.75;
   const stochStrength = stochLong
-    ? (0.15 - stochRSI) / 0.15
+    ? (0.25 - stochRSI) / 0.25
     : stochShort
-      ? (stochRSI - 0.85) / 0.15
+      ? (stochRSI - 0.75) / 0.25
       : 0;
   indicators.push({
     name: 'StochRSI',
@@ -660,8 +660,8 @@ function makeScalpHunterDecision(
     const recent5Vol = candles.slice(-5).reduce((s, c) => s + c.volume, 0) / 5;
     const last20Vol = candles.slice(-20).reduce((s, c) => s + c.volume, 0) / 20;
     const volRatio = last20Vol > 0 ? recent5Vol / last20Vol : 0;
-    volSpike = volRatio > 1.8;
-    volStrength = volSpike ? Math.min((volRatio - 1.8) / 3, 1) : 0;
+    volSpike = volRatio > 1.3;
+    volStrength = volSpike ? Math.min((volRatio - 1.3) / 2, 1) : 0;
   }
   indicators.push({
     name: 'Volume',
@@ -671,8 +671,8 @@ function makeScalpHunterDecision(
 
   // Indicator 4: VWAP deviation — >0.3% above VWAP = short, below = long
   const vwapResult = calcVWAP(candles, 20);
-  const vwapLong = vwapResult.signal < -0.3;   // price below VWAP by >0.3%
-  const vwapShort = vwapResult.signal > 0.3;    // price above VWAP by >0.3%
+  const vwapLong = vwapResult.signal < -0.2;   // price below VWAP by >0.2%
+  const vwapShort = vwapResult.signal > 0.2;    // price above VWAP by >0.2%
   const vwapStrength = vwapLong
     ? Math.min(Math.abs(vwapResult.signal) / 1, 1)
     : vwapShort
@@ -686,9 +686,9 @@ function makeScalpHunterDecision(
 
   // Indicator 5: RSI(7) — very fast, aggressive thresholds
   const rsi = calcRSI(closes, 7);
-  const rsiLong = rsi < 25;
-  const rsiShort = rsi > 75;
-  const rsiStrength = rsiLong ? (25 - rsi) / 25 : rsiShort ? (rsi - 75) / 25 : 0;
+  const rsiLong = rsi < 30;
+  const rsiShort = rsi > 70;
+  const rsiStrength = rsiLong ? (30 - rsi) / 30 : rsiShort ? (rsi - 70) / 30 : 0;
   indicators.push({
     name: 'RSI',
     signal: rsiLong ? 1 : rsiShort ? -1 : 0,
@@ -714,7 +714,7 @@ function makeScalpHunterDecision(
     strength: momentumStrength,
   });
 
-  // Count confluence: require ≥3 of 6 indicators to agree
+  // Count confluence: require ≥2 of 6 indicators to agree (relaxed for scalping frequency)
   let longCount = 0;
   let shortCount = 0;
   let longScore = 0;
@@ -725,17 +725,17 @@ function makeScalpHunterDecision(
     else if (ind.signal < 0) { shortCount++; shortScore += ind.strength; }
   }
 
-  if (longCount < 3 && shortCount < 3) {
+  if (longCount < 2 && shortCount < 2) {
     return { symbol, direction: 'none', score: Math.max(longScore, shortScore), leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
   }
 
   let direction: 'long' | 'short' | 'none' = 'none';
   let score = 0;
 
-  if (longCount >= 3 && longScore >= strategy.scoreThreshold && longScore >= shortScore) {
+  if (longCount >= 2 && longScore >= strategy.scoreThreshold && longScore >= shortScore) {
     direction = 'long';
     score = longScore;
-  } else if (shortCount >= 3 && shortScore >= strategy.scoreThreshold && shortScore > longScore) {
+  } else if (shortCount >= 2 && shortScore >= strategy.scoreThreshold && shortScore > longScore) {
     direction = 'short';
     score = shortScore;
   }

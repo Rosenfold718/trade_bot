@@ -75,7 +75,9 @@ export async function findBestSignal(
 
   const symbols = TOP_50_SYMBOLS;
   const available = symbols.filter(s => !openTradeSymbols.has(s));
-  const checkSymbols = available.sort(() => Math.random() - 0.5).slice(0, 20);
+  // Scalper scans more symbols per cycle for higher frequency
+  const scanLimit = strategyId === 'scalper' ? 30 : 20;
+  const checkSymbols = available.sort(() => Math.random() - 0.5).slice(0, scanLimit);
 
   if (strategy.timeFilterEnabled) {
     const mskHour = new Date().toLocaleTimeString('en-US', { timeZone: 'Europe/Moscow', hour: 'numeric', hour12: false }).padStart(2, '0');
