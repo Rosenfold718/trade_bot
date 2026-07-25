@@ -498,14 +498,28 @@ function noDecision(symbol: string, candles: CandleData[]): TradingDecision {
   };
 }
 
+export type StrategyOverrides = {
+  scoreThreshold?: number;
+  maxLeverage?: number;
+  riskRewardRatio?: number;
+  adxMin?: number | null;
+  mtfEnabled?: boolean;
+};
+
 export function makeStrategyDecision(
   strategyId: string,
   symbol: string,
   candles: CandleData[],
   idleMinutes: number = 0,
+  strategyOverride?: StrategyOverrides & Partial<StrategyConfig>,
 ): TradingDecision {
-  const strategy = getStrategy(strategyId);
-  if (!strategy) return noDecision(symbol, candles);
+  const base = getStrategy(strategyId);
+  if (!base) return noDecision(symbol, candles);
+
+  // Merge overrides with base strategy config
+  const strategy: StrategyConfig = strategyOverride
+    ? { ...base, ...strategyOverride } as StrategyConfig
+    : base;
 
   switch (strategyId) {
     case 'scalper':

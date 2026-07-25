@@ -1,7 +1,8 @@
 import type { CandleData, TradingDecision, Trade } from './types';
 import { TOP_50_SYMBOLS } from './types';
 import { makeStrategyDecision } from './trading-engine';
-import { getStrategy } from './strategies';
+import { type StrategyConfig, getStrategy } from './strategies';
+import { fetchSettings, getEffectiveStrategy, getSys } from './settings-cache';
 
 // ============================================================
 // Client-side Binance data fetching (CORS works from browser)
@@ -49,10 +50,11 @@ export async function analyzeSymbol(
   interval: string,
   limit: number,
   strategyId: string = 'momentum',
+  strategyOverride?: StrategyConfig,
 ): Promise<TradingDecision | null> {
   const candles = await fetchCandlesClient(symbol, interval, limit);
   if (candles.length < 50) return null;
-  const decision = makeStrategyDecision(strategyId, symbol, candles, 30);
+  const decision = makeStrategyDecision(strategyId, symbol, candles, 30, strategyOverride);
   return decision;
 }
 
@@ -65,17 +67,19 @@ export async function findBestSignal(
   strategyId: string = 'momentum',
   interval: string = '1h',
   limit: number = 1440,
+  strategyOverride?: StrategyConfig,
+  sysSettings?: Record<string, string>,
 ): Promise<{ decision: TradingDecision; price: number; symbol: string } | null> {
-  const strategy = getStrategy(strategyId);
+  const strategy = strategyOverride ?? getStrategy(strategyId);
   if (!strategy) return null;
 
-  // Use strategy-specific interval if no override provided matching strategy default
   const effectiveInterval = interval;
   const effectiveLimit = limit;
 
   const symbols = TOP_50_SYMBOLS;
   const available = symbols.filter(s => !openTradeSymbols.has(s));
-  // Scalper scans more symbols per cycle for higher frequency
+
+  // System setting: how many symbols to scan (or per-strategy override)
   const scanLimit = strategyId === 'scalper' ? 30 : 20;
   const checkSymbols = available.sort(() => Math.random() - 0.5).slice(0, scanLimit);
 
@@ -93,24 +97,30 @@ export async function findBestSignal(
   let noneCount = 0;
   let mtfRejected = 0;
 
+  // System setting: volume boost multiplier (default 1.2)
+  const volBoost = sysSettings
+    ? Number(getSys(sysSettings, 'system.volumeBoost', 1.2))
+    : 1.2;
+  const volBoostMultiplier = 1.0 + (volBoost - 1.0); // e.g. 1.2 → boost by 20%
+  const volBoostThreshold = 1.0 + (volBoost - 1.0); // same as multiplier for comparison
+
   for (const sym of checkSymbols) {
     try {
       const candles = await fetchCandlesClient(sym, effectiveInterval, effectiveLimit);
       if (candles.length < 50) continue;
-      const decision = makeStrategyDecision(strategyId, sym, candles, 0);
+      const decision = makeStrategyDecision(strategyId, sym, candles, 0, strategyOverride);
       if (decision.direction === 'none') { noneCount++; continue; }
 
       const avgVol = candles.slice(-20).reduce((s, c) => s + c.volume, 0) / Math.min(20, candles.length);
       const currentVol = candles[candles.length - 1].volume;
-      if (avgVol > 0 && currentVol > avgVol * 1.2) {
-        decision.score *= 1.15;
+      if (avgVol > 0 && currentVol > avgVol * volBoostThreshold) {
+        decision.score *= volBoostMultiplier;
       }
 
       if (strategy.mtfEnabled) {
         try {
-          // Use higher timeframe for MTF confirmation
-          const mtfInterval = effectiveInterval === '1m' || effectiveInterval === '5m' ? '1h' 
-            : effectiveInterval === '15m' ? '4h' 
+          const mtfInterval = effectiveInterval === '1m' || effectiveInterval === '5m' ? '1h'
+            : effectiveInterval === '15m' ? '4h'
             : '1d';
           const mtfCandles = await fetchCandlesClient(sym, mtfInterval, 200);
           if (mtfCandles.length >= 50) {
@@ -178,11 +188,21 @@ export async function monitorTradesClient(
   lastCandleSlot: number,
   monitorInterval: string = '1h',
   maxHoldMinutes: number = 720,
+  sysSettings?: Record<string, string>,
 ): Promise<MonitorResult> {
   const closedTrades: MonitorResult['closedTrades'] = [];
   const trailingUpdates: MonitorResult['trailingUpdates'] = [];
   const tpRepairs: MonitorResult['tpRepairs'] = [];
   const currentSlot = getCurrentCandleSlot(monitorInterval);
+
+  // System settings for auto-repair caps (defaults: SL 5%, TP 10%)
+  const slCapPct = sysSettings ? Number(getSys(sysSettings, 'system.maxSLCapDistance', 5)) / 100 : 0.05;
+  const tpCapPct = sysSettings ? Number(getSys(sysSettings, 'system.maxTPCapDistance', 10)) / 100 : 0.10;
+
+  // System settings for trailing stop toggles
+  const trailing1x = sysSettings ? getSys(sysSettings, 'system.trailing1x', true) : true;
+  const trailing2x = sysSettings ? getSys(sysSettings, 'system.trailing2x', true) : true;
+  const trailing3x = sysSettings ? getSys(sysSettings, 'system.trailing3x', true) : true;
 
   if (currentSlot <= lastCandleSlot) {
     return { closedTrades: [], trailingUpdates: [], tpRepairs: [] };
@@ -204,28 +224,28 @@ export async function monitorTradesClient(
         if (slBad || tpBad) {
           console.warn(`[monitorClient] Auto-repairing inverted SL/TP for ${trade.id}`);
           if (slBad) {
-            const fixedSL = isLong ? trade.entry_price * 0.98 : trade.entry_price * 1.02;
+            const fixedSL = isLong ? trade.entry_price * (1 - slCapPct) : trade.entry_price * (1 + slCapPct);
             trailingUpdates.push({ tradeId: trade.id, newStopLoss: fixedSL, reason: 'Auto-repair: inverted SL' });
             repairedSL = true;
           }
           if (tpBad) {
-            const fixedTP = isLong ? trade.entry_price * 1.05 : trade.entry_price * 0.95;
+            const fixedTP = isLong ? trade.entry_price * (1 + tpCapPct) : trade.entry_price * (1 - tpCapPct);
             tpRepairs.push({ tradeId: trade.id, newTakeProfit: fixedTP, reason: 'Auto-repair: inverted TP' });
           }
         }
-        // Cap excessive distances
+        // Cap excessive distances (using system settings)
         if (!repairedSL && trade.stop_loss) {
           const slDist = Math.abs(trade.stop_loss - trade.entry_price) / trade.entry_price;
-          if (slDist > 0.05) {
-            const cappedSL = isLong ? trade.entry_price * 0.95 : trade.entry_price * 1.05;
-            trailingUpdates.push({ tradeId: trade.id, newStopLoss: cappedSL, reason: 'Auto-repair: excessive SL capped' });
+          if (slDist > slCapPct) {
+            const cappedSL = isLong ? trade.entry_price * (1 - slCapPct) : trade.entry_price * (1 + slCapPct);
+            trailingUpdates.push({ tradeId: trade.id, newStopLoss: cappedSL, reason: `Auto-repair: excessive SL capped at ${slCapPct * 100}%` });
           }
         }
         if (!repairedTP && trade.take_profit) {
           const tpDist = Math.abs(trade.take_profit - trade.entry_price) / trade.entry_price;
-          if (tpDist > 0.10) {
-            const cappedTP = isLong ? trade.entry_price * 1.10 : trade.entry_price * 0.90;
-            tpRepairs.push({ tradeId: trade.id, newTakeProfit: cappedTP, reason: 'Auto-repair: excessive TP capped' });
+          if (tpDist > tpCapPct) {
+            const cappedTP = isLong ? trade.entry_price * (1 + tpCapPct) : trade.entry_price * (1 - tpCapPct);
+            tpRepairs.push({ tradeId: trade.id, newTakeProfit: cappedTP, reason: `Auto-repair: excessive TP capped at ${tpCapPct * 100}%` });
           }
         }
       }
@@ -258,23 +278,23 @@ export async function monitorTradesClient(
         shouldClose = true; reason = 'SL hit';
       }
 
-      // Trailing stop: 3 levels
+      // Trailing stop: 3 levels (each togglable via system settings)
       if (!shouldClose && trade.stop_loss && trade.entry_price) {
         const initialSlDistance = Math.abs(trade.entry_price - trade.stop_loss);
         const isLong = trade.direction === 'long';
         const favorableMove = isLong ? candleClose - trade.entry_price : trade.entry_price - candleClose;
 
-        if (favorableMove >= initialSlDistance * 3) {
+        if (trailing3x && favorableMove >= initialSlDistance * 3) {
           const trailedSL = isLong ? trade.entry_price + initialSlDistance * 2 : trade.entry_price - initialSlDistance * 2;
           if ((isLong && trailedSL > (trade.stop_loss ?? 0)) || (!isLong && trailedSL < (trade.stop_loss ?? Infinity))) {
             trailingUpdates.push({ tradeId: trade.id, newStopLoss: trailedSL, reason: 'Trailing lock 2× profit' });
           }
-        } else if (favorableMove >= initialSlDistance * 2) {
+        } else if (trailing2x && favorableMove >= initialSlDistance * 2) {
           const trailedSL = isLong ? trade.entry_price + initialSlDistance : trade.entry_price - initialSlDistance;
           if ((isLong && trailedSL > (trade.stop_loss ?? 0)) || (!isLong && trailedSL < (trade.stop_loss ?? Infinity))) {
             trailingUpdates.push({ tradeId: trade.id, newStopLoss: trailedSL, reason: 'Trailing lock profit' });
           }
-        } else if (favorableMove >= initialSlDistance) {
+        } else if (trailing1x && favorableMove >= initialSlDistance) {
           const breakevenSL = isLong ? trade.entry_price * 1.001 : trade.entry_price * 0.999;
           if ((isLong && breakevenSL > (trade.stop_loss ?? 0)) || (!isLong && breakevenSL < (trade.stop_loss ?? Infinity))) {
             trailingUpdates.push({ tradeId: trade.id, newStopLoss: breakevenSL, reason: 'Trailing to breakeven' });
@@ -296,7 +316,7 @@ export async function monitorTradesClient(
 }
 
 // ============================================================
-// Full auto-trade cycle — institutional money management
+// Full auto-trade cycle — reads all settings from DB
 // ============================================================
 
 export type NewTradeInfo = {
@@ -312,6 +332,7 @@ export async function runAutoTradeCycle(
   balance: number,
   lastCandleSlot: number = 0,
   recentPnl24h: number = 0,
+  sysSettings?: Record<string, string>,
 ): Promise<{
     action: 'monitor' | 'new-trade' | 'idle';
     closedTrades: MonitorResult['closedTrades'];
@@ -323,29 +344,33 @@ export async function runAutoTradeCycle(
     bestScore: number;
     newCandleHour: number;
   }> {
-  const strategy = getStrategy(strategyId);
-  const maxTrades = strategy?.maxOpenTrades ?? 10;
-  const tradeSizePct = strategy?.tradeSizePercent ?? 0.10;
-  const currentSlot = getCurrentCandleSlot(strategy?.monitorInterval ?? '1h');
+  // ── Load settings once per cycle if not provided ──
+  const settings = sysSettings ?? await fetchSettings();
+  const strategy = getEffectiveStrategy(settings, strategyId);
 
-  // Use strategy-specific interval and candle limit
-  const strategyInterval = strategy?.defaultInterval ?? '1h';
-  const strategyLimit = strategy?.candleLimit ?? 1440;
-  const monitorInterval = strategy?.monitorInterval ?? '1h';
-  const maxHoldMinutes = strategy?.maxHoldMinutes ?? 720;
+  const maxTrades = strategy.maxOpenTrades;
+  const tradeSizePct = strategy.tradeSizePercent;
+  const currentSlot = getCurrentCandleSlot(strategy.monitorInterval);
 
-  // DAILY LOSS LIMIT: stop trading if lost >5% in 24h
-  const dailyLossLimit = balance * 0.05;
+  // Use strategy-specific interval and candle limit (from DB overrides)
+  const strategyInterval = strategy.defaultInterval;
+  const strategyLimit = strategy.candleLimit;
+  const monitorInterval = strategy.monitorInterval;
+  const maxHoldMinutes = strategy.maxHoldMinutes;
+
+  // System setting: daily loss limit (default 5%)
+  const dailyLossLimitPct = Number(getSys(settings, 'system.dailyLossLimit', 5)) / 100;
+  const dailyLossLimit = balance * dailyLossLimitPct;
   if (recentPnl24h < -dailyLossLimit) {
     return {
       action: 'idle', closedTrades: [], trailingUpdates: [], tpRepairs: [],
-      message: `Дневной лимит: -$${Math.abs(recentPnl24h).toFixed(2)} (>5%). Пауза до завтра.`,
+      message: `Дневной лимит: -$${Math.abs(recentPnl24h).toFixed(2)} (>${dailyLossLimitPct * 100}%). Пауза до завтра.`,
       scannedCount: 0, bestScore: 0, newCandleHour: currentSlot,
     };
   }
 
-  // Step 1: Monitor open trades
-  const { closedTrades, trailingUpdates, tpRepairs } = await monitorTradesClient(openTrades, lastCandleSlot, monitorInterval, maxHoldMinutes);
+  // Step 1: Monitor open trades (pass system settings for caps + trailing)
+  const { closedTrades, trailingUpdates, tpRepairs } = await monitorTradesClient(openTrades, lastCandleSlot, monitorInterval, maxHoldMinutes, settings);
   const updatedOpenTrades = openTrades.filter(t => !closedTrades.some(c => c.tradeId === t.id));
 
   if (closedTrades.length > 0 || trailingUpdates.length > 0 || tpRepairs.length > 0) {
@@ -367,22 +392,20 @@ export async function runAutoTradeCycle(
 
   const openSymbols = new Set(updatedOpenTrades.map(t => t.symbol));
 
-  const best = await findBestSignal(openSymbols, strategyId, strategyInterval, strategyLimit);
+  const best = await findBestSignal(openSymbols, strategyId, strategyInterval, strategyLimit, strategy, settings);
   if (!best || best.decision.direction === 'none') {
-    return { action: 'idle', closedTrades: [], trailingUpdates: [], tpRepairs: [], message: 'Сигналов не найдено, сканирую...', scannedCount: 20, bestScore: 0, newCandleHour: currentSlot };
+    return { action: 'idle', closedTrades: [], trailingUpdates: [], tpRepairs: [], message: 'Сигналов не найдено, сканирую...', scannedCount: 30, bestScore: 0, newCandleHour: currentSlot };
   }
 
   // ============================================================
   // Trade sizing and TP levels
-  //   Momentum (1:3 R:R): split into Secure 1.5R + Runner full R:R
-  //   Scalper (1:1.5 R:R): single trade, fast in/out
-  //   Position Alpha (1:5 R:R): single trade, capped at 1:3 R:R
+  // System setting: max TP distance (default 8%)
   // ============================================================
   const slDist = Math.abs(best.price - best.decision.stopLoss);
   const isLong = best.decision.direction === 'long';
 
-  // Cap TP distance: max 8% from entry (prevents absurd TP levels)
-  const maxTPDistance = best.price * 0.08;
+  const maxTPDistancePct = Number(getSys(settings, 'system.maxTPDistance', 8)) / 100;
+  const maxTPDistance = best.price * maxTPDistancePct;
 
   const runnerTP = isLong
     ? Math.min(best.decision.takeProfit, best.price + maxTPDistance)
@@ -415,7 +438,7 @@ export async function runAutoTradeCycle(
   const coinName = best.symbol.replace('USDT', '');
   return {
     action: 'new-trade', closedTrades: [], trailingUpdates: [], tpRepairs: [], newTrades,
-    message: `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${coinName} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x${newTrades.length > 1 ? ' | Secure 1.5R + Runner' : ' |'} ${strategy?.riskRewardRatio ?? 3}R`,
-    scannedCount: 20, bestScore: Math.abs(best.decision.score), newCandleHour: currentSlot,
+    message: `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${coinName} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x${newTrades.length > 1 ? ' | Secure 1.5R + Runner' : ' |'} ${strategy.riskRewardRatio}R`,
+    scannedCount: 30, bestScore: Math.abs(best.decision.score), newCandleHour: currentSlot,
   };
 }

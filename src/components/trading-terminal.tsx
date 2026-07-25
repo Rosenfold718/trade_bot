@@ -13,6 +13,7 @@ import OrderBook from '@/components/order-book';
 import { DEFAULT_INDICATORS, type IndicatorConfig } from '@/components/chart';
 import type { CandleData, TraderState, Trade, IndicatorWeight } from '@/lib/types';
 import AdminPanel from '@/components/admin-panel';
+import { fetchSettings, invalidateSettingsCache } from '@/lib/settings-cache';
 
 const MomentumReport = dynamic(() => import('@/components/momentum-report'), {
   ssr: false,
@@ -256,6 +257,9 @@ export default function TradingTerminal() {
       try {
         const { runAutoTradeCycle } = await import('@/lib/client-trader');
 
+        // Load settings once per cycle for all strategies
+        const sysSettings = await fetchSettings();
+
         // Run cycle for all strategies in parallel
         const results = await Promise.all(
           STRATEGIES.map(async (s) => {
@@ -265,7 +269,7 @@ export default function TradingTerminal() {
             const balance = sTraderState?.balance ?? 100;
 
             try {
-              const result = await runAutoTradeCycle(sOpenTrades, s.id, timeframe.interval, balance);
+              const result = await runAutoTradeCycle(sOpenTrades, s.id, timeframe.interval, balance, 0, 0, sysSettings);
               return { strategyId: s.id, result };
             } catch (err) {
               return { strategyId: s.id, result: { message: `Error: ${err instanceof Error ? err.message : 'unknown'}`, action: 'idle' as const, closedTrades: [], trailingUpdates: [] } };

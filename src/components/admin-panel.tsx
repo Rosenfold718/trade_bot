@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { STRATEGIES, type StrategyConfig } from '@/lib/strategies';
+import { invalidateSettingsCache } from '@/lib/settings-cache';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import {
@@ -843,6 +844,8 @@ export default function AdminPanel({ open, onClose }: AdminPanelProps) {
       setDbSettings(data.settings ?? {});
       setPendingChanges({});
       setSaved(true);
+      // Invalidate client-side cache so next trade cycle picks up new values
+      invalidateSettingsCache();
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
       console.error('Failed to save settings:', err);
