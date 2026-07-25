@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Component, type ReactNode } from 'react';
 import { useSession, signOut } from 'next-auth/react';
 import dynamic from 'next/dynamic';
 import AuthScreen from '@/components/auth/auth-screen';
@@ -21,6 +21,34 @@ const TradingTerminal = dynamic(() => import('@/components/trading-terminal'), {
 });
 
 type AppView = 'auth' | 'payment' | 'terminal';
+
+// ── Global Error Boundary ──
+class TerminalErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+  state = { hasError: false };
+  static getDerivedStateFromError() { return { hasError: true }; }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center gap-4 bg-[#0a0a0f] p-6">
+          <div className="w-12 h-12 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+            <span className="text-2xl">⚠️</span>
+          </div>
+          <div className="text-center">
+            <p className="text-sm font-semibold text-white/80">Ошибка загрузки терминала</p>
+            <p className="text-xs text-white/30 mt-1 max-w-xs">Произошла ошибка. Попробуйте перезагрузить страницу.</p>
+          </div>
+          <button
+            onClick={() => { window.location.reload(); }}
+            className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors"
+          >
+            Перезагрузить
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const ADMIN_SETUP_KEY = 'trade-bot-admin-2024';
 
@@ -115,7 +143,9 @@ export default function Home() {
       <SubscriptionBar daysRemaining={subDays} username={username} onLogout={handleLogout} onAdminPayments={isAdmin ? () => setShowAdminPanel(p => !p) : undefined} />
       <AdminPaymentsPanel open={showAdminPanel} onClose={() => setShowAdminPanel(false)} />
       <div className="flex-1 min-h-0 overflow-hidden">
-        <TradingTerminal />
+        <TerminalErrorBoundary>
+          <TradingTerminal />
+        </TerminalErrorBoundary>
       </div>
     </div>
   );

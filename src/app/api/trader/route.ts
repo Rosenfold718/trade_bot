@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, getTotalClosedPnl, getClosedTradeCount, openTrade, closeTrade, updateStopLoss, updateTakeProfit, updateBalance, repayDebt, initUserTradingData } from '@/lib/db';
+import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, getTotalClosedPnl, getClosedTradeCount, openTrade, closeTrade, updateStopLoss, updateTakeProfit, updateBalance, repayDebt, initUserTradingData, getClosedTrades } from '@/lib/db';
 import { fetchKlines, makeStrategyDecision, fetchTopSymbols } from '@/lib/trading-engine';
 import { getAuthUserId } from '@/lib/auth-helpers';
 import { getStrategy } from '@/lib/strategies';
@@ -27,6 +27,20 @@ export async function GET(request: NextRequest) {
       getTotalClosedPnl(userId, strategyId),
       getClosedTradeCount(userId, strategyId),
     ]);
+
+    // Periodic balance self-heal: recalculate from trade history to fix drift
+    try {
+      const allClosed = await getClosedTrades(userId, strategyId);
+      const closedPnlSum = allClosed.reduce((s, t) => s + (t.pnl ?? 0), 0);
+      const openAmountSum = openTrades.reduce((s, t) => s + t.amount, 0);
+      const correctBalance = Math.max(0, 100 + closedPnlSum - openAmountSum);
+      if (Math.abs(state.balance - correctBalance) > 0.01) {
+        console.log(`[trader GET] Balance fix: ${state.balance.toFixed(2)} → ${correctBalance.toFixed(2)}`);
+        await updateBalance(userId, correctBalance, strategyId);
+        state.balance = correctBalance;
+      }
+    } catch { /* non-critical */ }
+
     return NextResponse.json({ state, weights, openTrades, recentTrades, totalClosedPnl, closedTradeCount });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

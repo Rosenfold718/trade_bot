@@ -200,7 +200,7 @@ export default function TradingTerminal() {
       initDone.current = false;
       setInitFailed(true);
     }
-  }, [setWeights, setStrategyTraderState, setStrategyOpenTrades, setStrategyRecentTrades]);
+  }, [setWeights, setStrategyTraderState, setStrategyOpenTrades, setStrategyRecentTrades, setStrategyTotalClosedPnl, setStrategyClosedTradeCount]);
 
   useEffect(() => { initData(); }, [initData]);
 
@@ -248,12 +248,12 @@ export default function TradingTerminal() {
         if (data.state) setTraderState(data.state as TraderState);
         if (data.openTrades) setOpenTrades(data.openTrades as Trade[]);
         if (data.recentTrades) setRecentTrades(data.recentTrades as Trade[]);
-        if (data.totalClosedPnl !== undefined) setTotalClosedPnl(data.totalClosedPnl);
-        if (data.closedTradeCount !== undefined) setClosedTradeCount(data.closedTradeCount);
+        if (data.totalClosedPnl !== undefined) setStrategyTotalClosedPnl(activeStrategy, data.totalClosedPnl as number);
+        if (data.closedTradeCount !== undefined) setStrategyClosedTradeCount(activeStrategy, data.closedTradeCount as number);
       } catch { /* silent */ }
     }, 15000);
     return () => clearInterval(interval);
-  }, [setTraderState, setOpenTrades, setRecentTrades, setTotalClosedPnl, setClosedTradeCount, activeStrategy]);
+  }, [setTraderState, setOpenTrades, setRecentTrades, setStrategyTotalClosedPnl, setStrategyClosedTradeCount, activeStrategy]);
 
   // Auto-trading loop — runs for ALL strategies in parallel
   // NOTE: autoTrading and addLog are the ONLY reactive deps — all state is read fresh via refs/callbacks
