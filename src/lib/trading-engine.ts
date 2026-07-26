@@ -234,6 +234,175 @@ function calcVWAP(candles: CandleData[], period: number = 20): { vwap: number; s
 }
 
 // ============================================================
+// Anti-Chase / Spike Detection Indicators
+// (Based on freqtrade community strategies + ta4j patterns)
+// ============================================================
+
+/**
+ * ATR Ratio — current candle range vs ATR(14).
+ * Values > 2.5 = spike candle (the move already happened).
+ * Used to BLOCK entry on spike candles.
+ */
+function calcCandleATRRatio(candles: CandleData[], atr: number): number {
+  if (atr <= 0) return 1;
+  const last = candles[candles.length - 1];
+  return (last.high - last.low) / atr;
+}
+
+/**
+ * Rate of Change (ROC) — % price change over N candles.
+ * Detects velocity. ROC_3 > 8% = sharp 3-candle move = block entry.
+ */
+function calcROC(closes: number[], period: number = 3): number {
+  if (closes.length < period + 1) return 0;
+  const current = closes[closes.length - 1];
+  const past = closes[closes.length - 1 - period];
+  if (past === 0) return 0;
+  return ((current - past) / past) * 100;
+}
+
+/**
+ * CCI (Commodity Channel Index) — detects overbought/oversold cyclical extremes.
+ * |CCI| > 200 = extreme, likely to revert.
+ */
+function calcCCI(candles: CandleData[], period: number = 20): number {
+  if (candles.length < period) return 0;
+  const slice = candles.slice(-period);
+  const typicalPrices = slice.map(c => (c.high + c.low + c.close) / 3);
+  const smaTP = typicalPrices.reduce((s, v) => s + v, 0) / period;
+  const meanDev = typicalPrices.reduce((s, v) => s + Math.abs(v - smaTP), 0) / period;
+  if (meanDev === 0) return 0;
+  const currentTP = typicalPrices[typicalPrices.length - 1];
+  return (currentTP - smaTP) / (0.015 * meanDev);
+}
+
+/**
+ * Volume spike ratio — current volume vs 20-period average.
+ * > 5.0 = extreme volume anomaly (pump/dump signature).
+ */
+function calcVolumeRatio(candles: CandleData[], period: number = 20): number {
+  if (candles.length < period + 1) return 1;
+  const avgVol = candles.slice(-period - 1, -1).reduce((s, c) => s + c.volume, 0) / period;
+  if (avgVol === 0) return 1;
+  return candles[candles.length - 1].volume / avgVol;
+}
+
+/**
+ * Candle body/wick analysis — detects directional spike candles.
+ * Returns { bodyRatio, closePosition } where:
+ *   bodyRatio > 0.85 = strong directional candle (likely a pump candle)
+ *   closePosition > 0.95 = closed at top (buying the top for longs)
+ */
+function analyzeCandleShape(candle: CandleData): { bodyRatio: number; closePosition: number; upperWickRatio: number; lowerWickRatio: number } {
+  const range = candle.high - candle.low;
+  if (range === 0) return { bodyRatio: 0, closePosition: 0.5, upperWickRatio: 0, lowerWickRatio: 0 };
+  const body = Math.abs(candle.close - candle.open);
+  const upperWick = candle.high - Math.max(candle.close, candle.open);
+  const lowerWick = Math.min(candle.close, candle.open) - candle.low;
+  return {
+    bodyRatio: body / range,
+    closePosition: (candle.close - candle.low) / range,
+    upperWickRatio: upperWick / range,
+    lowerWickRatio: lowerWick / range,
+  };
+}
+
+/**
+ * Distance from EMA — detects overextension.
+ * distance > 5% from EMA20 = overextended (will revert).
+ */
+function calcDistanceFromMA(closes: number[], ma: number): number {
+  if (ma === 0) return 0;
+  const price = closes[closes.length - 1];
+  return ((price - ma) / ma) * 100;
+}
+
+/**
+ * ── SPIKE GUARD ──
+ * Comprehensive anti-chase filter. Returns { blocked, reason } if any
+ * spike/exhaustion condition is detected. Used by ALL strategies.
+ *
+ * Based on freqtrade community "Complete Spike Guard" pattern:
+ *   1. Candle ATR ratio > 2.5 (current candle IS the spike)
+ *   2. ROC(3) > 8% (3-candle move too large)
+ *   3. Volume ratio > 5.0 AND ROC(1) > 2% (FOMO candle)
+ *   4. RSI extreme (direction-dependent)
+ *   5. Distance from EMA20 > 5% (overextended)
+ *   6. CCI > ±200 (cyclical extreme)
+ *   7. Candle closed at extreme (closePosition > 0.95 for longs)
+ */
+function spikeGuard(
+  candles: CandleData[],
+  closes: number[],
+  atr: number,
+  rsi: number,
+  direction: 'long' | 'short' | 'none',
+  ema20: number,
+): { blocked: boolean; reason: string } {
+  if (direction === 'none') return { blocked: false, reason: '' };
+
+  const last = candles[candles.length - 1];
+  const candleShape = analyzeCandleShape(last);
+  const candleATRRatio = calcCandleATRRatio(candles, atr);
+  const roc3 = calcROC(closes, 3);
+  const roc1 = calcROC(closes, 1);
+  const cci = calcCCI(candles, 20);
+  const volRatio = calcVolumeRatio(candles, 20);
+  const distFromEMA20 = calcDistanceFromMA(closes, ema20);
+
+  const isLong = direction === 'long';
+
+  // 1. Current candle is a spike (ATR ratio > 2.5)
+  if (candleATRRatio > 2.5) {
+    return { blocked: true, reason: `Спайк-свеча (ATR×${candleATRRatio.toFixed(1)})` };
+  }
+
+  // 2. 3-candle velocity too high
+  if (roc3 > 8.0) {
+    return { blocked: true, reason: `Сильное движение ROC3=${roc3.toFixed(1)}%` };
+  }
+
+  // 3. FOMO candle: high volume + sharp move
+  if (volRatio > 5.0 && Math.abs(roc1) > 2.0) {
+    return { blocked: true, reason: `FOMO свеча (vol×${volRatio.toFixed(1)}, ROC=${roc1.toFixed(1)}%)` };
+  }
+
+  // 4. RSI extreme — don't buy overbought, don't sell oversold
+  if (isLong && rsi > 78) {
+    return { blocked: true, reason: `RSI перекуплен (${rsi.toFixed(0)})` };
+  }
+  if (!isLong && rsi < 22) {
+    return { blocked: true, reason: `RSI перепродан (${rsi.toFixed(0)})` };
+  }
+
+  // 5. Overextended from EMA20
+  if (isLong && distFromEMA20 > 5.0) {
+    return { blocked: true, reason: `Цена выше EMA20 на ${distFromEMA20.toFixed(1)}%` };
+  }
+  if (!isLong && distFromEMA20 < -5.0) {
+    return { blocked: true, reason: `Цена ниже EMA20 на ${Math.abs(distFromEMA20).toFixed(1)}%` };
+  }
+
+  // 6. CCI extreme
+  if (isLong && cci > 200) {
+    return { blocked: true, reason: `CCI перекуплен (${cci.toFixed(0)})` };
+  }
+  if (!isLong && cci < -200) {
+    return { blocked: true, reason: `CCI перепродан (${cci.toFixed(0)})` };
+  }
+
+  // 7. Closed at extreme of candle (buying the top / selling the bottom)
+  if (isLong && candleShape.closePosition > 0.95 && candleShape.bodyRatio > 0.7) {
+    return { blocked: true, reason: `Закрытие на вершине свечи (покупка верха)` };
+  }
+  if (!isLong && candleShape.closePosition < 0.05 && candleShape.bodyRatio > 0.7) {
+    return { blocked: true, reason: `Закрытие на дне свечи (продажа низа)` };
+  }
+
+  return { blocked: false, reason: '' };
+}
+
+// ============================================================
 // Signal Generation
 // ============================================================
 
@@ -597,6 +766,19 @@ function makeMomentumDecision(
     score = shortScore;
   }
 
+  // ── SPIKE GUARD: Anti-chase filter ──
+  // Block entry if the market just had a sharp move (pump/dump).
+  // Computes EMA20 for overextension check.
+  if (direction !== 'none') {
+    const ema20Arr = ema(closes, 20);
+    const ema20 = ema20Arr[ema20Arr.length - 1] || price;
+    const guard = spikeGuard(candles, closes, atr, rsi, direction, ema20);
+    if (guard.blocked) {
+      console.log(`[Momentum] ${symbol} ${direction.toUpperCase()} blocked: ${guard.reason}`);
+      return { symbol, direction: 'none', score: maxScore, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
+    }
+  }
+
   // Conservative leverage: 1x for weak signals, max 3x for very strong
   const leverage = direction === 'none'
     ? 1
@@ -757,6 +939,19 @@ function makeScalpHunterDecision(
 
   if (direction === 'none') {
     return { symbol, direction: 'none', score: Math.max(longScore, shortScore), leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
+  }
+
+  // ── SPIKE GUARD (Scalper version — relaxed thresholds for 5m TF) ──
+  // Scalping can tolerate more volatility, but still block extreme spikes.
+  // Use spikeGuard with standard thresholds; it auto-adapts via ATR/ROC.
+  {
+    const ema20Arr = ema(closes, 20);
+    const ema20 = ema20Arr[ema20Arr.length - 1] || price;
+    const guard = spikeGuard(candles, closes, atr, rsi, direction, ema20);
+    if (guard.blocked) {
+      console.log(`[Scalper] ${symbol} ${direction.toUpperCase()} blocked: ${guard.reason}`);
+      return { symbol, direction: 'none', score: Math.max(longScore, shortScore), leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
+    }
   }
 
   const leverage = Math.min(strategy.maxLeverage, Math.max(1, Math.round(score * 2)));
@@ -952,6 +1147,19 @@ function makePositionAlphaDecision(
   }
 
   const direction: 'long' | 'short' = trendDir === 1 ? 'long' : 'short';
+
+  // ── SPIKE GUARD: Anti-chase filter ──
+  // Block entry if market just had a sharp move (4h/1d spikes are rare but devastating).
+  // Position Alpha uses EMA50 as the reference MA (longer-term than Momentum's EMA20).
+  {
+    const ema50Val = ema50Arr[ema50Arr.length - 1] || price;
+    const guard = spikeGuard(candles, closes, atr, rsi, direction, ema50Val);
+    if (guard.blocked) {
+      console.log(`[PositionAlpha] ${symbol} ${direction.toUpperCase()} blocked: ${guard.reason}`);
+      return { symbol, direction: 'none', score, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
+    }
+  }
+
   const leverage = Math.min(strategy.maxLeverage, Math.max(1, Math.round(score * 1.2)));
 
   // Wide stop: 4× ATR — give position room to breathe for days
