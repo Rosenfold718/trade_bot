@@ -77,7 +77,7 @@ export const STRATEGIES: StrategyConfig[] = [
   {
     id: 'scalper',
     name: 'Scalp Hunter',
-    description: 'Скальпинг: множество быстрых сделок на микро-движениях. StochRSI, Bollinger squeeze, volume spikes, VWAP deviation. Узкий стоп 0.8× ATR, TP 1:1.5. Удержание: минуты–часы.',
+    description: 'Скальпинг: быстрые сделки на микро-движениях. StochRSI, Bollinger squeeze, volume spikes, VWAP deviation. Стоп 1.2× ATR (мин 0.5%), TP 1:1.5. Удержание: минуты–часы.',
     color: 'text-violet-400',
     bgColor: 'bg-violet-500/10',
     borderColor: 'border-violet-500/30',
@@ -96,7 +96,7 @@ export const STRATEGIES: StrategyConfig[] = [
     riskRewardRatio: 1.5,
     tradeSizePercent: 0.03,
     maxOpenTrades: 10,
-    scoreThreshold: 0.10,
+    scoreThreshold: 0.15,
     adxMin: null,
     mtfEnabled: false,
     timeFilterEnabled: false,

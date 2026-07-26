@@ -232,21 +232,21 @@ export default function TradingDashboard() {
         </div>
       )}
 
-      {/* Balance Stats */}
+      {/* Balance Stats — balance grows with profitable trades, PnL shows growth from initial $100 */}
       <div className="grid grid-cols-2 gap-2">
         <StatCard
-          label="Баланс"
+          label="Баланс депозита"
           value={`$${traderState.balance.toFixed(2)}`}
           icon={Wallet}
           color={strategy?.color ?? 'text-white/70'}
-          subValue={traderState.borrowed_funds > 0 ? `Кредит: $${traderState.borrowed_funds.toFixed(2)}` : undefined}
+          subValue={`старт $100 · ${totalClosedPnl >= 0 ? '+' : ''}${totalClosedPnl.toFixed(1)}%`}
         />
         <StatCard
-          label="PnL (все)"
+          label="Рост депозита"
           value={`${totalClosedPnl >= 0 ? '+' : ''}$${totalClosedPnl.toFixed(2)}`}
           icon={totalClosedPnl >= 0 ? TrendingUp : TrendingDown}
           color={totalClosedPnl >= 0 ? 'text-green-400' : 'text-red-400'}
-          subValue={`${closedTradeCount} сделок`}
+          subValue={`${closedTradeCount} сделок · ${totalClosedPnl >= 0 ? '+' : ''}${totalClosedPnl.toFixed(1)}%`}
         />
         <StatCard
           label="Открытых"

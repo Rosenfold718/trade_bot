@@ -285,8 +285,15 @@ export default function TradingTerminal() {
             const sTraderState = ss?.traderState;
             const balance = sTraderState?.balance ?? 100;
 
+            // Calculate actual PnL from trades closed in the last 24h (enables daily loss limit)
+            const now = Date.now();
+            const dayMs = 24 * 60 * 60 * 1000;
+            const recentPnl24h = (ss?.recentTrades ?? [])
+              .filter(t => t.closed_at && (now - new Date(t.closed_at).getTime()) < dayMs)
+              .reduce((sum, t) => sum + (t.pnl ?? 0), 0);
+
             try {
-              const result = await runAutoTradeCycle(sOpenTrades, s.id, timeframe.interval, balance, 0, 0, sysSettings);
+              const result = await runAutoTradeCycle(sOpenTrades, s.id, timeframe.interval, balance, 0, recentPnl24h, sysSettings);
               return { strategyId: s.id, result };
             } catch (err) {
               console.error(`[AutoTrade][${s.id}] Error:`, err);
@@ -447,6 +454,17 @@ export default function TradingTerminal() {
                 <span className="text-white/25">Баланс</span>
                 <span className={cn('font-bold', strategy?.color ?? 'text-white')}>${traderState.balance.toFixed(2)}</span>
               </div>
+              {totalClosedPnl !== 0 && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-white/25">PnL</span>
+                  <span className={cn('font-bold', totalClosedPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
+                    {totalClosedPnl >= 0 ? '+' : ''}${totalClosedPnl.toFixed(2)}
+                  </span>
+                  <span className={cn('text-[10px]', totalClosedPnl >= 0 ? 'text-green-400/60' : 'text-red-400/60')}>
+                    ({totalClosedPnl >= 0 ? '+' : ''}{totalClosedPnl.toFixed(1)}%)
+                  </span>
+                </div>
+              )}
               {traderState.debt_to_repay > 0 && (
                 <div className="flex items-center gap-1.5">
                   <span className="text-white/25">Долг</span>

@@ -409,19 +409,20 @@ export async function runAutoTradeCycle(
 
   // ============================================================
   // Trade sizing and TP levels
-  // System setting: max TP distance (default 8%)
+  // System setting: max TP distance (default 15% — allows 1:3 R:R with 5% SL)
   // ============================================================
   const slDist = Math.abs(best.price - best.decision.stopLoss);
   const isLong = best.decision.direction === 'long';
 
-  const maxTPDistancePct = Number(getSys(settings, 'system.maxTPDistance', 8)) / 100;
+  const maxTPDistancePct = Number(getSys(settings, 'system.maxTPDistance', 15)) / 100;
   const maxTPDistance = best.price * maxTPDistancePct;
 
   const runnerTP = isLong
     ? Math.min(best.decision.takeProfit, best.price + maxTPDistance)
     : Math.max(best.decision.takeProfit, best.price - maxTPDistance);
 
-  const rawSecureTP = isLong ? best.price + slDist * 1.5 : best.price - slDist * 1.5;
+  // Secure TP at 2R (was 1.5R — too tight, winners too small vs losers)
+  const rawSecureTP = isLong ? best.price + slDist * 2 : best.price - slDist * 2;
   const secureTP = isLong
     ? Math.min(rawSecureTP, best.price + maxTPDistance)
     : Math.max(rawSecureTP, best.price - maxTPDistance);
@@ -446,7 +447,7 @@ export async function runAutoTradeCycle(
   }
 
   const coinName = best.symbol.replace('USDT', '');
-  const signalMsg = `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${coinName} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x${newTrades.length > 1 ? ' | Secure 1.5R + Runner' : ' |'} ${strategy.riskRewardRatio}R`;
+  const signalMsg = `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${coinName} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x${newTrades.length > 1 ? ' | Secure 2R + Runner' : ' |'} ${strategy.riskRewardRatio}R`;
   return {
     action: 'new-trade', closedTrades, trailingUpdates, tpRepairs, newTrades,
     message: monitorParts.length > 0 ? monitorParts.join(' | ') + ' | ' + signalMsg : signalMsg,
