@@ -333,6 +333,7 @@ export async function runAutoTradeCycle(
   lastCandleSlot: number = 0,
   recentPnl24h: number = 0,
   sysSettings?: Record<string, string>,
+  globalLockedSymbols?: Set<string>,
 ): Promise<{
     action: 'monitor' | 'new-trade' | 'idle';
     closedTrades: MonitorResult['closedTrades'];
@@ -398,6 +399,11 @@ export async function runAutoTradeCycle(
   }
 
   const openSymbols = new Set(updatedOpenTrades.map(t => t.symbol));
+  // Merge with globally locked symbols (opened by OTHER strategies this cycle)
+  // This prevents 3 strategies from opening the same symbol simultaneously
+  if (globalLockedSymbols) {
+    for (const sym of globalLockedSymbols) openSymbols.add(sym);
+  }
 
   const best = await findBestSignal(openSymbols, strategyId, strategyInterval, strategyLimit, strategy, settings);
   if (!best || best.decision.direction === 'none') {

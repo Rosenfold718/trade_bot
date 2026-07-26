@@ -277,30 +277,44 @@ export default function TradingTerminal() {
         // Read fresh state for each strategy (avoids stale closure)
         const currentStates = useTerminalStore.getState().strategyStates;
 
-        // Run cycle for all strategies in parallel
-        const results = await Promise.all(
-          STRATEGIES.map(async (s) => {
-            const ss = currentStates[s.id];
-            const sOpenTrades = ss?.openTrades ?? [];
-            const sTraderState = ss?.traderState;
-            const balance = sTraderState?.balance ?? 100;
+        // ── Cross-strategy symbol lock ──
+        // Collect ALL open symbols across ALL strategies so no two strategies
+        // open the same symbol in the same cycle (prevents 3-4 identical losing trades)
+        const globalLockedSymbols = new Set<string>();
+        for (const s of STRATEGIES) {
+          const ss = currentStates[s.id];
+          for (const t of (ss?.openTrades ?? [])) globalLockedSymbols.add(t.symbol);
+        }
 
-            // Calculate actual PnL from trades closed in the last 24h (enables daily loss limit)
-            const now = Date.now();
-            const dayMs = 24 * 60 * 60 * 1000;
-            const recentPnl24h = (ss?.recentTrades ?? [])
-              .filter(t => t.closed_at && (now - new Date(t.closed_at).getTime()) < dayMs)
-              .reduce((sum, t) => sum + (t.pnl ?? 0), 0);
+        // Run cycles SEQUENTIALLY (not parallel) so each strategy sees symbols
+        // opened by the previous strategy in this same cycle
+        const results: Array<{ strategyId: string; result: any }> = [];
+        for (const s of STRATEGIES) {
+          if (cancelled) break;
+          const ss = currentStates[s.id];
+          const sOpenTrades = ss?.openTrades ?? [];
+          const sTraderState = ss?.traderState;
+          const balance = sTraderState?.balance ?? 100;
 
-            try {
-              const result = await runAutoTradeCycle(sOpenTrades, s.id, timeframe.interval, balance, 0, recentPnl24h, sysSettings);
-              return { strategyId: s.id, result };
-            } catch (err) {
-              console.error(`[AutoTrade][${s.id}] Error:`, err);
-              return { strategyId: s.id, result: { message: `Error: ${err instanceof Error ? err.message : 'unknown'}`, action: 'idle' as const, closedTrades: [], trailingUpdates: [], tpRepairs: [] } };
+          // Calculate actual PnL from trades closed in the last 24h (enables daily loss limit)
+          const now = Date.now();
+          const dayMs = 24 * 60 * 60 * 1000;
+          const recentPnl24h = (ss?.recentTrades ?? [])
+            .filter(t => t.closed_at && (now - new Date(t.closed_at).getTime()) < dayMs)
+            .reduce((sum, t) => sum + (t.pnl ?? 0), 0);
+
+          try {
+            const result = await runAutoTradeCycle(sOpenTrades, s.id, timeframe.interval, balance, 0, recentPnl24h, sysSettings, globalLockedSymbols);
+            // If this strategy opened a new trade, lock that symbol for subsequent strategies
+            if (result.newTrades && result.newTrades.length > 0) {
+              for (const nt of result.newTrades) globalLockedSymbols.add(nt.symbol);
             }
-          })
-        );
+            results.push({ strategyId: s.id, result });
+          } catch (err) {
+            console.error(`[AutoTrade][${s.id}] Error:`, err);
+            results.push({ strategyId: s.id, result: { message: `Error: ${err instanceof Error ? err.message : 'unknown'}`, action: 'idle' as const, closedTrades: [], trailingUpdates: [], tpRepairs: [] } });
+          }
+        }
 
         if (cancelled) return;
 
@@ -357,22 +371,48 @@ export default function TradingTerminal() {
           }
 
           // Open new trades (may be multiple: secure + runner)
+          // ── Entry price staleness check ──
+          // Re-fetch the live price before opening. If price has moved more than
+          // 0.5% from the signal price, SKIP the trade — the signal is stale and
+          // entering now means chasing price / buying the top / selling the bottom.
           for (const nt of (r.newTrades ?? [])) {
             try {
+              let livePrice = nt.price;
+              try {
+                const priceRes = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${nt.symbol}`);
+                if (priceRes.ok) {
+                  const priceData = await priceRes.json();
+                  livePrice = parseFloat(priceData.price);
+                }
+              } catch { /* fallback to signal price */ }
+
+              const priceDrift = Math.abs(livePrice - nt.price) / nt.price;
+              if (priceDrift > 0.005) {
+                addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Пропуск ${nt.symbol.replace('USDT', '')}: цена ушла ${priceDrift > 0 ? '+' : '-'}${(priceDrift * 100).toFixed(2)}% от сигнала — вход отменён`, 'warn');
+                continue; // skip this trade, signal is stale
+              }
+
+              // Recalculate SL/TP relative to live price (preserve the % distance from signal)
+              const slDistPct = nt.price > 0 ? Math.abs(nt.price - nt.stopLoss) / nt.price : 0;
+              const tpDistPct = nt.price > 0 ? Math.abs(nt.takeProfit - nt.price) / nt.price : 0;
+              const isLong = nt.direction === 'long';
+              const adjustedSL = isLong ? livePrice * (1 - slDistPct) : livePrice * (1 + slDistPct);
+              const adjustedTP = isLong ? livePrice * (1 + tpDistPct) : livePrice * (1 - tpDistPct);
+
               const openRes = await fetch('/api/trader', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   action: 'open-trade',
-                  symbol: nt.symbol, entryPrice: nt.price, amount: nt.amount,
+                  symbol: nt.symbol, entryPrice: livePrice, amount: nt.amount,
                   leverage: nt.leverage, direction: nt.direction,
-                  stopLoss: nt.stopLoss, takeProfit: nt.takeProfit,
+                  stopLoss: adjustedSL, takeProfit: adjustedTP,
                   strategyId,
                 }),
               });
               const openData = await openRes.json();
               if (openData.success) {
-                addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Открыта ${nt.label === 'secure' ? '🔒' : '🏃'} ${nt.direction.toUpperCase()} ${nt.symbol.replace('USDT', '')} @ $${nt.price.toFixed(2)} | ${nt.leverage}x | $${nt.amount.toFixed(2)}`, 'trade');
+                addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Открыта ${nt.label === 'secure' ? '🔒' : '🏃'} ${nt.direction.toUpperCase()} ${nt.symbol.replace('USDT', '')} @ $${livePrice.toFixed(2)} | ${nt.leverage}x | $${nt.amount.toFixed(2)}`, 'trade');
               } else {
                 addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Ошибка открытия: ${openData.error || 'unknown'}`, 'error');
               }
