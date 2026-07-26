@@ -383,8 +383,11 @@ export async function runAutoTradeCycle(
   // CRITICAL FIX: Always proceed to find signals, even if monitoring found changes.
   // Previously, monitoring results blocked signal finding — now both run.
 
-  // Each signal opens 2 trades (secure + runner), need room for the pair
-  if (updatedOpenTrades.length + 2 > maxTrades) {
+  // Each signal opens exactly ONE trade — no secure/runner split.
+  // Splitting caused multiple overlapping positions on the same symbol,
+  // cluttering the chart and fragmenting capital into tiny sub-positions.
+  // A single well-sized trade with a proper 1:R target is safer and clearer.
+  if (updatedOpenTrades.length + 1 > maxTrades) {
     const msg = monitorParts.length > 0
       ? monitorParts.join(' | ') + ` | Лимит: ${updatedOpenTrades.length}/${maxTrades}`
       : `Лимит: ${updatedOpenTrades.length}/${maxTrades}, жду...`;
@@ -414,46 +417,29 @@ export async function runAutoTradeCycle(
   }
 
   // ============================================================
-  // Trade sizing and TP levels
+  // Trade sizing — SINGLE trade per signal (no secure/runner split)
   // System setting: max TP distance (default 15% — allows 1:3 R:R with 5% SL)
   // ============================================================
-  const slDist = Math.abs(best.price - best.decision.stopLoss);
   const isLong = best.decision.direction === 'long';
 
   const maxTPDistancePct = Number(getSys(settings, 'system.maxTPDistance', 15)) / 100;
   const maxTPDistance = best.price * maxTPDistancePct;
 
-  const runnerTP = isLong
+  // Use the strategy's native takeProfit (already computed at strategy.riskRewardRatio)
+  // and cap it to the system max TP distance for safety.
+  const takeProfit = isLong
     ? Math.min(best.decision.takeProfit, best.price + maxTPDistance)
     : Math.max(best.decision.takeProfit, best.price - maxTPDistance);
 
-  // Secure TP at 2R (was 1.5R — too tight, winners too small vs losers)
-  const rawSecureTP = isLong ? best.price + slDist * 2 : best.price - slDist * 2;
-  const secureTP = isLong
-    ? Math.min(rawSecureTP, best.price + maxTPDistance)
-    : Math.max(rawSecureTP, best.price - maxTPDistance);
+  // Single trade with the full position size (was split into secure/runner halves).
+  const amount = Math.max(1.5, Math.min(balance * tradeSizePct, 20));
 
-  const totalAmount = Math.max(1.5, Math.min(balance * tradeSizePct, 20));
-
-  let newTrades: NewTradeInfo[];
-
-  if (strategyId === 'momentum') {
-    // Momentum: split into Secure + Runner (two trades)
-    const secureAmount = Math.round(totalAmount * 0.5 * 100) / 100;
-    const runnerAmount = Math.round((totalAmount - secureAmount) * 100) / 100;
-    newTrades = [
-      { symbol: best.symbol, direction: best.decision.direction, price: best.price, leverage: best.decision.leverage, stopLoss: best.decision.stopLoss, takeProfit: secureTP, amount: secureAmount, strategyId, label: 'secure' },
-      { symbol: best.symbol, direction: best.decision.direction, price: best.price, leverage: best.decision.leverage, stopLoss: best.decision.stopLoss, takeProfit: runnerTP, amount: runnerAmount, strategyId, label: 'runner' },
-    ];
-  } else {
-    // Scalper / Position Alpha: single trade
-    newTrades = [
-      { symbol: best.symbol, direction: best.decision.direction, price: best.price, leverage: best.decision.leverage, stopLoss: best.decision.stopLoss, takeProfit: runnerTP, amount: totalAmount, strategyId, label: 'secure' },
-    ];
-  }
+  const newTrades: NewTradeInfo[] = [
+    { symbol: best.symbol, direction: best.decision.direction, price: best.price, leverage: best.decision.leverage, stopLoss: best.decision.stopLoss, takeProfit, amount, strategyId, label: 'main' },
+  ];
 
   const coinName = best.symbol.replace('USDT', '');
-  const signalMsg = `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${coinName} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x${newTrades.length > 1 ? ' | Secure 2R + Runner' : ' |'} ${strategy.riskRewardRatio}R`;
+  const signalMsg = `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${coinName} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x | $${amount.toFixed(2)} | TP ${strategy.riskRewardRatio}R`;
   return {
     action: 'new-trade', closedTrades, trailingUpdates, tpRepairs, newTrades,
     message: monitorParts.length > 0 ? monitorParts.join(' | ') + ' | ' + signalMsg : signalMsg,

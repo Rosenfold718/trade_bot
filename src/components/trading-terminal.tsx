@@ -412,7 +412,7 @@ export default function TradingTerminal() {
               });
               const openData = await openRes.json();
               if (openData.success) {
-                addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Открыта ${nt.label === 'secure' ? '🔒' : '🏃'} ${nt.direction.toUpperCase()} ${nt.symbol.replace('USDT', '')} @ $${livePrice.toFixed(2)} | ${nt.leverage}x | $${nt.amount.toFixed(2)}`, 'trade');
+                addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Открыта ${nt.direction.toUpperCase()} ${nt.symbol.replace('USDT', '')} @ $${livePrice.toFixed(2)} | ${nt.leverage}x | $${nt.amount.toFixed(2)}`, 'trade');
               } else {
                 addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Ошибка открытия: ${openData.error || 'unknown'}`, 'error');
               }
@@ -850,13 +850,14 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
   return (
     <div className="h-full flex flex-col">
       <div className="flex-1 overflow-x-auto overflow-y-auto">
-        <table className="w-full text-xs min-w-[480px]">
+        <table className="w-full text-xs min-w-[560px]">
           <thead className="sticky top-0 bg-[#0d0d14] z-10">
             <tr className="text-white/25 border-b border-white/[0.06]">
               <th className="text-left font-medium py-2.5 px-3 md:px-4">Символ</th>
               <th className="text-left font-medium py-2.5 px-2">Напр.</th>
               <th className="text-right font-medium py-2.5 px-2 hidden md:table-cell">Вход</th>
               <th className="text-right font-medium py-2.5 px-2 hidden lg:table-cell">Выход</th>
+              <th className="text-right font-medium py-2.5 px-2 hidden sm:table-cell">Объём</th>
               <th className="text-right font-medium py-2.5 px-2 hidden lg:table-cell">Плечо</th>
               <th className="text-right font-medium py-2.5 px-2">PnL</th>
               <th className="text-center font-medium py-2.5 px-2">Открыта</th>
@@ -904,7 +905,10 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
                     ? trade.exit_price < 1 ? trade.exit_price.toPrecision(4) : trade.exit_price.toFixed(2)
                     : '—'}
                 </td>
-                <td className="py-2.5 px-2 text-right font-mono text-white/40">{trade.leverage ?? '—'}x</td>
+                <td className="py-2.5 px-2 text-right font-mono text-cyan-400/70 font-semibold">
+                  ${typeof trade.amount === 'number' ? trade.amount.toFixed(2) : '—'}
+                </td>
+                <td className="py-2.5 px-2 text-right font-mono text-white/40 hidden lg:table-cell">{trade.leverage ?? '—'}x</td>
                 <td className={cn('py-2.5 px-2 text-right font-mono font-bold', displayPnl == null ? 'text-white/25' : displayPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
                   {displayPnl != null && typeof displayPnl === 'number'
                     ? `${displayPnl >= 0 ? '+' : ''}$${displayPnl.toFixed(2)}`
