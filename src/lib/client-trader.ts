@@ -166,13 +166,42 @@ export interface MonitorResult {
   tpRepairs: Array<{ tradeId: string; newTakeProfit: number; reason: string }>;
 }
 
-async function fetchLastCandleClose(symbol: string, interval: string = '1h'): Promise<number> {
+interface CandleOHLC {
+  close: number;
+  high: number;
+  low: number;
+  time: number;
+}
+
+/**
+ * Fetch the last 2 candles from Binance:
+ *   [0] = last COMPLETED candle (closed and confirmed)
+ *   [1] = current IN-PROGRESS candle (still forming)
+ * We check BOTH for TP/SL hits — the current candle is crucial
+ * because a wick may have pierced the level even though the candle
+ * hasn't closed yet. Using only the completed candle's close caused
+ * the "TP not triggering" bug: candles visibly broke through the TP
+ * on the chart but the monitor only checked the close of the PREVIOUS
+ * completed candle, missing all in-progress price action.
+ */
+async function fetchCandlesForMonitor(symbol: string, interval: string = '1h'): Promise<{ completed: CandleOHLC; current: CandleOHLC }> {
   const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=2`);
   if (!res.ok) throw new Error(`Failed to fetch klines for ${symbol}`);
   const data = await res.json();
   if (!Array.isArray(data) || data.length < 1) throw new Error('No kline data');
-  const completedCandle = data.length >= 2 ? data[0] : data[data.length - 1];
-  return parseFloat(String(completedCandle[4]));
+
+  const parseCandle = (k: (string | number)[]) => ({
+    time: Math.floor(Number(k[0]) / 1000),
+    open: parseFloat(String(k[1])),
+    high: parseFloat(String(k[2])),
+    low: parseFloat(String(k[3])),
+    close: parseFloat(String(k[4])),
+  });
+
+  const completed = parseCandle(data[0]);
+  // If only 1 candle returned, use it for both (edge case)
+  const current = data.length >= 2 ? parseCandle(data[1]) : completed;
+  return { completed, current };
 }
 
 // Get a "candle slot" number based on the interval for throttling checks
@@ -210,9 +239,15 @@ export async function monitorTradesClient(
 
   for (const trade of openTrades) {
     try {
-      const candleClose = await fetchLastCandleClose(trade.symbol, monitorInterval);
+      const { completed, current } = await fetchCandlesForMonitor(trade.symbol, monitorInterval);
       let shouldClose = false;
       let reason = '';
+      let exitPrice = 0;
+
+      // The "check price" is the CLOSE of the current in-progress candle
+      // — this is the best approximation of the real-time price at
+      // the moment of the check (the candle hasn't closed yet).
+      const livePrice = current.close;
 
       // ── AUTO-REPAIR: Fix inverted or excessive SL/TP ──
       let repairedTP = false;
@@ -255,34 +290,89 @@ export async function monitorTradesClient(
       const openMinutes = openMs / 60000;
       if (openMinutes > maxHoldMinutes) {
         const unrealizedPnl = trade.direction === 'long'
-          ? (candleClose - trade.entry_price) / trade.entry_price
-          : (trade.entry_price - candleClose) / trade.entry_price;
+          ? (livePrice - trade.entry_price) / trade.entry_price
+          : (trade.entry_price - livePrice) / trade.entry_price;
         if (unrealizedPnl < 0) {
           shouldClose = true;
           const hours = Math.round(openMinutes / 60);
           reason = `Тайм-эксит (${hours}ч)`;
+          exitPrice = livePrice;
         }
       }
 
-      // TP check
-      if (!shouldClose && trade.direction === 'long' && trade.take_profit && candleClose >= trade.take_profit) {
-        shouldClose = true; reason = 'TP hit';
-      } else if (!shouldClose && trade.direction === 'short' && trade.take_profit && candleClose <= trade.take_profit) {
-        shouldClose = true; reason = 'TP hit';
-      }
+      // ── TP/SL CHECK using candle HIGH/LOW ──
+      // Previously only the CLOSE of the last completed candle was checked.
+      // This missed any wick that pierced the TP/SL during the candle.
+      // Now we check BOTH the completed and current candle's HIGH/LOW.
+      // For LONG: TP triggers if HIGH >= TP, SL triggers if LOW <= SL
+      // For SHORT: TP triggers if LOW <= TP, SL triggers if HIGH >= SL
+      // We also check the current candle's CLOSE as a fallback.
 
-      // SL check
-      if (!shouldClose && trade.direction === 'long' && trade.stop_loss && candleClose <= trade.stop_loss) {
-        shouldClose = true; reason = 'SL hit';
-      } else if (!shouldClose && trade.direction === 'short' && trade.stop_loss && candleClose >= trade.stop_loss) {
-        shouldClose = true; reason = 'SL hit';
+      if (!shouldClose) {
+        const isLong = trade.direction === 'long';
+
+        // Check TP on COMPLETED candle (HIGH/LOW + CLOSE)
+        if (isLong && trade.take_profit) {
+          if (completed.high >= trade.take_profit) {
+            shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
+          } else if (completed.close >= trade.take_profit) {
+            shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
+          }
+        } else if (!isLong && trade.take_profit) {
+          if (completed.low <= trade.take_profit) {
+            shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
+          } else if (completed.close <= trade.take_profit) {
+            shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
+          }
+        }
+
+        // Check TP on CURRENT (in-progress) candle
+        if (!shouldClose) {
+          if (isLong && trade.take_profit) {
+            if (current.high >= trade.take_profit) {
+              shouldClose = true; reason = 'TP hit (live)'; exitPrice = trade.take_profit;
+            }
+          } else if (!isLong && trade.take_profit) {
+            if (current.low <= trade.take_profit) {
+              shouldClose = true; reason = 'TP hit (live)'; exitPrice = trade.take_profit;
+            }
+          }
+        }
+
+        // Check SL on COMPLETED candle (HIGH/LOW + CLOSE)
+        if (!shouldClose && isLong && trade.stop_loss) {
+          if (completed.low <= trade.stop_loss) {
+            shouldClose = true; reason = 'SL hit'; exitPrice = trade.stop_loss;
+          } else if (completed.close <= trade.stop_loss) {
+            shouldClose = true; reason = 'SL hit'; exitPrice = trade.stop_loss;
+          }
+        } else if (!shouldClose && !isLong && trade.stop_loss) {
+          if (completed.high >= trade.stop_loss) {
+            shouldClose = true; reason = 'SL hit'; exitPrice = trade.stop_loss;
+          } else if (completed.close >= trade.stop_loss) {
+            shouldClose = true; reason = 'SL hit'; exitPrice = trade.stop_loss;
+          }
+        }
+
+        // Check SL on CURRENT (in-progress) candle
+        if (!shouldClose) {
+          if (isLong && trade.stop_loss) {
+            if (current.low <= trade.stop_loss) {
+              shouldClose = true; reason = 'SL hit (live)'; exitPrice = trade.stop_loss;
+            }
+          } else if (!isLong && trade.stop_loss) {
+            if (current.high >= trade.stop_loss) {
+              shouldClose = true; reason = 'SL hit (live)'; exitPrice = trade.stop_loss;
+            }
+          }
+        }
       }
 
       // Trailing stop: 3 levels (each togglable via system settings)
       if (!shouldClose && trade.stop_loss && trade.entry_price) {
         const initialSlDistance = Math.abs(trade.entry_price - trade.stop_loss);
         const isLong = trade.direction === 'long';
-        const favorableMove = isLong ? candleClose - trade.entry_price : trade.entry_price - candleClose;
+        const favorableMove = isLong ? livePrice - trade.entry_price : trade.entry_price - livePrice;
 
         if (trailing3x && favorableMove >= initialSlDistance * 3) {
           const trailedSL = isLong ? trade.entry_price + initialSlDistance * 2 : trade.entry_price - initialSlDistance * 2;
@@ -303,11 +393,14 @@ export async function monitorTradesClient(
       }
 
       if (shouldClose) {
+        // Use the specific exitPrice if set (TP/SL hit = exact level),
+        // otherwise use the live price as best approximation.
+        const effectiveExitPrice = exitPrice > 0 ? exitPrice : livePrice;
         const priceChange = trade.direction === 'long'
-          ? (candleClose - trade.entry_price) / trade.entry_price
-          : (trade.entry_price - candleClose) / trade.entry_price;
+          ? (effectiveExitPrice - trade.entry_price) / trade.entry_price
+          : (trade.entry_price - effectiveExitPrice) / trade.entry_price;
         const pnl = trade.amount * priceChange * trade.leverage - trade.amount * 0.001;
-        closedTrades.push({ tradeId: trade.id, symbol: trade.symbol, direction: trade.direction, pnl, reason, exitPrice: candleClose });
+        closedTrades.push({ tradeId: trade.id, symbol: trade.symbol, direction: trade.direction, pnl, reason, exitPrice: effectiveExitPrice });
       }
     } catch { continue; }
   }
@@ -322,7 +415,7 @@ export async function monitorTradesClient(
 export type NewTradeInfo = {
   symbol: string; direction: string; price: number; leverage: number;
   stopLoss: number; takeProfit: number; amount: number; strategyId: string;
-  label: 'secure' | 'runner';
+  label: 'main';
 };
 
 export async function runAutoTradeCycle(
