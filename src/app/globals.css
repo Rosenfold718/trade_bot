@@ -123,6 +123,18 @@
   }
 }
 
+/* ── Hide ALL scrollbars globally (scrolling still works) ── */
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+  background: transparent;
+}
+
 /* Safe area insets for iOS notch and home indicator */
 .safe-top {
   padding-top: env(safe-area-inset-top, 0px);
@@ -137,52 +149,7 @@
   padding-right: env(safe-area-inset-right, 0px);
 }
 
-/* Custom scrollbar for coin list */
-.coin-list-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255,255,255,0.08) transparent;
-}
-.coin-list-scroll::-webkit-scrollbar {
-  width: 5px;
-}
-.coin-list-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
-.coin-list-scroll::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.06);
-  border-radius: 6px;
-}
-.coin-list-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(255,255,255,0.12);
-}
-
-/* Hide scrollbar utility for horizontal scroll areas */
-.no-scrollbar {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-}
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
-}
-
-/* Custom scrollbar for general use */
-.custom-scrollbar {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255,255,255,0.08) transparent;
-}
-.custom-scrollbar::-webkit-scrollbar {
-  width: 5px;
-}
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.06);
-  border-radius: 6px;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(255,255,255,0.12);
-}
+/* Custom scrollbar classes removed — all scrollbars hidden globally */
 
 /* Slide up animation for bottom sheets */
 @keyframes slide-up {

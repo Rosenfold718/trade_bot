@@ -5,7 +5,7 @@ import { useSession, signIn } from 'next-auth/react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
-import { Loader2, LogIn, UserPlus, Eye, EyeOff, Shield, TrendingUp, Zap, AlertTriangle, Check } from 'lucide-react';
+import { Loader2, LogIn, UserPlus, Eye, EyeOff, TrendingUp, AlertTriangle, Check } from 'lucide-react';
 
 export default function AuthScreen() {
   const { data: session, status } = useSession();
@@ -131,8 +131,8 @@ export default function AuthScreen() {
   // ── Registration Success Screen ──
   if (registerSuccess) {
     return (
-      <div className="min-h-[100dvh] bg-[#0a0a0f] flex items-center justify-center p-4 safe-top safe-bottom">
-        <Card className="w-full max-w-[400px] bg-[#12121e]/90 backdrop-blur-xl border-emerald-500/20 rounded-2xl">
+      <div className="min-h-[100dvh] bg-[#0a0a0f] flex items-center justify-center px-3 sm:px-4 py-4 sm:py-6 safe-top safe-bottom">
+        <Card className="w-full max-w-[420px] bg-[#12121e]/90 backdrop-blur-xl border-emerald-500/20 rounded-2xl">
           <CardContent className="p-6 sm:p-8 text-center space-y-5">
             <div className="w-14 h-14 mx-auto rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
               <Check className="w-7 h-7 text-emerald-400" />
@@ -170,8 +170,8 @@ export default function AuthScreen() {
   ];
 
   return (
-    <div className="min-h-[100dvh] bg-[#0a0a0f] flex flex-col items-center justify-center px-4 py-6 sm:py-8 safe-top safe-bottom">
-      <div className="w-full max-w-[400px] space-y-6 sm:space-y-8">
+    <div className="min-h-[100dvh] bg-[#0a0a0f] flex flex-col items-center justify-center px-3 sm:px-4 py-4 sm:py-6 safe-top safe-bottom">
+      <div className="w-full max-w-[420px] space-y-5 sm:space-y-6">
         {/* Logo */}
         <div className="text-center space-y-3">
           <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-br from-emerald-500/15 to-emerald-600/5 border border-emerald-500/15 flex items-center justify-center">
@@ -330,21 +330,6 @@ export default function AuthScreen() {
             )}
           </CardContent>
         </Card>
-
-        {/* Features */}
-        <div className="grid grid-cols-3 gap-2.5">
-          {[
-            { icon: Zap, label: '3 стратегии', desc: 'Авто-торговля' },
-            { icon: TrendingUp, label: 'Тех. анализ', desc: 'Binance API' },
-            { icon: Shield, label: 'Защита', desc: 'TP/SL/Trailing' },
-          ].map(({ icon: Icon, label, desc }) => (
-            <div key={label} className="text-center p-3 rounded-xl bg-white/[0.02] border border-white/[0.05]">
-              <Icon className="w-4 h-4 mx-auto text-emerald-400/50 mb-2" />
-              <div className="text-[11px] font-medium text-white/50">{label}</div>
-              <div className="text-[9px] text-white/20 mt-0.5">{desc}</div>
-            </div>
-          ))}
-        </div>
       </div>
     </div>
   );
