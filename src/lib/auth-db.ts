@@ -22,8 +22,31 @@ function getClient(): Client {
   return _client;
 }
 
-// Export getClient for direct use (Proxy breaks private class fields in @libsql/client)
 export { getClient as getAuthClient };
+
+// ============================================================
+// Subscription Plans — time-based only
+// ============================================================
+
+export interface SubscriptionPlan {
+  id: number;
+  months: number;
+  label: string;
+  priceUSD: number;
+  perMonth: string;
+}
+
+export const PLANS: SubscriptionPlan[] = [
+  { id: 1, months: 1, label: '1 месяц', priceUSD: 49, perMonth: '$49/мес' },
+  { id: 3, months: 3, label: '3 месяца', priceUSD: 129, perMonth: '$43/мес' },
+  { id: 6, months: 6, label: '6 месяцев', priceUSD: 229, perMonth: '$38/мес' },
+  { id: 12, months: 12, label: '12 месяцев', priceUSD: 399, perMonth: '$33/мес' },
+];
+
+export const CRYPTO_WALLET = {
+  address: 'UQC2_CBuEhAmxr4fJBt-gGdP8u3Mc1-RNcinUPc6ydxz1cJO',
+  network: 'TON',
+};
 
 // ============================================================
 // User queries
@@ -33,6 +56,9 @@ export interface AuthUser {
   id: string;
   username: string;
   password: string;
+  email: string | null;
+  telegram: string | null;
+  role: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -40,7 +66,7 @@ export interface AuthUser {
 export interface AuthSubscription {
   id: string;
   userId: string;
-  isActive: number; // SQLite boolean = 0/1
+  isActive: number;
   startsAt: string;
   expiresAt: string;
   lastPaymentAt: string | null;
@@ -57,6 +83,9 @@ export async function findUserByUsername(username: string): Promise<AuthUser | n
     id: row.id as string,
     username: row.username as string,
     password: row.password as string,
+    email: (row.email as string) || null,
+    telegram: (row.telegram as string) || null,
+    role: (row.role as string) || 'user',
     createdAt: row.createdAt as string,
     updatedAt: row.updatedAt as string,
   };
@@ -73,6 +102,9 @@ export async function findUserById(id: string): Promise<AuthUser | null> {
     id: row.id as string,
     username: row.username as string,
     password: row.password as string,
+    email: (row.email as string) || null,
+    telegram: (row.telegram as string) || null,
+    role: (row.role as string) || 'user',
     createdAt: row.createdAt as string,
     updatedAt: row.updatedAt as string,
   };
@@ -85,7 +117,8 @@ export async function createUser(
   subscriptionData?: { isActive: boolean; expiresAt: string; lastPaymentAt?: string }
 ): Promise<AuthUser> {
   await getClient().execute(
-    `INSERT INTO "User" (id, username, password, createdAt, updatedAt) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    `INSERT INTO "User" (id, username, password, email, telegram, role, createdAt, updatedAt)
+     VALUES (?, ?, ?, NULL, NULL, 'user', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     [id, username, hashedPassword]
   );
 
@@ -108,24 +141,21 @@ export async function upsertUser(
   hashedPassword: string,
   subscriptionData?: { isActive: boolean; expiresAt: string; lastPaymentAt?: string }
 ): Promise<AuthUser> {
-  // Try to find existing user
   const existing = await findUserByUsername(username);
   if (existing) {
-    // Update password
     await getClient().execute(
       `UPDATE "User" SET password = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?`,
       [hashedPassword, existing.id]
     );
   } else {
-    // Create new
     const newId = id || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     await getClient().execute(
-      `INSERT INTO "User" (id, username, password, createdAt, updatedAt) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      `INSERT INTO "User" (id, username, password, email, telegram, role, createdAt, updatedAt)
+       VALUES (?, ?, ?, NULL, NULL, 'user', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [newId, username, hashedPassword]
     );
   }
 
-  // Handle subscription
   if (subscriptionData) {
     const userRow = await findUserByUsername(username);
     if (userRow) {
@@ -155,7 +185,7 @@ export async function upsertUser(
 
 export async function getAllUsers(): Promise<Array<AuthUser & { subscription: AuthSubscription | null }>> {
   const result = await getClient().execute(
-    `SELECT u.id, u.username, u.createdAt,
+    `SELECT u.id, u.username, u.email, u.telegram, u.role, u.createdAt,
             s.id as sub_id, s.userId as sub_userId, s.isActive as sub_isActive,
             s.startsAt as sub_startsAt, s.expiresAt as sub_expiresAt, s.lastPaymentAt as sub_lastPaymentAt
      FROM "User" u
@@ -165,6 +195,9 @@ export async function getAllUsers(): Promise<Array<AuthUser & { subscription: Au
   return result.rows.map(row => ({
     id: row.id as string,
     username: row.username as string,
+    email: (row.email as string) || null,
+    telegram: (row.telegram as string) || null,
+    role: (row.role as string) || 'user',
     createdAt: row.createdAt as string,
     updatedAt: '',
     password: '',
@@ -177,6 +210,20 @@ export async function getAllUsers(): Promise<Array<AuthUser & { subscription: Au
       lastPaymentAt: row.sub_lastPaymentAt as string | null,
     } : null,
   }));
+}
+
+// ============================================================
+// Delete user (admin)
+// ============================================================
+
+export async function deleteUserById(userId: string): Promise<boolean> {
+  const client = getClient();
+  await client.execute(`DELETE FROM "PaymentRequest" WHERE userId = ?`, [userId]);
+  await client.execute(`DELETE FROM "Subscription" WHERE userId = ?`, [userId]);
+  await client.execute(`DELETE FROM "Session" WHERE userId = ?`, [userId]);
+  await client.execute(`DELETE FROM "Account" WHERE userId = ?`, [userId]);
+  const result = await client.execute(`DELETE FROM "User" WHERE id = ?`, [userId]);
+  return result.rowsAffected > 0;
 }
 
 // ============================================================

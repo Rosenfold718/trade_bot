@@ -21,6 +21,9 @@ export async function initAuthTables(): Promise<void> {
       "id" TEXT NOT NULL PRIMARY KEY,
       "username" TEXT NOT NULL,
       "password" TEXT NOT NULL,
+      "email" TEXT,
+      "telegram" TEXT,
+      "role" TEXT NOT NULL DEFAULT 'user',
       "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" DATETIME NOT NULL
     );
@@ -74,18 +77,62 @@ export async function initAuthTables(): Promise<void> {
       "id" TEXT NOT NULL PRIMARY KEY,
       "userId" TEXT NOT NULL,
       "months" INTEGER NOT NULL DEFAULT 1,
+      "planLabel" TEXT NOT NULL DEFAULT '1 месяц',
+      "amountUSD" REAL NOT NULL DEFAULT 0,
+      "txHash" TEXT,
       "status" TEXT NOT NULL DEFAULT 'pending',
       "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "reviewedAt" DATETIME,
       "reviewedBy" TEXT
     );
     CREATE INDEX IF NOT EXISTS "PaymentRequest_status_idx" ON "PaymentRequest"("status");
+
+    CREATE TABLE IF NOT EXISTS "PaymentHistory" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "userId" TEXT NOT NULL,
+      "planLabel" TEXT NOT NULL,
+      "amountUSD" REAL NOT NULL,
+      "txHash" TEXT,
+      "status" TEXT NOT NULL,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "confirmedAt" DATETIME,
+      "confirmedBy" TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS "AuditLog" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "actorId" TEXT NOT NULL,
+      "actorName" TEXT NOT NULL,
+      "action" TEXT NOT NULL,
+      "targetId" TEXT,
+      "targetName" TEXT,
+      "details" TEXT,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `.split(';').filter(s => s.trim().length > 0).map(s => s.trim() + ';');
 
   for (const stmt of statements) {
     await client.execute(stmt);
   }
 
+  // Migrate: add missing columns to existing tables
+  const migrations = [
+    { table: 'User', col: 'email', def: 'ALTER TABLE "User" ADD COLUMN "email" TEXT' },
+    { table: 'User', col: 'telegram', def: 'ALTER TABLE "User" ADD COLUMN "telegram" TEXT' },
+    { table: 'User', col: 'role', def: 'ALTER TABLE "User" ADD COLUMN "role" TEXT NOT NULL DEFAULT \'user\'' },
+    { table: 'PaymentRequest', col: 'planLabel', def: 'ALTER TABLE "PaymentRequest" ADD COLUMN "planLabel" TEXT NOT NULL DEFAULT \'1 месяц\'' },
+    { table: 'PaymentRequest', col: 'amountUSD', def: 'ALTER TABLE "PaymentRequest" ADD COLUMN "amountUSD" REAL NOT NULL DEFAULT 0' },
+    { table: 'PaymentRequest', col: 'txHash', def: 'ALTER TABLE "PaymentRequest" ADD COLUMN "txHash" TEXT' },
+  ];
+
+  for (const m of migrations) {
+    try {
+      await client.execute(`SELECT ${m.col} FROM "${m.table}" LIMIT 0`);
+    } catch {
+      try { await client.execute(m.def); } catch { /* ignore */ }
+    }
+  }
+
   _done = true;
-  console.log('✅ Auth tables initialized in Turso');
+  console.log('Auth tables initialized in Turso');
 }

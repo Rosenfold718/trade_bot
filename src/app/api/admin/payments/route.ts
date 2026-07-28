@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { upsertSubscription, getAllUsers } from '@/lib/auth-db';
+import { upsertSubscription, getAllUsers, PLANS } from '@/lib/auth-db';
 import { initAuthTables } from '@/lib/init-auth-tables';
 import { getAuthClient } from '@/lib/auth-db';
 
@@ -10,7 +10,7 @@ function checkAuth(request: NextRequest): boolean {
   return authHeader === `Bearer ${ADMIN_SETUP_KEY}`;
 }
 
-// GET /api/admin/payments — list pending + recent
+// GET /api/admin/payments — list all payment requests
 export async function GET(request: NextRequest) {
   try {
     await initAuthTables();
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
     const db = getAuthClient();
 
     const result = await db.execute(
-      `SELECT pr.id, pr.userId, pr.months, pr.status, pr.createdAt, pr.reviewedAt, pr.reviewedBy,
+      `SELECT pr.id, pr.userId, pr.months, pr.planLabel, pr.amountUSD, pr.txHash, pr.status, pr.createdAt, pr.reviewedAt, pr.reviewedBy,
               u.username
        FROM "PaymentRequest" pr
        LEFT JOIN "User" u ON u.id = pr.userId
@@ -36,10 +36,13 @@ export async function GET(request: NextRequest) {
       userId: row.userId as string,
       username: row.username as string,
       months: Number(row.months),
+      planLabel: row.planLabel as string,
+      amountUSD: Number(row.amountUSD),
+      txHash: (row.txHash as string) || null,
       status: row.status as string,
       createdAt: row.createdAt as string,
-      reviewedAt: row.reviewedAt as string | null,
-      reviewedBy: row.reviewedBy as string | null,
+      reviewedAt: (row.reviewedAt as string) || null,
+      reviewedBy: (row.reviewedBy as string) || null,
     }));
 
     return NextResponse.json({ requests });
@@ -79,6 +82,9 @@ export async function POST(request: NextRequest) {
     const row = pr.rows[0];
     const userId = row.userId as string;
     const months = Number(row.months);
+    const planLabel = row.planLabel as string;
+    const amountUSD = Number(row.amountUSD);
+    const txHash = (row.txHash as string) || null;
     const newStatus = action === 'approve' ? 'approved' : 'rejected';
 
     // Update payment request status
@@ -99,6 +105,19 @@ export async function POST(request: NextRequest) {
         expiresAt: expiresAt.toISOString(),
         lastPaymentAt: now.toISOString(),
       });
+
+      // Record in PaymentHistory
+      await db.execute(
+        `INSERT INTO "PaymentHistory" (id, userId, planLabel, amountUSD, txHash, status, createdAt, confirmedAt, confirmedBy)
+         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)`,
+        [crypto.randomUUID(), userId, planLabel, amountUSD, txHash, 'approved', reviewerName || 'admin']
+      );
+    } else {
+      await db.execute(
+        `INSERT INTO "PaymentHistory" (id, userId, planLabel, amountUSD, txHash, status, createdAt, confirmedAt, confirmedBy)
+         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)`,
+        [crypto.randomUUID(), userId, planLabel, amountUSD, txHash, 'rejected', reviewerName || 'admin']
+      );
     }
 
     return NextResponse.json({
