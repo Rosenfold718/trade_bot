@@ -27,6 +27,16 @@ import {
   Settings2,
   Loader2,
   Check,
+  Eye,
+  EyeOff,
+  Copy,
+  Plus,
+  Trash2,
+  Clock,
+  Users,
+  KeyRound,
+  RefreshCw,
+  AlertCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -784,6 +794,572 @@ function SystemTab({
 }
 
 // ============================================================
+// UsersTab — user management with password visibility + reset
+// ============================================================
+
+interface UserInfo {
+  id: string;
+  username: string;
+  password: string;
+  email: string;
+  role: string;
+  isDemo: string;
+  demoExpiresAt: string | null;
+  createdAt: string;
+  subscription: {
+    isActive: boolean;
+    expiresAt: string | null;
+  } | null;
+}
+
+const ADMIN_AUTH = 'Bearer trade-bot-admin-2024';
+const ADMIN_HEADERS: HeadersInit = {
+  'Authorization': ADMIN_AUTH,
+  'Content-Type': 'application/json',
+};
+
+function UsersTab() {
+  const [users, setUsers] = useState<UserInfo[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [showPasswordId, setShowPasswordId] = useState<string | null>(null);
+  const [resettingId, setResettingId] = useState<string | null>(null);
+  const [newPasswords, setNewPasswords] = useState<Record<string, string>>({});
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const fetchUsers = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/users', { headers: { 'Authorization': ADMIN_AUTH } });
+      const data = await res.json();
+      // Filter: regular users only (not demo, not admin)
+      const filtered = (data.users ?? []).filter((u: UserInfo) => u.role !== 'admin' && u.isDemo !== '1');
+      setUsers(filtered);
+    } catch (err) {
+      console.error('Failed to load users:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
+
+  const handleResetPassword = useCallback(async (userId: string) => {
+    setResettingId(userId);
+    try {
+      const res = await fetch('/api/admin/reset-password', {
+        method: 'POST',
+        headers: ADMIN_HEADERS,
+        body: JSON.stringify({ userId }),
+      });
+      const data = await res.json();
+      if (data.success && data.newPassword) {
+        setNewPasswords(prev => ({ ...prev, [userId]: data.newPassword }));
+        setShowPasswordId(userId);
+      }
+    } catch (err) {
+      console.error('Failed to reset password:', err);
+    } finally {
+      setResettingId(null);
+    }
+  }, []);
+
+  const handleDelete = useCallback(async (userId: string) => {
+    setDeletingId(userId);
+    try {
+      await fetch(`/api/admin/users?id=${userId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': ADMIN_AUTH },
+      });
+      setUsers(prev => prev.filter(u => u.id !== userId));
+    } catch (err) {
+      console.error('Failed to delete user:', err);
+    } finally {
+      setDeletingId(null);
+    }
+  }, []);
+
+  const handleCopy = useCallback(async (text: string, id: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 1500);
+    } catch {
+      // fallback
+    }
+  }, []);
+
+  const formatDate = (d: string) => {
+    if (!d) return '—';
+    try {
+      return new Date(d).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' });
+    } catch {
+      return d;
+    }
+  };
+
+  return (
+    <ScrollArea className="h-[calc(100vh-200px)] sm:h-[calc(100vh-160px)] pr-2">
+      <div className="space-y-4 pb-8 max-w-3xl mx-auto">
+        {/* Header */}
+        <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-blue-500/10 border border-blue-500/20">
+              <Users className="w-5 h-5 text-blue-400" />
+            </div>
+            <div>
+              <div className="text-base font-bold text-blue-400">Пользователи</div>
+              <div className="text-[11px] text-white/30 mt-0.5">Управление аккаунтами, просмотр паролей и подписок</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Users count */}
+        <div className="flex items-center justify-between px-1">
+          <span className="text-[11px] text-white/40 font-mono">
+            {loading ? 'Загрузка...' : `${users.length} пользователей`}
+          </span>
+          <button
+            onClick={fetchUsers}
+            disabled={loading}
+            className="text-[11px] text-white/40 hover:text-white/60 transition-colors flex items-center gap-1"
+          >
+            <RefreshCw className={cn('w-3 h-3', loading && 'animate-spin')} />
+            Обновить
+          </button>
+        </div>
+
+        {/* Table */}
+        <div className="max-h-[500px] overflow-y-auto rounded-xl border border-white/[0.06]">
+          {users.length === 0 ? (
+            <div className="flex items-center justify-center py-16 text-white/20 text-sm">
+              {loading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : null}
+              {loading ? 'Загрузка...' : 'Нет пользователей'}
+            </div>
+          ) : (
+            <table className="w-full text-[11px] font-mono">
+              <thead>
+                <tr className="border-b border-white/[0.06] bg-white/[0.02]">
+                  <th className="text-left py-2.5 px-3 text-white/40 font-medium">Логин</th>
+                  <th className="text-left py-2.5 px-3 text-white/40 font-medium">Email</th>
+                  <th className="text-left py-2.5 px-3 text-white/40 font-medium">Роль</th>
+                  <th className="text-left py-2.5 px-3 text-white/40 font-medium">Подписка</th>
+                  <th className="text-left py-2.5 px-3 text-white/40 font-medium">Пароль</th>
+                  <th className="text-left py-2.5 px-3 text-white/40 font-medium">Создан</th>
+                  <th className="text-right py-2.5 px-3 text-white/40 font-medium"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map(user => {
+                  const isNewPassword = !!newPasswords[user.id];
+                  const isShowingPassword = showPasswordId === user.id;
+                  const displayPassword = isNewPassword
+                    ? newPasswords[user.id]
+                    : isShowingPassword
+                      ? user.password
+                      : '•'.repeat(12);
+
+                  return (
+                    <tr key={user.id} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
+                      <td className="py-2.5 px-3 text-white/80 font-medium">{user.username}</td>
+                      <td className="py-2.5 px-3 text-white/50 max-w-[120px] truncate">{user.email || '—'}</td>
+                      <td className="py-2.5 px-3">
+                        <span className={cn(
+                          'px-2 py-0.5 rounded-full text-[10px] font-medium',
+                          user.role === 'admin'
+                            ? 'bg-red-500/15 text-red-400 border border-red-500/20'
+                            : user.isDemo === '1'
+                              ? 'bg-amber-500/15 text-amber-400 border border-amber-500/20'
+                              : 'bg-white/[0.06] text-white/50 border border-white/[0.08]',
+                        )}>
+                          {user.role === 'admin' ? 'admin' : user.isDemo === '1' ? 'demo' : 'user'}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        {user.subscription?.isActive ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
+                            Активна
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-500/15 text-red-400 border border-red-500/20">
+                            Истекла
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <div className="flex items-center gap-1.5">
+                          <span className={cn(
+                            'text-[10px] truncate max-w-[100px]',
+                            isNewPassword ? 'text-emerald-400 font-semibold' : isShowingPassword ? 'text-white/40' : 'text-white/20',
+                          )}>
+                            {displayPassword}
+                          </span>
+                          <button
+                            onClick={() => setShowPasswordId(isShowingPassword ? null : user.id)}
+                            className="w-5 h-5 rounded flex items-center justify-center text-white/20 hover:text-white/50 transition-colors"
+                            title={isShowingPassword ? 'Скрыть' : 'Показать'}
+                          >
+                            {isShowingPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                          </button>
+                          {isNewPassword && (
+                            <button
+                              onClick={() => handleCopy(newPasswords[user.id], user.id)}
+                              className="w-5 h-5 rounded flex items-center justify-center text-emerald-400/60 hover:text-emerald-400 transition-colors"
+                              title="Копировать"
+                            >
+                              {copiedId === user.id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleResetPassword(user.id)}
+                            disabled={resettingId === user.id}
+                            className="w-5 h-5 rounded flex items-center justify-center text-amber-400/60 hover:text-amber-400 transition-colors disabled:opacity-40"
+                            title="Сбросить пароль"
+                          >
+                            {resettingId === user.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                          </button>
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3 text-white/40">{formatDate(user.createdAt)}</td>
+                      <td className="py-2.5 px-3 text-right">
+                        <button
+                          onClick={() => handleDelete(user.id)}
+                          disabled={deletingId === user.id}
+                          className="w-6 h-6 rounded-lg flex items-center justify-center ml-auto text-red-400/50 hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-40"
+                          title="Удалить"
+                        >
+                          {deletingId === user.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </ScrollArea>
+  );
+}
+
+// ============================================================
+// DemoTab — demo account management
+// ============================================================
+
+interface DemoAccount {
+  id: string;
+  username: string;
+  password: string;
+  createdAt: string;
+  demoExpiresAt: string | null;
+  subscription: {
+    isActive: boolean;
+    expiresAt: string | null;
+  } | null;
+}
+
+function formatCountdown(expiresAt: string | null): string {
+  if (!expiresAt) return '—';
+  const diff = new Date(expiresAt).getTime() - Date.now();
+  if (diff <= 0) return 'Истёк';
+  const totalSec = Math.floor(diff / 1000);
+  const hrs = Math.floor(totalSec / 3600);
+  const mins = Math.floor((totalSec % 3600) / 60);
+  return `${hrs}ч ${mins}мин`;
+}
+
+function isExpired(expiresAt: string | null): boolean {
+  if (!expiresAt) return true;
+  return new Date(expiresAt).getTime() <= Date.now();
+}
+
+function DemoTab() {
+  const [accounts, setAccounts] = useState<DemoAccount[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [newAccount, setNewAccount] = useState<{ username: string; password: string; expiresAt: string } | null>(null);
+  const [resettingId, setResettingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [, setTick] = useState(0);
+
+  const fetchAccounts = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/demo', { headers: { 'Authorization': ADMIN_AUTH } });
+      const data = await res.json();
+      setAccounts(data.accounts ?? []);
+    } catch (err) {
+      console.error('Failed to load demo accounts:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Initial fetch + auto-refresh every 30s
+  useEffect(() => {
+    fetchAccounts();
+    const interval = setInterval(fetchAccounts, 30_000);
+    return () => clearInterval(interval);
+  }, [fetchAccounts]);
+
+  // Tick every minute for countdown timers
+  useEffect(() => {
+    const interval = setInterval(() => setTick(t => t + 1), 60_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleCreate = useCallback(async () => {
+    setCreating(true);
+    try {
+      const res = await fetch('/api/admin/demo', {
+        method: 'POST',
+        headers: ADMIN_HEADERS,
+      });
+      const data = await res.json();
+      setNewAccount({ username: data.username, password: data.password, expiresAt: data.expiresAt });
+      fetchAccounts();
+      // Auto-hide card after 15s
+      setTimeout(() => setNewAccount(null), 15_000);
+    } catch (err) {
+      console.error('Failed to create demo account:', err);
+    } finally {
+      setCreating(false);
+    }
+  }, [fetchAccounts]);
+
+  const handleReset = useCallback(async (id: string) => {
+    setResettingId(id);
+    try {
+      await fetch('/api/admin/demo?action=reset&id=' + id, {
+        method: 'POST',
+        headers: ADMIN_HEADERS,
+      });
+      fetchAccounts();
+    } catch (err) {
+      console.error('Failed to reset demo account:', err);
+    } finally {
+      setResettingId(null);
+    }
+  }, [fetchAccounts]);
+
+  const handleDelete = useCallback(async (id: string) => {
+    setDeletingId(id);
+    try {
+      await fetch('/api/admin/demo?id=' + id, {
+        method: 'DELETE',
+        headers: { 'Authorization': ADMIN_AUTH },
+      });
+      setAccounts(prev => prev.filter(a => a.id !== id));
+    } catch (err) {
+      console.error('Failed to delete demo account:', err);
+    } finally {
+      setDeletingId(null);
+    }
+  }, []);
+
+  const handleCopy = useCallback(async (text: string, field: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedField(field);
+      setTimeout(() => setCopiedField(null), 1500);
+    } catch {
+      // fallback
+    }
+  }, []);
+
+  const formatDate = (d: string) => {
+    if (!d) return '—';
+    try {
+      return new Date(d).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return d;
+    }
+  };
+
+  const activeCount = accounts.filter(a => !isExpired(a.demoExpiresAt)).length;
+  const expiredCount = accounts.filter(a => isExpired(a.demoExpiresAt)).length;
+
+  return (
+    <ScrollArea className="h-[calc(100vh-200px)] sm:h-[calc(100vh-160px)] pr-2">
+      <div className="space-y-4 pb-8 max-w-3xl mx-auto">
+        {/* Header */}
+        <div className="rounded-xl border border-amber-500/15 bg-amber-500/[0.03] p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-amber-500/10 border border-amber-500/20">
+                <KeyRound className="w-5 h-5 text-amber-400" />
+              </div>
+              <div>
+                <div className="text-base font-bold text-amber-400">Демо доступ</div>
+                <div className="text-[11px] text-white/30 mt-0.5">Управление тестовыми аккаунтами с ограниченным доступом</div>
+              </div>
+            </div>
+            <button
+              onClick={handleCreate}
+              disabled={creating}
+              className="h-8 px-3 rounded-lg bg-amber-500/15 border border-amber-500/25 text-amber-400 text-[11px] font-medium hover:bg-amber-500/25 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+            >
+              {creating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+              Создать
+            </button>
+          </div>
+        </div>
+
+        {/* New account card */}
+        {newAccount && (
+          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.05] p-4 animate-in fade-in slide-in-from-top-2 duration-300">
+            <div className="flex items-center gap-2 mb-3">
+              <Check className="w-4 h-4 text-emerald-400" />
+              <span className="text-[12px] font-medium text-emerald-400">Новый демо аккаунт создан</span>
+            </div>
+            <div className="grid grid-cols-2 gap-3 text-[11px] font-mono">
+              <div className="rounded-lg bg-white/[0.04] border border-white/[0.06] p-2.5">
+                <div className="text-white/30 text-[10px] mb-1">Логин</div>
+                <div className="text-white/90 font-medium">{newAccount.username}</div>
+              </div>
+              <div className="rounded-lg bg-white/[0.04] border border-white/[0.06] p-2.5">
+                <div className="text-white/30 text-[10px] mb-1">Пароль</div>
+                <div className="flex items-center justify-between">
+                  <span className="text-emerald-400 font-medium">{newAccount.password}</span>
+                  <button
+                    onClick={() => handleCopy(newAccount.password, 'new-pw')}
+                    className="text-emerald-400/60 hover:text-emerald-400 transition-colors ml-2"
+                  >
+                    {copiedField === 'new-pw' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="mt-2 text-[10px] text-white/25">Истекает: {formatDate(newAccount.expiresAt)}</div>
+          </div>
+        )}
+
+        {/* Stats */}
+        <div className="flex items-center gap-4 px-1">
+          <span className="text-[11px] text-white/40 font-mono">
+            {loading ? 'Загрузка...' : `${accounts.length} аккаунтов`}
+          </span>
+          {activeCount > 0 && (
+            <span className="text-[10px] text-emerald-400/60 font-mono">
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400/60 mr-1" />
+              {activeCount} активных
+            </span>
+          )}
+          {expiredCount > 0 && (
+            <span className="text-[10px] text-red-400/60 font-mono">
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-400/60 mr-1" />
+              {expiredCount} истёкших
+            </span>
+          )}
+          <button
+            onClick={fetchAccounts}
+            disabled={loading}
+            className="ml-auto text-[11px] text-white/40 hover:text-white/60 transition-colors flex items-center gap-1"
+          >
+            <RefreshCw className={cn('w-3 h-3', loading && 'animate-spin')} />
+            Обновить
+          </button>
+        </div>
+
+        {/* Demo accounts list */}
+        <div className="max-h-[500px] overflow-y-auto rounded-xl border border-amber-500/10">
+          {accounts.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-white/20 text-sm gap-2">
+              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <AlertCircle className="w-5 h-5" />}
+              {loading ? 'Загрузка...' : 'Нет демо аккаунтов'}
+            </div>
+          ) : (
+            <table className="w-full text-[11px] font-mono">
+              <thead>
+                <tr className="border-b border-white/[0.06] bg-amber-500/[0.04]">
+                  <th className="text-left py-2.5 px-3 text-amber-400/50 font-medium">Логин</th>
+                  <th className="text-left py-2.5 px-3 text-amber-400/50 font-medium">Пароль</th>
+                  <th className="text-left py-2.5 px-3 text-amber-400/50 font-medium">Создан</th>
+                  <th className="text-left py-2.5 px-3 text-amber-400/50 font-medium">Осталось</th>
+                  <th className="text-left py-2.5 px-3 text-amber-400/50 font-medium">Статус</th>
+                  <th className="text-right py-2.5 px-3 text-amber-400/50 font-medium"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {accounts.map(account => {
+                  const expired = isExpired(account.demoExpiresAt);
+                  return (
+                    <tr key={account.id} className={cn(
+                      'border-b border-white/[0.04] transition-colors',
+                      expired ? 'opacity-50' : 'hover:bg-amber-500/[0.03]',
+                    )}>
+                      <td className="py-2.5 px-3 text-white/80 font-medium">{account.username}</td>
+                      <td className="py-2.5 px-3">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-white/40 truncate max-w-[80px]">{account.password}</span>
+                          <button
+                            onClick={() => handleCopy(account.password, account.id + '-pw')}
+                            className="w-5 h-5 rounded flex items-center justify-center text-white/20 hover:text-amber-400 transition-colors"
+                            title="Копировать"
+                          >
+                            {copiedField === account.id + '-pw' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                          </button>
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3 text-white/40">{formatDate(account.createdAt)}</td>
+                      <td className="py-2.5 px-3">
+                        <div className="flex items-center gap-1.5">
+                          <Clock className={cn('w-3 h-3', expired ? 'text-red-400/40' : 'text-amber-400/40')} />
+                          <span className={expired ? 'text-red-400/60' : 'text-amber-400'}>
+                            {formatCountdown(account.demoExpiresAt)}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        {expired ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-500/15 text-red-400 border border-red-500/20">
+                            Истёк
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
+                            Активен
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          {!expired && (
+                            <button
+                              onClick={() => handleReset(account.id)}
+                              disabled={resettingId === account.id}
+                              className="w-6 h-6 rounded-lg flex items-center justify-center text-amber-400/50 hover:text-amber-400 hover:bg-amber-500/10 transition-colors disabled:opacity-40"
+                              title="Продлить на 2ч"
+                            >
+                              {resettingId === account.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleDelete(account.id)}
+                            disabled={deletingId === account.id}
+                            className="w-6 h-6 rounded-lg flex items-center justify-center text-red-400/50 hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-40"
+                            title="Удалить"
+                          >
+                            {deletingId === account.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </ScrollArea>
+  );
+}
+
+// ============================================================
 // Main AdminPanel component
 // ============================================================
 
@@ -947,6 +1523,20 @@ export default function AdminPanel({ open, onClose }: AdminPanelProps) {
                     <span className={activeTab === s.id ? s.color : ''}>{s.name}</span>
                   </TabsTrigger>
                 ))}
+                <TabsTrigger
+                  value="users"
+                  className="text-[11px] font-medium px-3 py-2 rounded-lg data-[state=active]:bg-blue-500/15 data-[state=active]:text-blue-400 data-[state=active]:shadow-none"
+                >
+                  <Users className="w-3 h-3 mr-1.5" />
+                  Пользователи
+                </TabsTrigger>
+                <TabsTrigger
+                  value="demo"
+                  className="text-[11px] font-medium px-3 py-2 rounded-lg data-[state=active]:bg-amber-500/15 data-[state=active]:text-amber-400 data-[state=active]:shadow-none"
+                >
+                  <KeyRound className="w-3 h-3 mr-1.5" />
+                  Демо доступ
+                </TabsTrigger>
               </TabsList>
 
               {/* System tab */}
@@ -969,6 +1559,16 @@ export default function AdminPanel({ open, onClose }: AdminPanelProps) {
                   />
                 </TabsContent>
               ))}
+
+              {/* Users tab */}
+              <TabsContent value="users" className="flex-1 mt-0 px-4 sm:px-6 overflow-y-auto custom-scrollbar">
+                <UsersTab />
+              </TabsContent>
+
+              {/* Demo tab */}
+              <TabsContent value="demo" className="flex-1 mt-0 px-4 sm:px-6 overflow-y-auto custom-scrollbar">
+                <DemoTab />
+              </TabsContent>
             </Tabs>
           </div>
         )}

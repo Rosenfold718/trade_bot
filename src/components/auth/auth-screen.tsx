@@ -175,19 +175,19 @@ export default function AuthScreen() {
   ].filter(Boolean).length;
 
   return (
-    <div className="min-h-[100dvh] bg-[#0a0a0f] flex items-center justify-center overflow-y-auto safe-top safe-bottom">
-      <div className="w-full max-w-[400px] px-4 py-6 sm:py-10">
+    <div className="min-h-[100dvh] bg-[#0a0a0f] flex flex-col items-center overflow-y-auto safe-top safe-bottom">
+      <div className="w-full max-w-[400px] px-4 py-4 sm:py-8 my-auto">
         {/* Logo */}
-        <div className="text-center mb-4 sm:mb-5">
-          <div className="w-12 h-12 mx-auto rounded-xl bg-gradient-to-br from-emerald-500/15 to-emerald-600/5 border border-emerald-500/15 flex items-center justify-center">
-            <TrendingUp className="w-6 h-6 text-emerald-400" />
+        <div className="text-center mb-3 sm:mb-4">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 mx-auto rounded-xl bg-gradient-to-br from-emerald-500/15 to-emerald-600/5 border border-emerald-500/15 flex items-center justify-center">
+            <TrendingUp className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-400" />
           </div>
-          <h1 className="text-lg sm:text-xl font-bold text-white tracking-tight mt-2.5">Trade Terminal</h1>
-          <p className="text-[11px] sm:text-xs text-white/25 mt-0.5">Мультистратегический терминал</p>
+          <h1 className="text-base sm:text-xl font-bold text-white tracking-tight mt-2">Trade Terminal</h1>
+          <p className="text-[10px] sm:text-xs text-white/25 mt-0.5">Мультистратегический терминал</p>
         </div>
 
         <Card className="bg-[#12121e]/90 backdrop-blur-xl border-white/[0.08] rounded-2xl">
-          <CardContent className="p-4 sm:p-5 space-y-3.5">
+          <CardContent className="p-3.5 sm:p-5 space-y-2.5 sm:space-y-3.5">
             {/* Tabs */}
             <div className="flex bg-white/[0.04] rounded-lg p-0.5 border border-white/[0.06]">
               <button
@@ -222,7 +222,7 @@ export default function AuthScreen() {
               </div>
             )}
 
-            <form onSubmit={mode === 'login' ? handleLogin : handleRegister} className="space-y-3">
+            <form onSubmit={mode === 'login' ? handleLogin : handleRegister} className="space-y-2.5">
               {/* Username */}
               <div>
                 <Input
@@ -230,7 +230,7 @@ export default function AuthScreen() {
                   value={username}
                   onChange={(e) => setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 20))}
                   placeholder="Логин"
-                  className="h-10 bg-white/[0.04] border-white/[0.08] text-white placeholder:text-white/20 rounded-lg focus:ring-emerald-500/25 focus:border-emerald-500/30 text-[15px]"
+                  className="h-9 bg-white/[0.04] border-white/[0.08] text-white placeholder:text-white/20 rounded-lg focus:ring-emerald-500/25 focus:border-emerald-500/30 text-sm"
                   required
                   autoComplete="username"
                 />
@@ -245,7 +245,7 @@ export default function AuthScreen() {
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="Email"
                     required
-                    className="h-10 bg-white/[0.04] border-white/[0.08] text-white placeholder:text-white/20 rounded-lg focus:ring-emerald-500/25 focus:border-emerald-500/30 text-[15px]"
+                    className="h-9 bg-white/[0.04] border-white/[0.08] text-white placeholder:text-white/20 rounded-lg focus:ring-emerald-500/25 focus:border-emerald-500/30 text-sm"
                     autoComplete="email"
                   />
                 </div>
@@ -258,7 +258,7 @@ export default function AuthScreen() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder={mode === 'register' ? 'Пароль (мин. 8 символов)' : 'Пароль'}
-                  className="h-10 bg-white/[0.04] border-white/[0.08] text-white placeholder:text-white/20 rounded-lg pr-10 focus:ring-emerald-500/25 focus:border-emerald-500/30 text-[15px]"
+                  className="h-9 bg-white/[0.04] border-white/[0.08] text-white placeholder:text-white/20 rounded-lg pr-10 focus:ring-emerald-500/25 focus:border-emerald-500/30 text-sm"
                   required
                   minLength={mode === 'register' ? 8 : 6}
                   autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
@@ -280,7 +280,7 @@ export default function AuthScreen() {
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="Повторите пароль"
-                    className="h-10 bg-white/[0.04] border-white/[0.08] text-white placeholder:text-white/20 rounded-lg focus:ring-emerald-500/25 focus:border-emerald-500/30 text-[15px]"
+                    className="h-9 bg-white/[0.04] border-white/[0.08] text-white placeholder:text-white/20 rounded-lg focus:ring-emerald-500/25 focus:border-emerald-500/30 text-sm"
                     required
                     minLength={8}
                     autoComplete="new-password"

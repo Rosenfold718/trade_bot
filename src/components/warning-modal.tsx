@@ -178,9 +178,9 @@ export default function WarningModal({ onComplete }: WarningModalProps) {
               <button
                 onClick={() => setPage(p => Math.max(0, p - 1))}
                 disabled={page === 0}
-                className="h-9 w-9 p-0 rounded-lg border border-white/[0.12] bg-white/[0.04] text-white/50 hover:bg-white/[0.08] hover:text-white/70 disabled:opacity-20 disabled:cursor-not-allowed flex items-center justify-center transition-all"
+                className="h-10 w-10 p-0 rounded-lg border border-white/25 bg-white/[0.08] text-white/80 hover:bg-white/[0.12] hover:text-white disabled:opacity-20 disabled:cursor-not-allowed flex items-center justify-center transition-all"
               >
-                <ChevronLeft className="h-4 w-4" />
+                <ChevronLeft className="h-5 w-5" />
               </button>
               <div className="flex-1 flex gap-1.5">
                 {PAGES.map((_, i) => (
@@ -197,9 +197,9 @@ export default function WarningModal({ onComplete }: WarningModalProps) {
               <button
                 onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
                 disabled={page === totalPages - 1}
-                className="h-9 w-9 p-0 rounded-lg border border-white/[0.12] bg-white/[0.04] text-white/50 hover:bg-white/[0.08] hover:text-white/70 disabled:opacity-20 disabled:cursor-not-allowed flex items-center justify-center transition-all"
+                className="h-10 w-10 p-0 rounded-lg border border-white/25 bg-white/[0.08] text-white/80 hover:bg-white/[0.12] hover:text-white disabled:opacity-20 disabled:cursor-not-allowed flex items-center justify-center transition-all"
               >
-                <ChevronRight className="h-4 w-4" />
+                <ChevronRight className="h-5 w-5" />
               </button>
             </div>
 
