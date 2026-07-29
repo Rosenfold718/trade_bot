@@ -3,7 +3,7 @@ import { findSubscriptionByUserId, upsertSubscription, PLANS, CRYPTO_WALLET } fr
 import { initAuthTables } from '@/lib/init-auth-tables';
 import { getAuthUserId } from '@/lib/auth-helpers';
 import { getAuthClient } from '@/lib/auth-db';
-import { initDB, getSetting } from '@/lib/db';
+import { initDB as initTradingDB, getSetting } from '@/lib/db';
 
 export async function GET(request: NextRequest) {
   try {
@@ -96,6 +96,8 @@ export async function POST(request: NextRequest) {
     const { action, months, txHash, paymentMethod } = body as { action: string; months?: number; txHash?: string; paymentMethod?: string };
 
     if (action === 'confirm-payment') {
+      // Ensure trading DB tables exist before querying system_settings
+      try { await initTradingDB(); } catch { /* ignore */ }
       // Server-side check: offer must be accepted
       const offerAccepted = await getSetting(`offer_accepted_${userId}`);
       if (offerAccepted !== '1') {
