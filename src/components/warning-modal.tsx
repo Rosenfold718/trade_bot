@@ -54,6 +54,10 @@ const PAGES = [
           <li class="flex gap-2"><span class="text-emerald-400 shrink-0">✓</span><span>Дневной лимит убытков (5% от депозита)</span></li>
           <li class="flex gap-2"><span class="text-emerald-400 shrink-0">✓</span><span>Фильтрация по корреляции с BTC</span></li>
         </ul>
+        <div class="mt-3 bg-blue-500/[0.06] border border-blue-500/15 rounded-lg p-3">
+          <p class="text-blue-300 font-medium text-xs">⏱ Время удержания позиций</p>
+          <p class="text-white/50 text-xs mt-1">Каждая позиция держится от <strong class="text-white/70">24 до 72 часов</strong>. Временная просадка по позиции — это нормальная часть работы стратегии и не означает, что система ошиблась. Дождитесь закрытия по стоп-лоссу или тейк-профиту.</p>
+        </div>
         <p class="text-white/40 text-xs mt-2 italic">Торговля — это марафон, а не спринт. Стабильность важнее скорости.</p>
       </div>
     `,
@@ -171,15 +175,13 @@ export default function WarningModal({ onComplete }: WarningModalProps) {
 
             {/* Navigation */}
             <div className="flex items-center gap-2 mb-4">
-              <Button
-                variant="outline"
-                size="sm"
+              <button
                 onClick={() => setPage(p => Math.max(0, p - 1))}
                 disabled={page === 0}
-                className="h-9 w-9 p-0 border-white/[0.12] text-white/50 hover:bg-white/[0.06] hover:text-white/70 disabled:opacity-20"
+                className="h-9 w-9 p-0 rounded-lg border border-white/[0.12] bg-white/[0.04] text-white/50 hover:bg-white/[0.08] hover:text-white/70 disabled:opacity-20 disabled:cursor-not-allowed flex items-center justify-center transition-all"
               >
                 <ChevronLeft className="h-4 w-4" />
-              </Button>
+              </button>
               <div className="flex-1 flex gap-1.5">
                 {PAGES.map((_, i) => (
                   <button
@@ -192,15 +194,13 @@ export default function WarningModal({ onComplete }: WarningModalProps) {
                   />
                 ))}
               </div>
-              <Button
-                variant="outline"
-                size="sm"
+              <button
                 onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
                 disabled={page === totalPages - 1}
-                className="h-9 w-9 p-0 border-white/[0.12] text-white/50 hover:bg-white/[0.06] hover:text-white/70 disabled:opacity-20"
+                className="h-9 w-9 p-0 rounded-lg border border-white/[0.12] bg-white/[0.04] text-white/50 hover:bg-white/[0.08] hover:text-white/70 disabled:opacity-20 disabled:cursor-not-allowed flex items-center justify-center transition-all"
               >
                 <ChevronRight className="h-4 w-4" />
-              </Button>
+              </button>
             </div>
 
             {/* Footer */}

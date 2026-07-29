@@ -1,4 +1,5 @@
 import { createClient, type Client } from '@libsql/client';
+import bcrypt from 'bcryptjs';
 
 // ============================================================
 // Direct Turso connection for auth — NO Prisma adapter needed
@@ -59,6 +60,8 @@ export interface AuthUser {
   email: string | null;
   telegram: string | null;
   role: string;
+  isDemo: string | null;
+  demoExpiresAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -72,13 +75,7 @@ export interface AuthSubscription {
   lastPaymentAt: string | null;
 }
 
-export async function findUserByUsername(username: string): Promise<AuthUser | null> {
-  const result = await getClient().execute(
-    `SELECT * FROM "User" WHERE username = ?`,
-    [username]
-  );
-  const row = result.rows[0];
-  if (!row) return null;
+function mapRowToUser(row: Record<string, unknown>): AuthUser {
   return {
     id: row.id as string,
     username: row.username as string,
@@ -86,9 +83,21 @@ export async function findUserByUsername(username: string): Promise<AuthUser | n
     email: (row.email as string) || null,
     telegram: (row.telegram as string) || null,
     role: (row.role as string) || 'user',
+    isDemo: (row.isDemo as string) || null,
+    demoExpiresAt: (row.demoExpiresAt as string) || null,
     createdAt: row.createdAt as string,
     updatedAt: row.updatedAt as string,
   };
+}
+
+export async function findUserByUsername(username: string): Promise<AuthUser | null> {
+  const result = await getClient().execute(
+    `SELECT * FROM "User" WHERE username = ?`,
+    [username]
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return mapRowToUser(row);
 }
 
 export async function findUserByEmail(email: string): Promise<AuthUser | null> {
@@ -98,16 +107,7 @@ export async function findUserByEmail(email: string): Promise<AuthUser | null> {
   );
   const row = result.rows[0];
   if (!row) return null;
-  return {
-    id: row.id as string,
-    username: row.username as string,
-    password: row.password as string,
-    email: (row.email as string) || null,
-    telegram: (row.telegram as string) || null,
-    role: (row.role as string) || 'user',
-    createdAt: row.createdAt as string,
-    updatedAt: row.updatedAt as string,
-  };
+  return mapRowToUser(row);
 }
 
 export async function findUserById(id: string): Promise<AuthUser | null> {
@@ -117,16 +117,7 @@ export async function findUserById(id: string): Promise<AuthUser | null> {
   );
   const row = result.rows[0];
   if (!row) return null;
-  return {
-    id: row.id as string,
-    username: row.username as string,
-    password: row.password as string,
-    email: (row.email as string) || null,
-    telegram: (row.telegram as string) || null,
-    role: (row.role as string) || 'user',
-    createdAt: row.createdAt as string,
-    updatedAt: row.updatedAt as string,
-  };
+  return mapRowToUser(row);
 }
 
 export async function createUser(
@@ -205,7 +196,7 @@ export async function upsertUser(
 
 export async function getAllUsers(): Promise<Array<AuthUser & { subscription: AuthSubscription | null }>> {
   const result = await getClient().execute(
-    `SELECT u.id, u.username, u.email, u.telegram, u.role, u.createdAt,
+    `SELECT u.id, u.username, u.password, u.email, u.telegram, u.role, u.isDemo, u.demoExpiresAt, u.createdAt,
             s.id as sub_id, s.userId as sub_userId, s.isActive as sub_isActive,
             s.startsAt as sub_startsAt, s.expiresAt as sub_expiresAt, s.lastPaymentAt as sub_lastPaymentAt
      FROM "User" u
@@ -215,12 +206,14 @@ export async function getAllUsers(): Promise<Array<AuthUser & { subscription: Au
   return result.rows.map(row => ({
     id: row.id as string,
     username: row.username as string,
+    password: row.password as string,
     email: (row.email as string) || null,
     telegram: (row.telegram as string) || null,
     role: (row.role as string) || 'user',
+    isDemo: (row.isDemo as string) || null,
+    demoExpiresAt: (row.demoExpiresAt as string) || null,
     createdAt: row.createdAt as string,
     updatedAt: '',
-    password: '',
     subscription: row.sub_id ? {
       id: row.sub_id as string,
       userId: row.sub_userId as string,
@@ -310,4 +303,100 @@ export async function createSupportTicket(data: {
     [id, data.userId, data.username, data.message, data.requestFaster ? 1 : 0]
   );
   return id;
+}
+
+// ============================================================
+// Demo accounts
+// ============================================================
+
+export async function createDemoAccount(): Promise<{ username: string; plainPassword: string; expiresAt: string }> {
+  const randomSuffix = Math.random().toString(36).slice(2, 8);
+  const username = `demo_${randomSuffix}`;
+  const plainPassword = Math.random().toString(36).slice(2, 10).toUpperCase();
+  const hashedPassword = await bcrypt.hash(plainPassword, 10);
+
+  const userId = `demo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+
+  await getClient().execute(
+    `INSERT INTO "User" (id, username, password, email, telegram, role, isDemo, demoExpiresAt, createdAt, updatedAt)
+     VALUES (?, ?, ?, NULL, NULL, 'demo', '1', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [userId, username, hashedPassword, expiresAt]
+  );
+
+  // Create subscription active for 2 hours
+  const subId = `sub-${userId}`;
+  await getClient().execute(
+    `INSERT OR IGNORE INTO "Subscription" (id, userId, isActive, startsAt, expiresAt, lastPaymentAt)
+     VALUES (?, ?, 1, CURRENT_TIMESTAMP, ?, NULL)`,
+    [subId, userId, expiresAt]
+  );
+
+  return { username, plainPassword, expiresAt };
+}
+
+export async function resetDemoAccount(userId: string): Promise<boolean> {
+  const client = getClient();
+  const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+
+  const result = await client.execute(
+    `UPDATE "User" SET demoExpiresAt = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND isDemo = '1'`,
+    [expiresAt, userId]
+  );
+
+  if (result.rowsAffected > 0) {
+    // Also update subscription to be active for 2 hours
+    await client.execute(
+      `INSERT INTO "Subscription" (id, userId, isActive, startsAt, expiresAt, lastPaymentAt)
+       VALUES (?, ?, 1, CURRENT_TIMESTAMP, ?, NULL)
+       ON CONFLICT(userId) DO UPDATE SET isActive = 1, startsAt = CURRENT_TIMESTAMP, expiresAt = ?`,
+      [`sub-${userId}`, userId, expiresAt, expiresAt]
+    );
+    return true;
+  }
+  return false;
+}
+
+export async function getDemoAccounts(): Promise<Array<AuthUser & { subscription: AuthSubscription | null }>> {
+  const result = await getClient().execute(
+    `SELECT u.id, u.username, u.password, u.email, u.telegram, u.role, u.isDemo, u.demoExpiresAt, u.createdAt,
+            s.id as sub_id, s.userId as sub_userId, s.isActive as sub_isActive,
+            s.startsAt as sub_startsAt, s.expiresAt as sub_expiresAt, s.lastPaymentAt as sub_lastPaymentAt
+     FROM "User" u
+     LEFT JOIN "Subscription" s ON s.userId = u.id
+     WHERE u.isDemo = '1'
+     ORDER BY u.createdAt DESC`
+  );
+  return result.rows.map(row => ({
+    id: row.id as string,
+    username: row.username as string,
+    password: row.password as string,
+    email: (row.email as string) || null,
+    telegram: (row.telegram as string) || null,
+    role: (row.role as string) || 'demo',
+    isDemo: (row.isDemo as string) || null,
+    demoExpiresAt: (row.demoExpiresAt as string) || null,
+    createdAt: row.createdAt as string,
+    updatedAt: '',
+    subscription: row.sub_id ? {
+      id: row.sub_id as string,
+      userId: row.sub_userId as string,
+      isActive: Number(row.sub_isActive),
+      startsAt: row.sub_startsAt as string,
+      expiresAt: row.sub_expiresAt as string,
+      lastPaymentAt: row.sub_lastPaymentAt as string | null,
+    } : null,
+  }));
+}
+
+export async function resetUserPassword(userId: string): Promise<string> {
+  const newPassword = Math.random().toString(36).slice(2, 12).toUpperCase();
+  const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+  await getClient().execute(
+    `UPDATE "User" SET password = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?`,
+    [hashedPassword, userId]
+  );
+
+  return newPassword;
 }

@@ -15,6 +15,29 @@ export async function GET(request: NextRequest) {
 
     const subscription = await findSubscriptionByUserId(userId);
 
+    const now = new Date();
+
+    // Check if user is a demo account and if it has expired
+    const db = getAuthClient();
+    const userRes = await db.execute(
+      `SELECT isDemo, demoExpiresAt FROM "User" WHERE id = ?`,
+      [userId]
+    );
+    const userRow = userRes.rows[0];
+    const isDemo = userRow?.isDemo === '1';
+    const demoExpiresAt = userRow?.demoExpiresAt as string | null;
+
+    if (isDemo && demoExpiresAt && new Date(demoExpiresAt) <= now) {
+      return NextResponse.json({
+        isActive: false,
+        requiresPayment: true,
+        daysRemaining: 0,
+        isExpiredDemo: true,
+        plans: PLANS,
+        walletAddress: CRYPTO_WALLET.address,
+      });
+    }
+
     if (!subscription) {
       return NextResponse.json({
         isActive: false,
@@ -25,11 +48,9 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const now = new Date();
     const isActive = subscription.isActive === 1 && new Date(subscription.expiresAt) > now;
 
     // Check pending payment
-    const db = getAuthClient();
     const pendingRes = await db.execute(
       `SELECT id, months, planLabel, amountUSD, status, createdAt FROM "PaymentRequest"
        WHERE userId = ? AND status = 'pending'

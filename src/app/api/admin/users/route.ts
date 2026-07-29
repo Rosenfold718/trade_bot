@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
 
       // User info
       const userRes = await db.execute(
-        `SELECT u.id, u.username, u.email, u.telegram, u.role, u.createdAt, u.updatedAt,
+        `SELECT u.id, u.username, u.password, u.email, u.telegram, u.role, u.isDemo, u.demoExpiresAt, u.createdAt, u.updatedAt,
                 s.id as sub_id, s.isActive as sub_isActive, s.startsAt as sub_startsAt,
                 s.expiresAt as sub_expiresAt, s.lastPaymentAt as sub_lastPaymentAt
          FROM "User" u
@@ -45,9 +45,12 @@ export async function GET(request: NextRequest) {
       const user = {
         id: row.id as string,
         username: row.username as string,
+        password: row.password as string,
         email: (row.email as string) || null,
         telegram: (row.telegram as string) || null,
         role: (row.role as string) || 'user',
+        isDemo: (row.isDemo as string) || null,
+        demoExpiresAt: (row.demoExpiresAt as string) || null,
         createdAt: row.createdAt as string,
         updatedAt: row.updatedAt as string,
         subscription: row.sub_id ? {

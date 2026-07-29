@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Loader2, Check, X, CreditCard, XCircle, RefreshCw, Trash2,
   Users, DollarSign, Clock, ExternalLink, ChevronLeft, Mail, UserIcon, Shield, Calendar,
+  UserCog, Copy, KeyRound,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -26,6 +27,7 @@ interface UserInfo {
   id: string;
   username: string;
   role: string;
+  isDemo: string | null;
   createdAt: string;
   subscription: {
     isActive: number;
@@ -36,9 +38,12 @@ interface UserInfo {
 interface UserDetail {
   id: string;
   username: string;
+  password: string;
   email: string | null;
   telegram: string | null;
   role: string;
+  isDemo: string | null;
+  demoExpiresAt: string | null;
   createdAt: string;
   updatedAt: string;
   subscription: {
@@ -50,13 +55,27 @@ interface UserDetail {
   } | null;
 }
 
+interface DemoAccount {
+  id: string;
+  username: string;
+  password: string;
+  role: string;
+  isDemo: string | null;
+  demoExpiresAt: string | null;
+  createdAt: string;
+  subscription: {
+    isActive: number;
+    expiresAt: string;
+  } | null;
+}
+
 interface Props {
   open: boolean;
   onClose: () => void;
 }
 
 export default function AdminPaymentsPanel({ open, onClose }: Props) {
-  const [activeTab, setActiveTab] = useState<'payments' | 'users'>('payments');
+  const [activeTab, setActiveTab] = useState<'payments' | 'users' | 'demo'>('payments');
   const [requests, setRequests] = useState<PaymentRequest[]>([]);
   const [users, setUsers] = useState<UserInfo[]>([]);
   const [loading, setLoading] = useState(false);
@@ -85,6 +104,17 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
     createdAt: string;
   }>>([]);
   const [detailLoading, setDetailLoading] = useState(false);
+
+  // Reset password state
+  const [resetPasswordLoading, setResetPasswordLoading] = useState(false);
+  const [newPassword, setNewPassword] = useState<string | null>(null);
+
+  // Demo accounts state
+  const [demoAccounts, setDemoAccounts] = useState<DemoAccount[]>([]);
+  const [demoLoading, setDemoLoading] = useState(false);
+  const [demoActionLoading, setDemoActionLoading] = useState<string | null>(null);
+  const [newDemoAccount, setNewDemoAccount] = useState<{ username: string; password: string; expiresAt: string } | null>(null);
+  const [demoDeleteConfirm, setDemoDeleteConfirm] = useState<string | null>(null);
 
   const fetchRequests = useCallback(async () => {
     setLoading(true);
@@ -120,6 +150,7 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
     setUserDetail(null);
     setUserPayments([]);
     setUserPending([]);
+    setNewPassword(null);
     try {
       const res = await fetch(`/api/admin/users?id=${userId}`, {
         headers: { Authorization: `Bearer ${ADMIN_KEY}` },
@@ -139,6 +170,21 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
     setUserDetail(null);
     setUserPayments([]);
     setUserPending([]);
+    setNewPassword(null);
+  }, []);
+
+  const fetchDemoAccounts = useCallback(async () => {
+    setDemoLoading(true);
+    try {
+      const res = await fetch('/api/admin/demo', {
+        headers: { Authorization: `Bearer ${ADMIN_KEY}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setDemoAccounts(data.accounts || []);
+      }
+    } catch {}
+    setDemoLoading(false);
   }, []);
 
   useEffect(() => {
@@ -148,12 +194,13 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
         if (!cancelled) {
           await fetchRequests();
           await fetchUsers();
+          await fetchDemoAccounts();
         }
       };
       load();
       return () => { cancelled = true; };
     }
-  }, [open, fetchRequests, fetchUsers]);
+  }, [open, fetchRequests, fetchUsers, fetchDemoAccounts]);
 
   // Refresh detail if open
   useEffect(() => {
@@ -172,7 +219,6 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
       });
       if (res.ok) {
         setRequests(prev => prev.map(r => r.id === requestId ? { ...r, status: action === 'approve' ? 'approved' : 'rejected' } : r));
-        // Refresh detail if viewing a user
         if (selectedUserId) fetchUserDetail(selectedUserId);
       }
     } catch {}
@@ -197,6 +243,77 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
       }
     } catch {}
     setActionLoading(null);
+  };
+
+  const handleResetPassword = async () => {
+    if (!selectedUserId) return;
+    setResetPasswordLoading(true);
+    try {
+      const res = await fetch('/api/admin/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ADMIN_KEY}` },
+        body: JSON.stringify({ userId: selectedUserId }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setNewPassword(data.newPassword);
+      }
+    } catch {}
+    setResetPasswordLoading(false);
+  };
+
+  const handleCreateDemo = async () => {
+    setDemoActionLoading('create');
+    setNewDemoAccount(null);
+    try {
+      const res = await fetch('/api/admin/demo', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${ADMIN_KEY}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setNewDemoAccount({ username: data.username, password: data.password, expiresAt: data.expiresAt });
+        await fetchDemoAccounts();
+      }
+    } catch {}
+    setDemoActionLoading(null);
+  };
+
+  const handleResetDemo = async (id: string) => {
+    setDemoActionLoading(`reset-${id}`);
+    try {
+      const res = await fetch(`/api/admin/demo?action=reset&id=${id}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${ADMIN_KEY}` },
+      });
+      if (res.ok) {
+        await fetchDemoAccounts();
+      }
+    } catch {}
+    setDemoActionLoading(null);
+  };
+
+  const handleDeleteDemo = async (id: string) => {
+    if (demoDeleteConfirm !== id) {
+      setDemoDeleteConfirm(id);
+      return;
+    }
+    setDemoActionLoading(`delete-${id}`);
+    try {
+      const res = await fetch(`/api/admin/demo?id=${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${ADMIN_KEY}` },
+      });
+      if (res.ok) {
+        setDemoAccounts(prev => prev.filter(a => a.id !== id));
+        setDemoDeleteConfirm(null);
+      }
+    } catch {}
+    setDemoActionLoading(null);
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text).catch(() => {});
   };
 
   if (!open) return null;
@@ -242,8 +359,10 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
             <UserIcon className="w-5 h-5 text-emerald-400" />
             <h2 className="text-sm font-bold text-white">{u.username}</h2>
             <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
-              u.role === 'admin' ? 'bg-amber-500/20 text-amber-400' : 'bg-white/[0.06] text-white/30'
-            }`}>{u.role === 'admin' ? 'Admin' : 'User'}</span>
+              u.role === 'admin' ? 'bg-amber-500/20 text-amber-400' :
+              u.role === 'demo' ? 'bg-purple-500/20 text-purple-400' :
+              'bg-white/[0.06] text-white/30'
+            }`}>{u.role === 'admin' ? 'Admin' : u.role === 'demo' ? 'Demo' : 'User'}</span>
             <div className="ml-auto">
               <button onClick={onClose} className="p-1.5 text-white/30 hover:text-white/60 transition-colors rounded-lg hover:bg-white/5">
                 <XCircle className="w-3.5 h-3.5" />
@@ -257,7 +376,53 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
               <InfoCard icon={<UserIcon className="w-3.5 h-3.5" />} label="Логин" value={u.username} />
               <InfoCard icon={<Calendar className="w-3.5 h-3.5" />} label="Регистрация" value={new Date(u.createdAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })} />
               <InfoCard icon={<Mail className="w-3.5 h-3.5" />} label="Email" value={u.email || '—'} />
-              <InfoCard icon={<Shield className="w-3.5 h-3.5" />} label="Роль" value={u.role === 'admin' ? 'Администратор' : 'Пользователь'} />
+              <InfoCard icon={<Shield className="w-3.5 h-3.5" />} label="Роль" value={u.role === 'admin' ? 'Администратор' : u.role === 'demo' ? 'Демо' : 'Пользователь'} />
+              {/* Password field */}
+              <div className="bg-white/[0.03] border border-white/[0.06] rounded-lg p-2.5 col-span-2">
+                <div className="flex items-center gap-1.5 text-white/25 mb-1">
+                  <KeyRound className="w-3.5 h-3.5" />
+                  <span className="text-[9px] uppercase tracking-wider">Пароль (hash)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="text-xs text-white/50 font-mono truncate flex-1">{u.password ? u.password.slice(0, 12) + '...' : '—'}</div>
+                  <button
+                    onClick={handleResetPassword}
+                    disabled={resetPasswordLoading || u.role === 'admin'}
+                    className="flex items-center gap-1 px-2 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 rounded text-[10px] font-medium transition-colors disabled:opacity-40 shrink-0"
+                  >
+                    {resetPasswordLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <KeyRound className="w-3 h-3" />}
+                    Сбросить пароль
+                  </button>
+                </div>
+                {newPassword && (
+                  <div className="mt-2 flex items-center gap-2 p-2 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
+                    <span className="text-[10px] text-emerald-400/70 shrink-0">Новый пароль:</span>
+                    <span className="text-xs text-emerald-400 font-bold font-mono flex-1">{newPassword}</span>
+                    <button onClick={() => copyToClipboard(newPassword)} className="p-1 text-emerald-400/60 hover:text-emerald-400 transition-colors">
+                      <Copy className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
+              </div>
+              {/* Demo info */}
+              {u.isDemo === '1' && (
+                <div className="bg-purple-500/5 border border-purple-500/15 rounded-lg p-2.5 col-span-2">
+                  <div className="flex items-center gap-1.5 text-purple-400/50 mb-1">
+                    <UserCog className="w-3.5 h-3.5" />
+                    <span className="text-[9px] uppercase tracking-wider">Демо аккаунт</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-white/50">Истекает: {u.demoExpiresAt ? new Date(u.demoExpiresAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                      u.demoExpiresAt && new Date(u.demoExpiresAt) > new Date()
+                        ? 'bg-emerald-500/20 text-emerald-400'
+                        : 'bg-red-500/20 text-red-400'
+                    }`}>
+                      {u.demoExpiresAt && new Date(u.demoExpiresAt) > new Date() ? 'Активен' : 'Истёк'}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Subscription */}
@@ -441,7 +606,7 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
         </div>
 
         {/* Tabs */}
-        <div className="flex px-4 pt-3 gap-2 shrink-0">
+        <div className="flex px-4 pt-3 gap-2 shrink-0 flex-wrap">
           <button
             onClick={() => setActiveTab('payments')}
             className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
@@ -462,6 +627,15 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
           >
             <Users className="w-3.5 h-3.5" />
             Пользователи ({users.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('demo')}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+              activeTab === 'demo' ? 'bg-purple-500/15 text-purple-400' : 'text-white/35 hover:text-white/50'
+            }`}
+          >
+            <UserCog className="w-3.5 h-3.5" />
+            Демо доступ ({demoAccounts.length})
           </button>
         </div>
 
@@ -496,11 +670,11 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
                         <>
                           <button onClick={() => handleAction(req.id, 'approve')} disabled={actionLoading === req.id}
                             className="p-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 rounded-lg transition-colors disabled:opacity-50">
-                            {actionLoading === req.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                            {actionLoading === req.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
                           </button>
                           <button onClick={() => handleAction(req.id, 'reject')} disabled={actionLoading === req.id}
                             className="p-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg transition-colors disabled:opacity-50">
-                            <X className="w-3.5 h-3.5" />
+                            <X className="w-3 h-3" />
                           </button>
                         </>
                       ) : (
@@ -560,6 +734,9 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
                         }`}>
                           {user.role === 'admin' ? 'Admin' : 'User'}
                         </span>
+                        {user.isDemo === '1' && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 font-medium">demo</span>
+                        )}
                         {user.subscription?.isActive === 1 && new Date(user.subscription.expiresAt) > new Date() && (
                           <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-medium">Active</span>
                         )}
@@ -573,6 +750,131 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
                   </div>
                 </button>
               ))
+            )}
+          </div>
+        )}
+
+        {/* Demo Tab */}
+        {activeTab === 'demo' && (
+          <div className="flex-1 overflow-y-auto p-3 space-y-3">
+            <div className="flex items-center justify-between px-1">
+              <span className="text-[10px] text-white/25 uppercase tracking-wider font-medium">Демо аккаунты</span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleCreateDemo}
+                  disabled={demoActionLoading === 'create'}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-500/15 hover:bg-purple-500/25 text-purple-400 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
+                >
+                  {demoActionLoading === 'create' ? <Loader2 className="w-3 h-3 animate-spin" /> : <span className="text-sm leading-none">+</span>}
+                  Создать демо
+                </button>
+                <button onClick={fetchDemoAccounts} className="p-1.5 text-white/30 hover:text-white/60 transition-colors rounded-lg hover:bg-white/5">
+                  <RefreshCw className={`w-3.5 h-3.5 ${demoLoading ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+            </div>
+
+            {/* New account notification */}
+            {newDemoAccount && (
+              <div className="p-3 rounded-xl border bg-emerald-500/5 border-emerald-500/20 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-emerald-400">Демо аккаунт создан</span>
+                  <button onClick={() => setNewDemoAccount(null)} className="p-1 text-white/30 hover:text-white/60 transition-colors">
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <span className="text-white/30">Логин:</span>
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <span className="text-white/70 font-mono">{newDemoAccount.username}</span>
+                      <button onClick={() => copyToClipboard(newDemoAccount.username)} className="p-0.5 text-emerald-400/60 hover:text-emerald-400 transition-colors">
+                        <Copy className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-white/30">Пароль:</span>
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <span className="text-white/70 font-mono">{newDemoAccount.password}</span>
+                      <button onClick={() => copyToClipboard(newDemoAccount.password)} className="p-0.5 text-emerald-400/60 hover:text-emerald-400 transition-colors">
+                        <Copy className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="text-[10px] text-white/25">
+                  Истекает: {new Date(newDemoAccount.expiresAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                </div>
+              </div>
+            )}
+
+            {/* Demo accounts list */}
+            {demoLoading && demoAccounts.length === 0 ? (
+              <div className="flex items-center justify-center py-12"><Loader2 className="w-5 h-5 text-white/30 animate-spin" /></div>
+            ) : demoAccounts.length === 0 ? (
+              <p className="text-sm text-white/30 text-center py-12">Нет демо аккаунтов</p>
+            ) : (
+              <div className="space-y-2">
+                {demoAccounts.map(account => {
+                  const isActive = account.demoExpiresAt && new Date(account.demoExpiresAt) > new Date();
+                  const expiresDate = account.demoExpiresAt
+                    ? new Date(account.demoExpiresAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+                    : '—';
+
+                  return (
+                    <div key={account.id} className={`p-3 rounded-xl border ${isActive ? 'bg-purple-500/5 border-purple-500/15' : 'bg-red-500/5 border-red-500/10'}`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-white">{account.username}</span>
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
+                            isActive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
+                          }`}>{isActive ? 'Активен' : 'Истёк'}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => handleResetDemo(account.id)}
+                            disabled={demoActionLoading === `reset-${account.id}`}
+                            className="p-1.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 rounded-lg transition-colors disabled:opacity-50"
+                            title="Продлить на 2 часа"
+                          >
+                            {demoActionLoading === `reset-${account.id}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                          </button>
+                          {demoDeleteConfirm === account.id ? (
+                            <>
+                              <button onClick={() => handleDeleteDemo(account.id)} disabled={demoActionLoading === `delete-${account.id}`}
+                                className="px-2 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-[10px] font-medium transition-colors disabled:opacity-50">
+                                {demoActionLoading === `delete-${account.id}` ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Удалить'}
+                              </button>
+                              <button onClick={() => setDemoDeleteConfirm(null)}
+                                className="px-2 py-1 bg-white/[0.06] text-white/40 rounded-lg text-[10px] transition-colors">
+                                Нет
+                              </button>
+                            </>
+                          ) : (
+                            <button onClick={() => setDemoDeleteConfirm(account.id)}
+                              className="p-1.5 bg-red-500/15 hover:bg-red-500/25 text-red-400 rounded-lg transition-colors"
+                              title="Удалить"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 text-[10px] text-white/30">
+                        <span className="flex items-center gap-1">
+                          <KeyRound className="w-3 h-3" />
+                          {account.password ? account.password.slice(0, 12) + '...' : '—'}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          {expiresDate}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
         )}

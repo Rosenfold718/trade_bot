@@ -896,7 +896,7 @@ function CoinListSheet({ open, onClose }: { open: boolean; onClose: () => void }
 }
 
 // ============================================================
-// TradesTable with live PnL and total PnL row
+// TradesTable — compact grouped view for many trades
 // ============================================================
 
 function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCount, coins, onSelectTrade, onManualClose }: {
@@ -906,28 +906,28 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
 }) {
   const [closingTrade, setClosingTrade] = useState<Trade | null>(null);
   const [closingLoading, setClosingLoading] = useState(false);
-  const allTrades = useMemo(
-    () => [...openTrades, ...recentTrades].slice(0, 30),
-    [openTrades, recentTrades],
-  );
+  const [expandedView, setExpandedView] = useState(false);
 
-  // Calculate total unrealized PnL for open trades
+  // Calculate live PnL for a single trade
+  const calcPnl = (trade: Trade): number | null => {
+    if (trade.status !== 'open') return trade.pnl ?? null;
+    const livePrice = coins.find(c => c.symbol === trade.symbol)?.price;
+    if (!livePrice || livePrice <= 0) return null;
+    const isLong = trade.direction === 'long';
+    const priceChange = isLong
+      ? (livePrice - trade.entry_price) / trade.entry_price
+      : (trade.entry_price - livePrice) / trade.entry_price;
+    return trade.amount * priceChange * trade.leverage;
+  };
+
   const totalOpenPnl = useMemo(() => {
     let total = 0;
     for (const trade of openTrades) {
-      if (trade.status !== 'open') continue;
-      const livePrice = coins.find(c => c.symbol === trade.symbol)?.price;
-      if (!livePrice || livePrice <= 0) continue;
-      const isLong = trade.direction === 'long';
-      const priceChange = isLong
-        ? (livePrice - trade.entry_price) / trade.entry_price
-        : (trade.entry_price - livePrice) / trade.entry_price;
-      total += trade.amount * priceChange * trade.leverage;
+      const pnl = calcPnl(trade);
+      if (pnl != null) total += pnl;
     }
     return total;
   }, [openTrades, coins]);
-
-  // Total realized PnL now comes from DB (totalClosedPnl prop) — no more computing from recentTrades
 
   const handleCloseTrade = (trade: Trade) => {
     setClosingTrade(trade);
@@ -944,84 +944,20 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
     }
   };
 
-  // Calculate PnL preview for closing trade
   const closingPnl = useMemo(() => {
     if (!closingTrade) return null;
-    const livePrice = coins.find(c => c.symbol === closingTrade.symbol)?.price;
-    if (!livePrice || livePrice <= 0) return null;
-    const isLong = closingTrade.direction === 'long';
-    const priceChange = isLong
-      ? (livePrice - closingTrade.entry_price) / closingTrade.entry_price
-      : (closingTrade.entry_price - livePrice) / closingTrade.entry_price;
-    return closingTrade.amount * priceChange * closingTrade.leverage;
+    return calcPnl(closingTrade);
   }, [closingTrade, coins]);
 
-  if (allTrades.length === 0 && openTrades.length === 0) {
-    return (
-      <>
-        <AlertDialog open={!!closingTrade} onOpenChange={(open) => { if (!open) setClosingTrade(null); }}>
-          <AlertDialogContent className="bg-[#0d0d14] border-white/10 max-w-sm">
-            <AlertDialogHeader>
-              <AlertDialogTitle className="text-white text-base flex items-center gap-2">
-                <X className="w-4 h-4 text-red-400" />
-                Закрыть сделку?
-              </AlertDialogTitle>
-              <AlertDialogDescription className="text-white/50 text-sm space-y-2">
-                {closingTrade && (
-                  <div className="bg-white/[0.03] rounded-lg p-3 space-y-1.5 text-xs font-mono">
-                    <div className="flex justify-between">
-                      <span className="text-white/40">Монета</span>
-                      <span className="text-white font-semibold">{closingTrade.symbol.replace('USDT', '')}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-white/40">Направление</span>
-                      <span className={closingTrade.direction === 'long' ? 'text-green-400' : 'text-red-400'}>{closingTrade.direction === 'long' ? 'LONG ↑' : 'SHORT ↓'}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-white/40">Цена входа</span>
-                      <span className="text-white">${fmtP(closingTrade.entry_price)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-white/40">Объём</span>
-                      <span className="text-cyan-400/80">${closingTrade.amount.toFixed(2)}</span>
-                    </div>
-                    {closingPnl !== null && (
-                      <div className="flex justify-between pt-1 border-t border-white/[0.06]">
-                        <span className="text-white/40">Ожидаемый PnL</span>
-                        <span className={cn('font-bold', closingPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
-                          {closingPnl >= 0 ? '+' : ''}{closingPnl.toFixed(2)}$
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                )}
-                <p className="text-white/30 text-xs pt-1">
-                  Позиция будет закрыта по текущей рыночной цене. Нереализованный PnL станет реализованным и изменит баланс.
-                </p>
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel className="bg-white/[0.04] border-white/10 text-white/60 hover:bg-white/[0.08] hover:text-white/80">Отмена</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={(e) => { e.preventDefault(); confirmCloseTrade(); }}
-                disabled={closingLoading}
-                className="bg-red-600 hover:bg-red-700 text-white border-0"
-              >
-                {closingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Закрыть позицию'}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-        <div className="h-24 flex items-center justify-center">
-          <span className="text-xs text-white/20 font-mono">Нет сделок</span>
-        </div>
-      </>
-    );
-  }
+  // Group open trades by direction
+  const longTrades = openTrades.filter(t => t.direction === 'long');
+  const shortTrades = openTrades.filter(t => t.direction === 'short');
+  const closedTradesList = recentTrades.slice(0, 20);
 
-  return (
-    <>
-    {/* Close Trade Confirmation Modal */}
+  const hasAnyTrades = openTrades.length > 0 || recentTrades.length > 0;
+
+  // Close Trade Confirmation Modal (rendered once)
+  const closeConfirmModal = (
     <AlertDialog open={!!closingTrade} onOpenChange={(open) => { if (!open) setClosingTrade(null); }}>
       <AlertDialogContent className="bg-[#0d0d14] border-white/10 max-w-sm">
         <AlertDialogHeader>
@@ -1059,7 +995,7 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
               </div>
             )}
             <p className="text-white/30 text-xs pt-1">
-              Позиция будет закрыта по текущей рыночной цене. Нереализованный PnL станет реализованным и изменит баланс.
+              Позиция будет закрыта по текущей рыночной цене.
             </p>
           </AlertDialogDescription>
         </AlertDialogHeader>
@@ -1070,126 +1006,221 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
             disabled={closingLoading}
             className="bg-red-600 hover:bg-red-700 text-white border-0"
           >
-            {closingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Закрыть позицию'}
+            {closingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Закрыть'}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
 
-    <div className="h-full flex flex-col">
-      <div className="flex-1 overflow-x-auto overflow-y-auto">
-        <table className="w-full text-xs min-w-[560px]">
-          <thead className="sticky top-0 bg-[#0d0d14] z-10">
-            <tr className="text-white/25 border-b border-white/[0.06]">
-              <th className="text-left font-medium py-2.5 px-3 md:px-4">Символ</th>
-              <th className="text-left font-medium py-2.5 px-2">Напр.</th>
-              <th className="text-right font-medium py-2.5 px-2 hidden md:table-cell">Вход</th>
-              <th className="text-right font-medium py-2.5 px-2 hidden lg:table-cell">Выход</th>
-              <th className="text-right font-medium py-2.5 px-2 hidden sm:table-cell">Объём</th>
-              <th className="text-right font-medium py-2.5 px-2 hidden lg:table-cell">Плечо</th>
-              <th className="text-right font-medium py-2.5 px-2">PnL</th>
-              <th className="text-center font-medium py-2.5 px-2">Открыта</th>
-              <th className="text-center font-medium py-2.5 px-2 hidden sm:table-cell">Статус</th>
-              <th className="text-center font-medium py-2.5 px-2">Действия</th>
-            </tr>
-          </thead>
-          <tbody>
-          {allTrades.map((trade) => {
-            const isLong = trade.direction === 'long';
-            const isOpen = trade.status === 'open';
-
-            // Calculate live PnL for open trades
-            let displayPnl = trade.pnl;
-            if (isOpen) {
-              const livePrice = coins.find(c => c.symbol === trade.symbol)?.price;
-              if (livePrice && livePrice > 0) {
-                const priceChange = isLong
-                  ? (livePrice - trade.entry_price) / trade.entry_price
-                  : (trade.entry_price - livePrice) / trade.entry_price;
-                displayPnl = trade.amount * priceChange * trade.leverage;
-              }
-            }
-
-            return (
-              <tr
-                key={trade.id}
-                className="border-b border-white/[0.03] hover:bg-white/[0.04] transition-colors cursor-pointer"
-                onClick={() => onSelectTrade(trade)}
-              >
-                <td className="py-2.5 px-3 md:px-4 font-mono text-white/80 font-semibold">
-                  {trade.symbol.replace('USDT', '')}
-                </td>
-                <td className="py-2.5 px-2">
-                  <span className={cn('font-mono font-bold text-[11px]', isLong ? 'text-green-400' : 'text-red-400')}>
-                    {isLong ? 'LONG' : 'SHORT'}
-                  </span>
-                </td>
-                <td className="py-2.5 px-2 text-right font-mono text-white/50">
-                  {typeof trade.entry_price === 'number'
-                    ? trade.entry_price < 1 ? trade.entry_price.toPrecision(4) : trade.entry_price.toFixed(2)
-                    : '—'}
-                </td>
-                <td className="py-2.5 px-2 text-right font-mono text-white/50">
-                  {trade.exit_price != null && typeof trade.exit_price === 'number'
-                    ? trade.exit_price < 1 ? trade.exit_price.toPrecision(4) : trade.exit_price.toFixed(2)
-                    : '—'}
-                </td>
-                <td className="py-2.5 px-2 text-right font-mono text-cyan-400/70 font-semibold">
-                  ${typeof trade.amount === 'number' ? trade.amount.toFixed(2) : '—'}
-                </td>
-                <td className="py-2.5 px-2 text-right font-mono text-white/40 hidden lg:table-cell">{trade.leverage ?? '—'}x</td>
-                <td className={cn('py-2.5 px-2 text-right font-mono font-bold', displayPnl == null ? 'text-white/25' : displayPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
-                  {displayPnl != null && typeof displayPnl === 'number'
-                    ? `${displayPnl >= 0 ? '+' : ''}$${displayPnl.toFixed(2)}`
-                    : '—'}
-                </td>
-                <td className="py-2.5 px-2 text-center font-mono text-white/20 text-[10px]">
-                  {new Date(trade.opened_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                </td>
-                <td className="py-2.5 px-2 text-center hidden sm:table-cell">
-                  <span className={cn('text-[10px] font-mono font-medium px-2 py-0.5 rounded-md', isOpen
-                    ? 'bg-yellow-500/10 text-yellow-400/80 border border-yellow-500/20'
-                    : 'bg-white/5 text-white/40 border border-white/10'
-                  )}>
-                    {isOpen ? 'ОТКР' : 'ЗАКР'}
-                  </span>
-                </td>
-                <td className="py-2.5 px-2 text-center">
-                  {isOpen ? (
-                    <button
-                      onClick={() => handleCloseTrade(trade)}
-                      className="px-2 py-1 rounded-md bg-white/[0.04] hover:bg-red-500/20 text-white/30 hover:text-red-400 text-[10px] font-medium transition-all duration-150 min-w-[44px] min-h-[28px] flex items-center justify-center gap-1 mx-auto border border-white/[0.06] hover:border-red-500/30"
-                      title="Закрыть сделку вручную"
-                    >
-                      <X className="w-3 h-3" />Закр.
-                    </button>
-                  ) : (
-                    <span className="text-white/10 text-[10px]">—</span>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      </div>
-      {/* Summary footer */}
-      <div className="shrink-0 border-t border-white/[0.06] bg-[#0d0d14] px-4 py-2 flex items-center justify-between">
-        <div className="flex items-center gap-2 md:gap-3 min-w-0">
-          {openTrades.length > 0 && (
-            <span className="text-[10px] text-white/25 font-mono">
-              Открыто: {openTrades.length}
-            </span>
-          )}
-          <span className={cn('text-[10px] font-mono font-medium', totalOpenPnl >= 0 ? 'text-green-400/60' : 'text-red-400/60')}>
-            Нереализ.: {totalOpenPnl >= 0 ? '+' : ''}${totalOpenPnl.toFixed(2)}
-          </span>
+  if (!hasAnyTrades) {
+    return (
+      <>
+        {closeConfirmModal}
+        <div className="h-full flex items-center justify-center">
+          <span className="text-xs text-white/20 font-mono">Нет сделок</span>
         </div>
-        <span className={cn('text-[10px] font-mono font-semibold', (totalClosedPnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400')}>
-          Реализ.: {(totalClosedPnl ?? 0) >= 0 ? '+' : ''}${(totalClosedPnl ?? 0).toFixed(2)}{closedTradeCount !== undefined ? ` (${closedTradeCount})` : ''}
-        </span>
+      </>
+    );
+  }
+
+  // Compact view: show trade pills
+  if (!expandedView) {
+    return (
+      <>
+        {closeConfirmModal}
+        <div className="h-full flex flex-col">
+          <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
+            {/* Summary bar */}
+            <div className="flex items-center justify-between text-[10px] font-mono">
+              <div className="flex items-center gap-3">
+                <span className="text-white/30">
+                  <span className="text-yellow-400/60">{longTrades.length}L</span>
+                  <span className="text-white/10 mx-1">/</span>
+                  <span className="text-red-400/60">{shortTrades.length}S</span>
+                  <span className="text-white/15 ml-0.5">({openTrades.length})</span>
+                </span>
+                <span className={cn('font-medium', totalOpenPnl >= 0 ? 'text-green-400/60' : 'text-red-400/60')}>
+                  {totalOpenPnl >= 0 ? '+' : ''}{totalOpenPnl.toFixed(2)}$
+                </span>
+              </div>
+              <span className={cn('font-semibold', (totalClosedPnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400')}>
+                Реал.: {(totalClosedPnl ?? 0) >= 0 ? '+' : ''}{(totalClosedPnl ?? 0).toFixed(2)}
+              </span>
+            </div>
+
+            {/* Trade pills */}
+            <div className="flex flex-wrap gap-1">
+              {openTrades.map(trade => {
+                const pnl = calcPnl(trade);
+                const isLong = trade.direction === 'long';
+                return (
+                  <button
+                    key={trade.id}
+                    onClick={() => onSelectTrade(trade)}
+                    className={cn(
+                      'group flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-mono transition-all border shrink-0',
+                      isLong
+                        ? 'bg-green-500/[0.06] border-green-500/10 hover:bg-green-500/[0.12] hover:border-green-500/20'
+                        : 'bg-red-500/[0.06] border-red-500/10 hover:bg-red-500/[0.12] hover:border-red-500/20',
+                    )}
+                  >
+                    <span className={isLong ? 'text-green-400/70' : 'text-red-400/70'}>
+                      {trade.symbol.replace('USDT', '')}
+                    </span>
+                    <span className={cn(
+                      pnl != null && pnl >= 0 ? 'text-green-400' : 'text-red-400',
+                      pnl == null && 'text-white/30'
+                    )}>
+                      {pnl != null ? `${pnl >= 0 ? '+' : ''}${pnl.toFixed(1)}` : '...'}
+                    </span>
+                    <span
+                      onClick={(e) => { e.stopPropagation(); handleCloseTrade(trade); }}
+                      className="opacity-0 group-hover:opacity-100 text-white/20 hover:text-red-400 transition-opacity ml-0.5"
+                    >
+                      ×
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Recent closed */}
+            {closedTradesList.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {closedTradesList.map(trade => (
+                  <div
+                    key={trade.id}
+                    onClick={() => onSelectTrade(trade)}
+                    className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono bg-white/[0.02] text-white/15 cursor-pointer hover:bg-white/[0.04] hover:text-white/30 transition-all"
+                  >
+                    <span>{trade.symbol.replace('USDT', '')}</span>
+                    <span className={cn(
+                      (trade.pnl ?? 0) >= 0 ? 'text-green-400/40' : 'text-red-400/40'
+                    )}>
+                      {(trade.pnl ?? 0) >= 0 ? '+' : ''}{(trade.pnl ?? 0).toFixed(1)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Footer with expand toggle */}
+          <div className="shrink-0 border-t border-white/[0.06] px-3 py-1.5 flex items-center justify-between">
+            <span className="text-[9px] text-white/15 font-mono">{openTrades.length} откр. · {closedTradeCount ?? recentTrades.length} закр.</span>
+            <button
+              onClick={() => setExpandedView(true)}
+              className="text-[9px] text-white/25 hover:text-white/50 transition-colors"
+            >
+              Таблица ↓
+            </button>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  // Expanded table view (full table)
+  return (
+    <>
+      {closeConfirmModal}
+      <div className="h-full flex flex-col">
+        <div className="flex-1 overflow-x-auto overflow-y-auto">
+          <table className="w-full text-xs min-w-[560px]">
+            <thead className="sticky top-0 bg-[#0d0d14] z-10">
+              <tr className="text-white/25 border-b border-white/[0.06]">
+                <th className="text-left font-medium py-2 px-3">Символ</th>
+                <th className="text-left font-medium py-2 px-2">Напр.</th>
+                <th className="text-right font-medium py-2 px-2 hidden md:table-cell">Вход</th>
+                <th className="text-right font-medium py-2 px-2">PnL</th>
+                <th className="text-right font-medium py-2 px-2 hidden sm:table-cell">Объём</th>
+                <th className="text-right font-medium py-2 px-2 hidden lg:table-cell">Плечо</th>
+                <th className="text-center font-medium py-2 px-2 hidden sm:table-cell">Статус</th>
+                <th className="text-center font-medium py-2 px-2">×</th>
+              </tr>
+            </thead>
+            <tbody>
+            {[...openTrades, ...recentTrades.slice(0, 20)].map((trade) => {
+              const isLong = trade.direction === 'long';
+              const isOpen = trade.status === 'open';
+              const displayPnl = calcPnl(trade);
+
+              return (
+                <tr
+                  key={trade.id}
+                  className="border-b border-white/[0.03] hover:bg-white/[0.04] transition-colors cursor-pointer"
+                  onClick={() => onSelectTrade(trade)}
+                >
+                  <td className="py-2 px-3 font-mono text-white/80 font-semibold">
+                    {trade.symbol.replace('USDT', '')}
+                  </td>
+                  <td className="py-2 px-2">
+                    <span className={cn('font-mono font-bold text-[11px]', isLong ? 'text-green-400' : 'text-red-400')}>
+                      {isLong ? 'L' : 'S'}
+                    </span>
+                  </td>
+                  <td className="py-2 px-2 text-right font-mono text-white/50 hidden md:table-cell">
+                    {typeof trade.entry_price === 'number'
+                      ? trade.entry_price < 1 ? trade.entry_price.toPrecision(4) : trade.entry_price.toFixed(2)
+                      : '—'}
+                  </td>
+                  <td className={cn('py-2 px-2 text-right font-mono font-bold', displayPnl == null ? 'text-white/25' : displayPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
+                    {displayPnl != null && typeof displayPnl === 'number'
+                      ? `${displayPnl >= 0 ? '+' : ''}$${displayPnl.toFixed(2)}`
+                      : '—'}
+                  </td>
+                  <td className="py-2 px-2 text-right font-mono text-cyan-400/70 hidden sm:table-cell">
+                    ${typeof trade.amount === 'number' ? trade.amount.toFixed(2) : '—'}
+                  </td>
+                  <td className="py-2 px-2 text-right font-mono text-white/40 hidden lg:table-cell">{trade.leverage ?? '—'}x</td>
+                  <td className="py-2 px-2 text-center hidden sm:table-cell">
+                    <span className={cn('text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-md', isOpen
+                      ? 'bg-yellow-500/10 text-yellow-400/80 border border-yellow-500/20'
+                      : 'bg-white/5 text-white/40 border border-white/10'
+                    )}>
+                      {isOpen ? 'ОТКР' : 'ЗАКР'}
+                    </span>
+                  </td>
+                  <td className="py-2 px-2 text-center">
+                    {isOpen ? (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleCloseTrade(trade); }}
+                        className="w-6 h-6 rounded bg-white/[0.04] hover:bg-red-500/20 text-white/20 hover:text-red-400 transition-all flex items-center justify-center"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    ) : (
+                      <span className="text-white/5 text-[10px]">—</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+            </tbody>
+          </table>
+        </div>
+        {/* Footer */}
+        <div className="shrink-0 border-t border-white/[0.06] bg-[#0d0d14] px-3 py-1.5 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-[10px] font-mono">
+            <span className="text-white/25">Открыто: {openTrades.length}</span>
+            <span className={cn('font-medium', totalOpenPnl >= 0 ? 'text-green-400/60' : 'text-red-400/60')}>
+              {totalOpenPnl >= 0 ? '+' : ''}{totalOpenPnl.toFixed(2)}$
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className={cn('text-[10px] font-mono font-semibold', (totalClosedPnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400')}>
+              Реал.: {(totalClosedPnl ?? 0) >= 0 ? '+' : ''}${(totalClosedPnl ?? 0).toFixed(2)}
+            </span>
+            <button
+              onClick={() => setExpandedView(false)}
+              className="text-[9px] text-white/25 hover:text-white/50 transition-colors"
+            >
+              Компакт ↑
+            </button>
+          </div>
+        </div>
       </div>
-    </div>
     </>
   );
 }
