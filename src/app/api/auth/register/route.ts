@@ -8,7 +8,7 @@ export async function POST(request: NextRequest) {
   try {
     await initAuthTables();
     const body = await request.json();
-    const { username, password } = body as { username: string; password: string };
+    const { username, password, email } = body as { username: string; password: string; email?: string };
 
     if (!username || !password) {
       return NextResponse.json({ error: 'Логин и пароль обязательны' }, { status: 400 });
@@ -26,6 +26,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Пароль: минимум 8 символов' }, { status: 400 });
     }
 
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return NextResponse.json({ error: 'Некорректный email' }, { status: 400 });
+    }
+
     const existing = await findUserByUsername(username);
     if (existing) {
       return NextResponse.json({ error: 'Пользователь с таким логином уже существует' }, { status: 409 });
@@ -41,7 +45,8 @@ export async function POST(request: NextRequest) {
       {
         isActive: false,
         expiresAt: new Date().toISOString(),
-      }
+      },
+      email || null
     );
 
     // Initialize trading data for new user

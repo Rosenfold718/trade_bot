@@ -114,12 +114,13 @@ export async function createUser(
   id: string,
   username: string,
   hashedPassword: string,
-  subscriptionData?: { isActive: boolean; expiresAt: string; lastPaymentAt?: string }
+  subscriptionData?: { isActive: boolean; expiresAt: string; lastPaymentAt?: string },
+  email?: string | null
 ): Promise<AuthUser> {
   await getClient().execute(
     `INSERT INTO "User" (id, username, password, email, telegram, role, createdAt, updatedAt)
-     VALUES (?, ?, ?, NULL, NULL, 'user', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-    [id, username, hashedPassword]
+     VALUES (?, ?, ?, ?, NULL, 'user', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [id, username, hashedPassword, email || null]
   );
 
   if (subscriptionData) {

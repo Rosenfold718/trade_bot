@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic';
 import { useTerminalStore } from '@/lib/store';
 import { STRATEGIES, getStrategy } from '@/lib/strategies';
 import { cn } from '@/lib/utils';
-import { Menu, X, ChevronDown, BarChart3, RotateCcw, FileSpreadsheet, ShieldCheck } from 'lucide-react';
+import { Menu, X, ChevronDown, BarChart3, RotateCcw, FileSpreadsheet, ShieldCheck, Loader2 } from 'lucide-react';
 import CoinList from '@/components/coin-list';
 import TradingDashboard from '@/components/trading-dashboard';
 import ControlPanel from '@/components/control-panel';
@@ -448,6 +448,42 @@ export default function TradingTerminal() {
     };
   }, [autoTrading, addLog]);
 
+  // Manual close trade handler
+  const manualCloseTrade = useCallback(async (trade: Trade) => {
+    try {
+      // Fetch current price from Binance
+      const priceRes = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${trade.symbol}`);
+      if (!priceRes.ok) { addLog('Не удалось получить цену для закрытия', 'error'); return; }
+      const priceData = await priceRes.json();
+      const exitPrice = parseFloat(priceData.price);
+
+      const closeRes = await fetch('/api/trader', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'close-trade', tradeId: trade.id, exitPrice, strategyId: activeStrategy }),
+      });
+      const closeData = await closeRes.json();
+      if (closeData.success) {
+        const pnl = closeData.pnl ?? 0;
+        addLog(`Ручное закрытие ${trade.symbol.replace('USDT', '')}: PnL ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`, pnl >= 0 ? 'trade' : 'error');
+        // Refresh state
+        try {
+          const res = await fetch(`/api/trader?strategyId=${activeStrategy}`);
+          const data = await res.json();
+          if (data.openTrades) setStrategyOpenTrades(activeStrategy, data.openTrades);
+          if (data.recentTrades) setStrategyRecentTrades(activeStrategy, data.recentTrades);
+          if (data.state) setStrategyTraderState(activeStrategy, data.state);
+          if (data.totalClosedPnl !== undefined) setStrategyTotalClosedPnl(activeStrategy, data.totalClosedPnl);
+          if (data.closedTradeCount !== undefined) setStrategyClosedTradeCount(activeStrategy, data.closedTradeCount);
+        } catch { /* silent */ }
+      } else {
+        addLog(`Ошибка закрытия: ${closeData.error || 'unknown'}`, 'error');
+      }
+    } catch (err) {
+      addLog(`Ошибка закрытия: ${err instanceof Error ? err.message : 'unknown'}`, 'error');
+    }
+  }, [activeStrategy, addLog, setStrategyOpenTrades, setStrategyRecentTrades, setStrategyTraderState, setStrategyTotalClosedPnl, setStrategyClosedTradeCount]);
+
   // Analyze on symbol change — uses active strategy
   useEffect(() => {
     if (candles.length < 50) return;
@@ -577,6 +613,9 @@ export default function TradingTerminal() {
         })}
       </div>
 
+      {/* BTC Regime Indicator */}
+      <BTCRegimeBar />
+
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {/* Row: Coin List (sidebar) + Center + Right Panel */}
@@ -669,7 +708,7 @@ export default function TradingTerminal() {
             <TradesTable openTrades={openTrades} recentTrades={recentTrades} totalClosedPnl={totalClosedPnl} closedTradeCount={closedTradeCount} coins={coins} onSelectTrade={(trade) => {
               setSelectedSymbol(trade.symbol);
               setFocusedTradeId(trade.id);
-            }} />
+            }} onManualClose={manualCloseTrade} />
           </div>
           {/* Dashboard + Controls — tablet view */}
           <div className="xl:hidden lg:block border-t border-white/[0.06] overflow-y-auto max-h-[30dvh]">
@@ -812,10 +851,12 @@ function CoinListSheet({ open, onClose }: { open: boolean; onClose: () => void }
 // TradesTable with live PnL and total PnL row
 // ============================================================
 
-function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCount, coins, onSelectTrade }: {
+function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCount, coins, onSelectTrade, onManualClose }: {
   openTrades: Trade[]; recentTrades: Trade[]; totalClosedPnl?: number; closedTradeCount?: number; coins: Array<{ symbol: string; price: number }>;
   onSelectTrade: (trade: Trade) => void;
+  onManualClose: (trade: Trade) => void;
 }) {
+  const [closingTradeId, setClosingTradeId] = useState<string | null>(null);
   const allTrades = useMemo(
     () => [...openTrades, ...recentTrades].slice(0, 30),
     [openTrades, recentTrades],
@@ -839,6 +880,26 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
 
   // Total realized PnL now comes from DB (totalClosedPnl prop) — no more computing from recentTrades
 
+  const handleCloseTrade = async (trade: Trade, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (closingTradeId === trade.id) {
+      // Second click = confirm
+      setClosingTradeId('confirming');
+      try {
+        await onManualClose(trade);
+      } finally {
+        setClosingTradeId(null);
+      }
+    } else {
+      // First click = prepare to close
+      setClosingTradeId(trade.id);
+      // Auto-cancel after 3 seconds if not confirmed
+      setTimeout(() => {
+        setClosingTradeId(prev => prev === trade.id ? null : prev);
+      }, 3000);
+    }
+  };
+
   if (allTrades.length === 0 && openTrades.length === 0) {
     return (
       <div className="h-24 flex items-center justify-center">
@@ -861,7 +922,8 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
               <th className="text-right font-medium py-2.5 px-2 hidden lg:table-cell">Плечо</th>
               <th className="text-right font-medium py-2.5 px-2">PnL</th>
               <th className="text-center font-medium py-2.5 px-2">Открыта</th>
-              <th className="text-center font-medium py-2.5 px-3">Статус</th>
+              <th className="text-center font-medium py-2.5 px-2 hidden sm:table-cell">Статус</th>
+              <th className="text-center font-medium py-2.5 px-2">Действия</th>
             </tr>
           </thead>
           <tbody>
@@ -917,13 +979,35 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
                 <td className="py-2.5 px-2 text-center font-mono text-white/20 text-[10px]">
                   {new Date(trade.opened_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
                 </td>
-                <td className="py-2.5 px-3 text-center">
+                <td className="py-2.5 px-2 text-center hidden sm:table-cell">
                   <span className={cn('text-[10px] font-mono font-medium px-2 py-0.5 rounded-md', isOpen
                     ? 'bg-yellow-500/10 text-yellow-400/80 border border-yellow-500/20'
                     : 'bg-white/5 text-white/40 border border-white/10'
                   )}>
                     {isOpen ? 'ОТКР' : 'ЗАКР'}
                   </span>
+                </td>
+                <td className="py-2.5 px-2 text-center">
+                  {isOpen ? (
+                    closingTradeId === trade.id ? (
+                      <button
+                        onClick={(e) => handleCloseTrade(trade, e)}
+                        className="px-2 py-1 rounded-md bg-red-500/20 hover:bg-red-500/30 text-red-400 text-[10px] font-semibold transition-all duration-150 min-w-[44px] min-h-[28px] flex items-center justify-center gap-1 mx-auto"
+                      >
+                        {closingTradeId === 'confirming' ? <Loader2 className="w-3 h-3 animate-spin" /> : <><X className="w-3 h-3" />Закр.</>}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={(e) => handleCloseTrade(trade, e)}
+                        className="px-2 py-1 rounded-md bg-white/[0.04] hover:bg-white/[0.08] text-white/30 hover:text-white/60 text-[10px] font-medium transition-all duration-150 min-w-[44px] min-h-[28px] flex items-center justify-center gap-1 mx-auto border border-white/[0.06]"
+                        title="Закрыть сделку вручную"
+                      >
+                        <X className="w-3 h-3" />Закр.
+                      </button>
+                    )
+                  ) : (
+                    <span className="text-white/10 text-[10px]">—</span>
+                  )}
                 </td>
               </tr>
             );
@@ -979,6 +1063,63 @@ function ActivityLog() {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ============================================================
+// BTC Regime Indicator Bar
+// ============================================================
+
+function BTCRegimeBar() {
+  const [regime, setRegime] = useState<{ direction: string; changePct: number; strength: number; correlated: number; independent: number } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const { refreshBTCCorrelation, getBTCRegimeSummary, getAllCorrelations } = await import('@/lib/btc-correlation');
+        if (cancelled) return;
+        await refreshBTCCorrelation();
+        if (cancelled) return;
+        const summary = getBTCRegimeSummary();
+        const allCorr = getAllCorrelations();
+        const corr = allCorr.filter(c => c.correlated).length;
+        const indep = allCorr.filter(c => !c.correlated).length;
+        setRegime({ direction: summary.direction, changePct: parseFloat(summary.changePct), strength: parseFloat(summary.strength), correlated: corr, independent: indep });
+      } catch { /* silent */ }
+    };
+    load();
+    const interval = setInterval(load, 15 * 60 * 1000); // refresh every 15 min
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  if (!regime) return null;
+
+  const isUp = regime.direction.includes('Рост');
+  const isDown = regime.direction.includes('Падение');
+  const isNeutral = regime.direction.includes('Нейтраль');
+
+  return (
+    <div className="shrink-0 px-3 sm:px-4 py-1 border-b border-white/[0.04] bg-[#0d0d14]/50 flex items-center gap-3 text-[10px] font-mono">
+      <span className="text-white/20 shrink-0">BTC</span>
+      <span className={cn(
+        'font-semibold shrink-0',
+        isUp ? 'text-emerald-400' : isDown ? 'text-red-400' : 'text-white/30'
+      )}>
+        {regime.direction}
+      </span>
+      <span className={cn(
+        'shrink-0',
+        isUp ? 'text-emerald-400/60' : isDown ? 'text-red-400/60' : 'text-white/20'
+      )}>
+        {regime.changePct >= 0 ? '+' : ''}{regime.changePct.toFixed(2)}%
+      </span>
+      <div className="w-16 h-1 rounded-full bg-white/[0.06] overflow-hidden shrink-0">
+        <div className={cn('h-full rounded-full transition-all duration-500', isUp ? 'bg-emerald-400' : isDown ? 'bg-red-400' : 'bg-white/20')} style={{ width: `${Math.max(5, regime.strength * 100)}%` }} />
+      </div>
+      <span className="text-white/10 hidden sm:inline">|</span>
+      <span className="text-white/15 hidden sm:inline shrink-0">{regime.correlated} корр. / {regime.independent} незав.</span>
     </div>
   );
 }

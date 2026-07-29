@@ -3,6 +3,7 @@ import { TOP_50_SYMBOLS } from './types';
 import { makeStrategyDecision } from './trading-engine';
 import { type StrategyConfig, getStrategy } from './strategies';
 import { fetchSettings, getEffectiveStrategy, getSys } from './settings-cache';
+import { refreshBTCCorrelation, checkBTCCorrelationAlignment, getBTCRegime } from './btc-correlation';
 
 // ============================================================
 // Client-side Binance data fetching (CORS works from browser)
@@ -96,6 +97,21 @@ export async function findBestSignal(
   let bestScore = 0;
   let noneCount = 0;
   let mtfRejected = 0;
+  let btcFiltered = 0;
+
+  // ── BTC Regime Pre-check ──
+  // Refresh BTC correlation data (cached, only fetches if stale)
+  let btcAlignmentChecked = false;
+  try {
+    await refreshBTCCorrelation();
+    const btcRegime = getBTCRegime();
+    btcAlignmentChecked = btcRegime.direction !== 'neutral';
+    if (btcAlignmentChecked) {
+      console.log(`[findBestSignal][${strategyId}] BTC regime: ${btcRegime.direction} (strength=${btcRegime.strength.toFixed(2)}, change=${btcRegime.priceChangePct.toFixed(2)}%)`);
+    }
+  } catch (err) {
+    console.warn('[findBestSignal] BTC correlation refresh failed:', err);
+  }
 
   // System setting: volume boost multiplier (default 1.2)
   const volBoost = sysSettings
@@ -135,6 +151,22 @@ export async function findBestSignal(
         } catch { /* MTF fetch failed — allow trade without MTF filter */ }
       }
 
+      // ── BTC Correlation Filter ──
+      // If BTC is trending strongly, filter/adjust signals based on
+      // whether the coin is correlated with BTC.
+      if (btcAlignmentChecked) {
+        const btcCheck = checkBTCCorrelationAlignment(sym, decision.direction as 'long' | 'short');
+        if (btcCheck.aligned === 'conflicting' && btcCheck.boost < 0.85) {
+          // Strong BTC trend conflicting with this signal — skip
+          btcFiltered++;
+          console.log(`[findBestSignal] BTC filter: SKIP ${sym} ${decision.direction} — ${btcCheck.reason}`);
+          continue;
+        }
+        if (btcCheck.boost !== 1.0) {
+          decision.score *= btcCheck.boost;
+        }
+      }
+
       if (Math.abs(decision.score) > bestScore) {
         bestScore = Math.abs(decision.score);
         best = { decision, price: candles[candles.length - 1].close, symbol: sym };
@@ -142,7 +174,7 @@ export async function findBestSignal(
     } catch { continue; }
   }
 
-  console.log(`[findBestSignal][${strategyId}] Interval:${effectiveInterval} Checked ${checkSymbols.length}, none=${noneCount}, mtf_rejected=${mtfRejected}, best=${best?.symbol ?? 'null'} score=${bestScore.toFixed(2)}`);
+  console.log(`[findBestSignal][${strategyId}] Interval:${effectiveInterval} Checked ${checkSymbols.length}, none=${noneCount}, mtf_rejected=${mtfRejected}, btc_filtered=${btcFiltered}, best=${best?.symbol ?? 'null'} score=${bestScore.toFixed(2)}`);
 
   return best;
 }

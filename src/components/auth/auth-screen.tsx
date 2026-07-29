@@ -5,12 +5,13 @@ import { useSession, signIn } from 'next-auth/react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
-import { Loader2, LogIn, UserPlus, Eye, EyeOff, TrendingUp, AlertTriangle, Check } from 'lucide-react';
+import { Loader2, LogIn, UserPlus, Eye, EyeOff, TrendingUp, AlertTriangle, Check, Mail } from 'lucide-react';
 
 export default function AuthScreen() {
   const { data: session, status } = useSession();
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -63,6 +64,10 @@ export default function AuthScreen() {
       setError('Логин должен быть не менее 3 символов');
       return;
     }
+    if (email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setError('Некорректный формат email');
+      return;
+    }
     if (username.length > 20) {
       setError('Логин должен быть не более 20 символов');
       return;
@@ -89,7 +94,7 @@ export default function AuthScreen() {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, email: email.trim() || undefined }),
       });
       const data = await res.json();
 
@@ -236,6 +241,25 @@ export default function AuthScreen() {
                   <p className="text-[10px] text-white/20">3–20 символов, латиница, цифры, _</p>
                 )}
               </div>
+
+              {/* Email (register only) */}
+              {mode === 'register' && (
+                <div className="space-y-2">
+                  <label className="text-[11px] font-medium text-white/40 uppercase tracking-widest">
+                    <Mail className="w-3 h-3 inline -mt-0.5 mr-1 text-white/25" />
+                    Email
+                    <span className="text-white/15 normal-case tracking-normal ml-1">— необязательно</span>
+                  </label>
+                  <Input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="trader@example.com"
+                    className="h-12 bg-white/[0.04] border-white/[0.08] text-white placeholder:text-white/20 rounded-xl focus:ring-emerald-500/25 focus:border-emerald-500/30 text-[16px]"
+                    autoComplete="email"
+                  />
+                </div>
+              )}
 
               {/* Password */}
               <div className="space-y-2">
