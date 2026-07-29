@@ -3,10 +3,10 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Loader2, TrendingUp, TrendingDown, ArrowUpCircle, ArrowDownCircle, Clock, Activity, ChevronDown, ChevronUp, Wallet, BarChart3 } from 'lucide-react';
+import { Loader2, TrendingDown, ArrowUpCircle, ArrowDownCircle, Clock, Activity, ChevronDown, ChevronUp, Wallet, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-interface OpenTradeWithPnl {
+interface OpenTrade {
   id: string;
   symbol: string;
   strategy_id: string;
@@ -15,15 +15,13 @@ interface OpenTradeWithPnl {
   leverage: number;
   direction: string;
   opened_at: string;
-  currentPrice: number;
-  unrealizedPnl: number;
 }
 
 interface StrategyData {
   strategyId: string;
   balance: number;
   initial_balance: number;
-  unrealizedPnl: number;
+  totalLocked: number;
   closedPnlTotal: number;
   openTradeCount: number;
 }
@@ -37,19 +35,15 @@ interface ActivityData {
     id: string;
     symbol: string;
     strategy_id: string;
-    entry_price: number;
-    exit_price: number;
-    amount: number;
-    leverage: number;
     direction: string;
     pnl: number;
     opened_at: string;
     closed_at: string;
   }>;
-  openTrades: OpenTradeWithPnl[];
+  openTrades: OpenTrade[];
   strategies: StrategyData[];
   totalBalance: number;
-  totalUnrealized: number;
+  totalLocked: number;
   totalClosedPnl: number;
 }
 
@@ -75,21 +69,6 @@ const STRATEGY_BG: Record<string, string> = {
   'position-alpha': 'bg-blue-500/10 border-blue-500/20',
 };
 
-const STRATEGY_BAR: Record<string, string> = {
-  'momentum': 'bg-emerald-400',
-  'scalper': 'bg-amber-400',
-  'position-alpha': 'bg-blue-400',
-};
-
-function formatTime(dateStr: string): string {
-  try {
-    const d = new Date(dateStr);
-    return d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-  } catch {
-    return dateStr;
-  }
-}
-
 function formatPnl(pnl: number): string {
   const sign = pnl >= 0 ? '+' : '';
   return `${sign}$${pnl.toFixed(2)}`;
@@ -99,12 +78,53 @@ function formatCoin(symbol: string): string {
   return symbol.replace('USDT', '');
 }
 
+// Fetch live prices from Binance (client-side — browser can reach it)
+async function fetchLivePrices(symbols: string[]): Promise<Record<string, number>> {
+  const prices: Record<string, number> = {};
+  if (symbols.length === 0) return prices;
+  const unique = [...new Set(symbols)];
+  try {
+    // Fetch all prices in one request
+    const res = await fetch('https://api.binance.com/api/v3/ticker/price');
+    if (!res.ok) return prices;
+    const data = await res.json();
+    if (!Array.isArray(data)) return prices;
+    for (const item of data) {
+      const sym = item.symbol as string;
+      if (unique.includes(sym)) {
+        prices[sym] = parseFloat(item.price);
+      }
+    }
+  } catch {
+    // Fallback: individual requests
+    for (const sym of unique.slice(0, 15)) {
+      try {
+        const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}`);
+        if (res.ok) {
+          const d = await res.json();
+          prices[sym] = parseFloat(d.price);
+        }
+      } catch { /* skip */ }
+    }
+  }
+  return prices;
+}
+
+// Calculate unrealized PnL for a single trade
+function calcUnrealizedPnl(trade: OpenTrade, currentPrice: number): number {
+  const priceDiff = trade.direction === 'long'
+    ? (currentPrice - trade.entry_price) / trade.entry_price
+    : (trade.entry_price - currentPrice) / trade.entry_price;
+  return trade.amount * priceDiff * trade.leverage;
+}
+
 export default function ActivityNotification({ onComplete }: ActivityNotificationProps) {
   const [data, setData] = useState<ActivityData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [showAllClosed, setShowAllClosed] = useState(false);
+  const [prices, setPrices] = useState<Record<string, number>>({});
   const [showAllOpen, setShowAllOpen] = useState(false);
 
+  // Step 1: fetch activity data from our API
   useEffect(() => {
     fetch('/api/activity-since')
       .then(r => r.json())
@@ -115,11 +135,16 @@ export default function ActivityNotification({ onComplete }: ActivityNotificatio
       .catch(() => setLoading(false));
   }, []);
 
-  const handleDismiss = () => {
-    onComplete();
-  };
+  // Step 2: fetch live prices once we have open trades
+  useEffect(() => {
+    if (!data?.openTrades?.length) return;
+    const symbols = data.openTrades.map(t => t.symbol);
+    fetchLivePrices(symbols).then(setPrices);
+  }, [data?.openTrades]);
 
-  // When loading is done and no changes, skip automatically
+  const handleDismiss = () => onComplete();
+
+  // Auto-skip if no changes
   useEffect(() => {
     if (!loading && data && !data.hasChanges) {
       onComplete();
@@ -127,6 +152,22 @@ export default function ActivityNotification({ onComplete }: ActivityNotificatio
   }, [loading, data, onComplete]);
 
   const isFirstTime = data?.lastLogin === null;
+
+  // Calculate derived values
+  const openWithPnl = data?.openTrades?.map(t => {
+    const currentPrice = prices[t.symbol] ?? t.entry_price;
+    const unrealizedPnl = calcUnrealizedPnl(t, currentPrice);
+    return { ...t, currentPrice, unrealizedPnl };
+  }) ?? [];
+
+  // Per-strategy unrealized PnL
+  const strategyUnrealized: Record<string, number> = {};
+  for (const t of openWithPnl) {
+    strategyUnrealized[t.strategy_id] = (strategyUnrealized[t.strategy_id] ?? 0) + t.unrealizedPnl;
+  }
+
+  // Totals
+  const totalUnrealized = openWithPnl.reduce((s, t) => s + t.unrealizedPnl, 0);
 
   if (loading || !data) {
     return (
@@ -136,20 +177,12 @@ export default function ActivityNotification({ onComplete }: ActivityNotificatio
     );
   }
 
-  if (!data.hasChanges) {
-    return null;
-  }
+  if (!data.hasChanges) return null;
 
-  // Aggregate stats
   const winningClosed = data.closedTrades.filter(t => t.pnl > 0).length;
   const losingClosed = data.closedTrades.filter(t => t.pnl <= 0).length;
-  const winningOpen = data.openTrades.filter(t => t.unrealizedPnl > 0).length;
-  const losingOpen = data.openTrades.filter(t => t.unrealizedPnl <= 0).length;
-  const visibleClosed = showAllClosed ? data.closedTrades : data.closedTrades.slice(0, 5);
-  const visibleOpen = showAllOpen ? data.openTrades : data.openTrades.slice(0, 8);
-
-  // Sort open trades by absolute unrealized PnL (biggest movers first)
-  const sortedOpen = [...visibleOpen].sort((a, b) => Math.abs(b.unrealizedPnl) - Math.abs(a.unrealizedPnl));
+  const sortedOpen = [...openWithPnl].sort((a, b) => Math.abs(b.unrealizedPnl) - Math.abs(a.unrealizedPnl));
+  const visibleOpen = showAllOpen ? sortedOpen : sortedOpen.slice(0, 8);
 
   return (
     <div className="fixed inset-0 z-[300] bg-[#0a0a0f]/95 backdrop-blur-sm flex items-center justify-center p-4">
@@ -172,17 +205,19 @@ export default function ActivityNotification({ onComplete }: ActivityNotificatio
               </div>
             </div>
 
-            {/* Summary: Portfolio overview */}
+            {/* Summary cards */}
             <div className="grid grid-cols-3 gap-2 mb-3 shrink-0">
               <div className="bg-white/[0.03] rounded-lg p-2.5 text-center">
-                <div className="text-[10px] text-white/30 uppercase tracking-wider mb-0.5">Баланс</div>
-                <div className="text-sm font-bold text-white font-mono">${data.totalBalance.toFixed(0)}</div>
+                <div className="text-[10px] text-white/30 uppercase tracking-wider mb-0.5">Чистая стоимость</div>
+                <div className="text-sm font-bold text-white font-mono">
+                  ${(data.totalBalance + data.totalLocked).toFixed(0)}
+                </div>
                 <div className="text-[9px] text-white/20 font-mono">
-                  {data.totalUnrealized >= 0 ? '+' : ''}{data.totalUnrealized.toFixed(2)} нереал.
+                  ${data.totalLocked.toFixed(0)} в сделках
                 </div>
               </div>
               <div className="bg-white/[0.03] rounded-lg p-2.5 text-center">
-                <div className="text-[10px] text-white/30 uppercase tracking-wider mb-0.5">PnL закрыт.</div>
+                <div className="text-[10px] text-white/30 uppercase tracking-wider mb-0.5">PnL закрытых</div>
                 <div className={cn('text-sm font-bold font-mono', data.totalClosedPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
                   {formatPnl(data.totalClosedPnl)}
                 </div>
@@ -191,12 +226,12 @@ export default function ActivityNotification({ onComplete }: ActivityNotificatio
                 </div>
               </div>
               <div className="bg-white/[0.03] rounded-lg p-2.5 text-center">
-                <div className="text-[10px] text-white/30 uppercase tracking-wider mb-0.5">Нереализ.</div>
-                <div className={cn('text-sm font-bold font-mono', data.totalUnrealized >= 0 ? 'text-green-400' : 'text-red-400')}>
-                  {formatPnl(data.totalUnrealized)}
+                <div className="text-[10px] text-white/30 uppercase tracking-wider mb-0.5">Нереализ. PnL</div>
+                <div className={cn('text-sm font-bold font-mono', totalUnrealized >= 0 ? 'text-green-400' : 'text-red-400')}>
+                  {formatPnl(totalUnrealized)}
                 </div>
                 <div className="text-[9px] text-white/20 font-mono">
-                  {winningOpen}↑ {losingOpen}↓
+                  {data.openTrades.length} сделок
                 </div>
               </div>
             </div>
@@ -208,38 +243,50 @@ export default function ActivityNotification({ onComplete }: ActivityNotificatio
                 <div>
                   <div className="text-[10px] uppercase tracking-wider text-white/25 font-medium mb-2 flex items-center gap-1.5">
                     <BarChart3 className="w-3 h-3" />
-                    Результат по стратегиям
+                    По стратегиям
                   </div>
                   <div className="space-y-1.5">
                     {data.strategies.map(st => {
-                      const totalPnl = st.closedPnlTotal + st.unrealizedPnl;
-                      const depositPct = st.initial_balance > 0
-                        ? ((totalPnl) / st.initial_balance * 100)
+                      const netValue = st.balance + st.totalLocked; // available + locked in trades
+                      const unrealized = strategyUnrealized[st.strategyId] ?? 0;
+                      const totalPnl = st.closedPnlTotal + unrealized;
+                      // True return: (netValue + unrealized - initial) / initial
+                      // Actually netValue already = initial + closedPnl, so:
+                      // totalEquity = netValue + unrealized = initial + closedPnl + unrealized
+                      // return% = totalEquity - initial / initial = (closedPnl + unrealized) / initial
+                      const returnPct = st.initial_balance > 0
+                        ? (totalPnl / st.initial_balance) * 100
                         : 0;
+
                       return (
                         <div key={st.strategyId} className={cn('rounded-lg border px-3 py-2.5', STRATEGY_BG[st.strategyId])}>
                           <div className="flex items-center justify-between mb-1.5">
                             <span className={cn('text-[11px] font-mono font-bold', STRATEGY_COLORS[st.strategyId])}>
                               {STRATEGY_NAMES[st.strategyId] || st.strategyId}
                             </span>
-                            <span className={cn('text-[11px] font-mono font-bold', totalPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
-                              {formatPnl(totalPnl)}
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[11px] font-mono text-white/50">
+                                ${netValue.toFixed(0)}
+                              </span>
+                              <span className={cn('text-[11px] font-mono font-bold', returnPct >= 0 ? 'text-green-400' : 'text-red-400')}>
+                                {returnPct >= 0 ? '+' : ''}{returnPct.toFixed(1)}%
+                              </span>
+                            </div>
                           </div>
                           <div className="flex items-center gap-3 text-[10px] font-mono">
                             <span className="text-white/30">
                               Депозит: <span className="text-white/50">${st.initial_balance.toFixed(0)}</span>
                             </span>
                             <span className="text-white/30">
-                              Баланс: <span className="text-white/50">${st.balance.toFixed(0)}</span>
+                              Свободн.: <span className="text-white/50">${st.balance.toFixed(0)}</span>
                             </span>
-                            <span className={cn('font-bold', depositPct >= 0 ? 'text-green-400' : 'text-red-400')}>
-                              {depositPct >= 0 ? '+' : ''}{depositPct.toFixed(1)}%
+                            <span className="text-white/30">
+                              В сделках: <span className="text-white/50">${st.totalLocked.toFixed(0)}</span>
                             </span>
                           </div>
                           <div className="flex items-center gap-3 text-[9px] font-mono text-white/20 mt-1">
-                            <span>Реал. PnL: <span className={st.closedPnlTotal >= 0 ? 'text-green-400/60' : 'text-red-400/60'}>{formatPnl(st.closedPnlTotal)}</span></span>
-                            <span>Нереал.: <span className={st.unrealizedPnl >= 0 ? 'text-green-400/60' : 'text-red-400/60'}>{formatPnl(st.unrealizedPnl)}</span></span>
+                            <span>Реал.: <span className={st.closedPnlTotal >= 0 ? 'text-green-400/60' : 'text-red-400/60'}>{formatPnl(st.closedPnlTotal)}</span></span>
+                            <span>Нереал.: <span className={unrealized >= 0 ? 'text-green-400/60' : 'text-red-400/60'}>{formatPnl(unrealized)}</span></span>
                             <span>{st.openTradeCount} откр.</span>
                           </div>
                         </div>
@@ -257,7 +304,7 @@ export default function ActivityNotification({ onComplete }: ActivityNotificatio
                     Открытые сделки ({data.openTrades.length})
                   </div>
                   <div className="space-y-1.5">
-                    {sortedOpen.map(t => (
+                    {visibleOpen.map(t => (
                       <div key={t.id} className="bg-white/[0.03] rounded-lg px-3 py-2 flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2 min-w-0">
                           {t.direction === 'long' ? (
@@ -294,15 +341,15 @@ export default function ActivityNotification({ onComplete }: ActivityNotificatio
                 </div>
               )}
 
-              {/* Closed trades (only if there are any) */}
-              {visibleClosed.length > 0 && (
+              {/* Closed trades (only if any) */}
+              {data.closedTrades.length > 0 && (
                 <div>
                   <div className="text-[10px] uppercase tracking-wider text-white/25 font-medium mb-2 flex items-center gap-1.5">
                     <TrendingDown className="w-3 h-3" />
                     Закрытые за период ({data.closedTrades.length})
                   </div>
                   <div className="space-y-1.5">
-                    {visibleClosed.map(t => (
+                    {data.closedTrades.slice(0, 5).map(t => (
                       <div key={t.id} className="bg-white/[0.03] rounded-lg px-3 py-2 flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2 min-w-0">
                           {t.direction === 'long' ? (
@@ -319,21 +366,14 @@ export default function ActivityNotification({ onComplete }: ActivityNotificatio
                           <span className={cn('text-[11px] font-mono font-bold', t.pnl >= 0 ? 'text-green-400' : 'text-red-400')}>
                             {formatPnl(t.pnl)}
                           </span>
-                          <span className="text-[9px] text-white/15 font-mono hidden sm:inline">
-                            {formatTime(t.closed_at)}
-                          </span>
                         </div>
                       </div>
                     ))}
                   </div>
                   {data.closedTrades.length > 5 && (
-                    <button
-                      onClick={() => setShowAllClosed(!showAllClosed)}
-                      className="flex items-center gap-1 text-[10px] text-white/30 hover:text-white/50 mx-auto mt-2 transition-colors"
-                    >
-                      {showAllClosed ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                      {showAllClosed ? 'Свернуть' : `Ещё ${data.closedTrades.length - 5}`}
-                    </button>
+                    <p className="text-[9px] text-white/20 text-center mt-1">
+                      и ещё {data.closedTrades.length - 5} сделок
+                    </p>
                   )}
                 </div>
               )}

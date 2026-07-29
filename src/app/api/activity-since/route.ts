@@ -1,38 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initDB, tursoDb, getTraderState, getClosedTrades, getTotalClosedPnl } from '@/lib/db';
+import { initDB, tursoDb, getTraderState, getTotalClosedPnl } from '@/lib/db';
 import { getAuthUserId } from '@/lib/auth-helpers';
 import { getSetting, setSetting } from '@/lib/db';
-
-async function fetchPrices(symbols: string[]): Promise<Record<string, number>> {
-  const prices: Record<string, number> = {};
-  if (symbols.length === 0) return prices;
-  try {
-    const unique = [...new Set(symbols)];
-    // Batch: fetch all prices at once
-    const res = await fetch('https://api.binance.com/api/v3/ticker/price');
-    if (!res.ok) return prices;
-    const data = await res.json();
-    if (!Array.isArray(data)) return prices;
-    for (const item of data) {
-      const sym = item.symbol as string;
-      if (unique.includes(sym)) {
-        prices[sym] = parseFloat(item.price);
-      }
-    }
-  } catch {
-    // Fallback: fetch individually for important symbols
-    for (const sym of symbols.slice(0, 10)) {
-      try {
-        const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}`);
-        if (res.ok) {
-          const data = await res.json();
-          prices[sym] = parseFloat(data.price);
-        }
-      } catch { /* skip */ }
-    }
-  }
-  return prices;
-}
 
 export async function GET(request: NextRequest) {
   try {
@@ -93,42 +62,28 @@ export async function GET(request: NextRequest) {
       opened_at: row.opened_at as string,
     }));
 
-    // Fetch live prices for open trades
-    const symbols = openTrades.map(t => t.symbol);
-    const prices = await fetchPrices(symbols);
-
-    // Calculate unrealized PnL for each open trade
-    const openWithPnl = openTrades.map(t => {
-      const currentPrice = prices[t.symbol] ?? t.entry_price;
-      const priceDiff = t.direction === 'long'
-        ? (currentPrice - t.entry_price) / t.entry_price
-        : (t.entry_price - currentPrice) / t.entry_price;
-      const unrealizedPnl = t.amount * priceDiff * t.leverage;
-      return { ...t, currentPrice, unrealizedPnl };
-    });
-
-    // Group by strategy for per-strategy unrealized PnL
+    // Group by strategy
     const STRATEGY_IDS = ['momentum', 'scalper', 'position-alpha'];
     const strategies: Array<{
       strategyId: string;
-      balance: number;
-      initial_balance: number;
-      unrealizedPnl: number;
-      closedPnlTotal: number;
+      balance: number;          // available balance (cash not locked in trades)
+      initial_balance: number; // starting deposit
+      totalLocked: number;     // sum of amounts in open trades
+      closedPnlTotal: number;  // sum of PnL from all closed trades
       openTradeCount: number;
     }> = [];
 
     for (const sid of STRATEGY_IDS) {
       try {
         const state = await getTraderState(userId, sid);
-        const strategyOpen = openWithPnl.filter(t => t.strategy_id === sid);
-        const strategyUnrealized = strategyOpen.reduce((s, t) => s + t.unrealizedPnl, 0);
+        const strategyOpen = openTrades.filter(t => t.strategy_id === sid);
+        const totalLocked = strategyOpen.reduce((s, t) => s + t.amount, 0);
         const closedPnl = await getTotalClosedPnl(userId, sid);
         strategies.push({
           strategyId: sid,
           balance: state.balance,
           initial_balance: Number(state.initial_balance ?? 100),
-          unrealizedPnl: strategyUnrealized,
+          totalLocked,
           closedPnlTotal: closedPnl,
           openTradeCount: strategyOpen.length,
         });
@@ -137,8 +92,9 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Total available balance (not net equity!)
     const totalBalance = strategies.reduce((s, st) => s + st.balance, 0);
-    const totalUnrealized = openWithPnl.reduce((s, t) => s + t.unrealizedPnl, 0);
+    const totalLocked = strategies.reduce((s, st) => s + st.totalLocked, 0);
     const totalClosedPnl = closedTrades.reduce((s, t) => s + t.pnl, 0);
 
     // Determine if there are meaningful changes
@@ -174,10 +130,10 @@ export async function GET(request: NextRequest) {
       lastLoginTime: displayLoginTime,
       timeAgo,
       closedTrades,
-      openTrades: openWithPnl,
+      openTrades,
       strategies,
       totalBalance,
-      totalUnrealized,
+      totalLocked,
       totalClosedPnl,
     });
   } catch (err) {
