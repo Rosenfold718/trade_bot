@@ -111,40 +111,45 @@ function SignalGauge({ score }: { score: number }) {
 
 function IndicatorRow({ indicator }: { indicator: IndicatorSignal }) {
   const barWidth = indicator.strength * 100;
+  const isUp = indicator.signal > 0;
+  const isDown = indicator.signal < 0;
 
   return (
     <div className="flex items-center gap-2 py-0.5">
       <div className="w-20 shrink-0">
-        <span className="text-[10px] text-white/40 font-mono">{indicator.name}</span>
+        <span className="text-[10px] text-white/50 font-mono">{indicator.name}</span>
       </div>
-      <div className="flex-1 flex items-center gap-1.5">
-        <div className="w-4 shrink-0 flex justify-center">
-          {indicator.signal > 0 ? (
-            <ArrowUpCircle className="w-3.5 h-3.5 text-green-400" />
-          ) : indicator.signal < 0 ? (
-            <ArrowDownCircle className="w-3.5 h-3.5 text-red-400" />
+      <div className="flex-1 flex items-center gap-2">
+        <div className="w-4 h-4 shrink-0 flex items-center justify-center">
+          {isUp ? (
+            <ArrowUpCircle className="w-4 h-4 text-green-400" strokeWidth={2.5} />
+          ) : isDown ? (
+            <ArrowDownCircle className="w-4 h-4 text-red-400" strokeWidth={2.5} />
           ) : (
-            <MinusCircle className="w-3.5 h-3.5 text-white/15" />
+            <MinusCircle className="w-4 h-4 text-white/25" strokeWidth={2} />
           )}
         </div>
-        <div className="flex-1 h-1.5 bg-white/[0.04] rounded-full overflow-hidden relative">
+        <div className="flex-1 h-2 bg-white/[0.06] rounded-full overflow-hidden relative">
           {indicator.signal !== 0 && (
             <div
               className={cn(
                 'absolute top-0 h-full rounded-full transition-all duration-500',
-                indicator.signal > 0
-                  ? 'bg-gradient-to-r from-green-500/60 to-green-400'
-                  : 'bg-gradient-to-l from-red-500/60 to-red-400 right-0',
+                isUp
+                  ? 'bg-gradient-to-r from-green-500/70 to-green-400'
+                  : 'bg-gradient-to-l from-red-500/70 to-red-400 right-0',
               )}
               style={{
-                width: `${barWidth}%`,
-                left: indicator.signal < 0 ? 'auto' : 0,
-                right: indicator.signal < 0 ? 0 : 'auto',
+                width: `${Math.max(barWidth, 8)}%`,
+                left: isDown ? 'auto' : 0,
+                right: isDown ? 0 : 'auto',
               }}
             />
           )}
         </div>
-        <span className="text-[10px] font-mono text-white/20 w-7 text-right shrink-0">
+        <span className={cn(
+          'text-[10px] font-mono w-8 text-right shrink-0 tabular-nums',
+          isUp ? 'text-green-400/60' : isDown ? 'text-red-400/60' : 'text-white/20',
+        )}>
           {(indicator.strength * 100).toFixed(0)}%
         </span>
       </div>

@@ -30,25 +30,6 @@ const PAGES = [
     `,
   },
   {
-    icon: AlertTriangle,
-    title: 'Важное предупреждение о рисках',
-    color: 'text-amber-400',
-    content: `
-      <div class="space-y-3 text-sm text-white/70 leading-relaxed">
-        <p><strong class="text-white">Система НЕ даёт 100% гарантий</strong> направления рынка.</p>
-        <div class="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 mt-3">
-          <p class="text-amber-300 font-medium">Вероятность успешных сделок: ~70/30</p>
-          <p class="text-white/50 mt-1">Это значительно превосходит любой хедж-фонд на рынке. Однако 30% сделок могут быть убыточными — это нормальная часть торговой стратегии.</p>
-        </div>
-        <ul class="space-y-2 ml-4 list-none mt-3">
-          <li class="flex gap-2"><span class="text-amber-400 shrink-0">⚠</span><span>Криптовалютный рынок крайне волатилен и непредсказуем</span></li>
-          <li class="flex gap-2"><span class="text-amber-400 shrink-0">⚠</span><span>Прошлая прибыль не гарантирует будущих результатов</span></li>
-          <li class="flex gap-2"><span class="text-amber-400 shrink-0">⚠</span><span>Торгуйте только теми средствами, потерю которых вы можете себе позволить</span></li>
-        </ul>
-      </div>
-    `,
-  },
-  {
     icon: TrendingUp,
     title: 'Философия стабильной торговли',
     color: 'text-emerald-400',
@@ -74,6 +55,25 @@ const PAGES = [
           <li class="flex gap-2"><span class="text-emerald-400 shrink-0">✓</span><span>Фильтрация по корреляции с BTC</span></li>
         </ul>
         <p class="text-white/40 text-xs mt-2 italic">Торговля — это марафон, а не спринт. Стабильность важнее скорости.</p>
+      </div>
+    `,
+  },
+  {
+    icon: AlertTriangle,
+    title: 'Важное предупреждение о рисках',
+    color: 'text-amber-400',
+    content: `
+      <div class="space-y-3 text-sm text-white/70 leading-relaxed">
+        <p><strong class="text-white">Система НЕ даёт 100% гарантий</strong> направления рынка.</p>
+        <div class="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 mt-3">
+          <p class="text-amber-300 font-medium">Вероятность успешных сделок: ~70/30</p>
+          <p class="text-white/50 mt-1">Это значительно превосходит любой хедж-фонд на рынке. Однако 30% сделок могут быть убыточными — это нормальная часть торговой стратегии.</p>
+        </div>
+        <ul class="space-y-2 ml-4 list-none mt-3">
+          <li class="flex gap-2"><span class="text-amber-400 shrink-0">⚠</span><span>Криптовалютный рынок крайне волатилен и непредсказуем</span></li>
+          <li class="flex gap-2"><span class="text-amber-400 shrink-0">⚠</span><span>Прошлая прибыль не гарантирует будущих результатов</span></li>
+          <li class="flex gap-2"><span class="text-amber-400 shrink-0">⚠</span><span>Торгуйте только теми средствами, потерю которых вы можете себе позволить</span></li>
+        </ul>
       </div>
     `,
   },
@@ -153,7 +153,7 @@ export default function WarningModal({ onComplete }: WarningModalProps) {
             <div className="flex items-center gap-3 mb-4">
               <div className={cn(
                 'w-10 h-10 rounded-xl flex items-center justify-center',
-                page === 1 ? 'bg-amber-500/10 border border-amber-500/20' : 'bg-emerald-500/10 border border-emerald-500/20',
+                page === 2 ? 'bg-amber-500/10 border border-amber-500/20' : 'bg-emerald-500/10 border border-emerald-500/20',
               )}>
                 <Icon className={cn('h-5 w-5', currentPage.color)} />
               </div>

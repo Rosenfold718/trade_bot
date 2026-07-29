@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic';
 import AuthScreen from '@/components/auth/auth-screen';
 import PaymentModal from '@/components/auth/payment-modal';
 import WarningModal from '@/components/warning-modal';
+import ActivityNotification from '@/components/activity-notification';
 import { Loader2, LogOut, Clock, Shield, Users } from 'lucide-react';
 import AdminPaymentsPanel from '@/components/auth/admin-payments-panel';
 
@@ -21,7 +22,7 @@ const TradingTerminal = dynamic(() => import('@/components/trading-terminal'), {
   ),
 });
 
-type AppView = 'auth' | 'payment' | 'warning' | 'terminal';
+type AppView = 'auth' | 'payment' | 'warning' | 'activity' | 'terminal';
 
 // ── Global Error Boundary ──
 class TerminalErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
@@ -107,6 +108,10 @@ export default function Home() {
   }, [updateSession, checkSubscription]);
 
   const handleWarningComplete = useCallback(() => {
+    setView('activity');
+  }, []);
+
+  const handleActivityComplete = useCallback(() => {
     setView('terminal');
   }, []);
 
@@ -152,6 +157,11 @@ export default function Home() {
   // ── Warning modal ──
   if (view === 'warning') {
     return <WarningModal onComplete={handleWarningComplete} />;
+  }
+
+  // ── Activity notification ──
+  if (view === 'activity') {
+    return <ActivityNotification onComplete={handleActivityComplete} />;
   }
 
   // ── Terminal ──
