@@ -451,11 +451,28 @@ export default function TradingTerminal() {
   // Manual close trade handler
   const manualCloseTrade = useCallback(async (trade: Trade) => {
     try {
-      // Fetch current price from Binance
-      const priceRes = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${trade.symbol}`);
-      if (!priceRes.ok) { addLog('Не удалось получить цену для закрытия', 'error'); return; }
-      const priceData = await priceRes.json();
-      const exitPrice = parseFloat(priceData.price);
+      // Try Binance price first, fall back to coin list price
+      let exitPrice = 0;
+      try {
+        // Use server-side proxy to avoid CORS/network issues
+        const priceRes = await fetch(`/api/price?symbol=${trade.symbol}`);
+        if (priceRes.ok) {
+          const priceData = await priceRes.json();
+          exitPrice = priceData.price;
+        }
+      } catch { /* Proxy failed, try coin list */ }
+
+      if (!exitPrice || exitPrice <= 0) {
+        const coinPrice = useTerminalStore.getState().coins.find(c => c.symbol === trade.symbol)?.price;
+        if (coinPrice && coinPrice > 0) {
+          exitPrice = coinPrice;
+        } else {
+          addLog(`Не удалось получить цену для ${trade.symbol.replace('USDT', '')}`, 'error');
+          return;
+        }
+      }
+
+      console.log(`[ManualClose] Closing ${trade.symbol} @ $${exitPrice}, entry=$${trade.entry_price}`);
 
       const closeRes = await fetch('/api/trader', {
         method: 'POST',

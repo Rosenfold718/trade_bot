@@ -342,6 +342,77 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
       if (trade.entry_price != null) addLine(trade.entry_price, 'rgba(255,255,255,0.25)', 2, 1, `IN $${fmtPrice(trade.entry_price)}`);
       addLine(trade.exit_price!, '#eab308', 1, 1, `EXIT $${fmtPrice(trade.exit_price!)}`);
     }
+
+    // ── Entry Arrow Markers ──
+    // Show green ▲ for LONG entry and red ▼ for SHORT entry on the candle
+    const markers: Array<{
+      time: number;
+      position: 'belowBar' | 'aboveBar';
+      color: string;
+      shape: 'arrowUp' | 'arrowDown';
+      text?: string;
+    }> = [];
+
+    // Helper: find the candle time closest to the trade's opened_at timestamp
+    const findCandleTime = (tradeOpenedAt: string, direction: 'long' | 'short'): number | null => {
+      const tradeTime = Math.floor(new Date(tradeOpenedAt).getTime() / 1000);
+      if (data.length === 0) return null;
+
+      // Find the closest candle to the trade open time
+      let bestIdx = 0;
+      let bestDist = Infinity;
+      for (let i = 0; i < data.length; i++) {
+        const dist = Math.abs(data[i].time - tradeTime);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestIdx = i;
+        }
+      }
+
+      // Only show marker if within a reasonable time window (max 2x candle interval)
+      const maxDist = 7200; // 2 hours for hourly candles
+      if (bestDist > maxDist) return data[bestIdx].time; // use closest anyway
+
+      return data[bestIdx].time;
+    };
+
+    for (const trade of (openTrades ?? []).filter(t => t.symbol === symbol && t.status === 'open')) {
+      const time = findCandleTime(trade.opened_at, trade.direction);
+      if (time) {
+        markers.push({
+          time,
+          position: trade.direction === 'long' ? 'belowBar' : 'aboveBar',
+          color: trade.direction === 'long' ? '#22c55e' : '#ef4444',
+          shape: trade.direction === 'long' ? 'arrowUp' : 'arrowDown',
+          text: `${trade.direction === 'long' ? 'L' : 'S'} ${fmtPrice(trade.entry_price)}`,
+        });
+      }
+    }
+
+    // Also show markers for recent (closed) trades on this symbol
+    for (const trade of (recentTrades ?? []).filter(t => t.symbol === symbol && t.status === 'closed')) {
+      const entryTime = findCandleTime(trade.opened_at, trade.direction);
+      if (entryTime) {
+        markers.push({
+          time: entryTime,
+          position: trade.direction === 'long' ? 'belowBar' : 'aboveBar',
+          color: trade.direction === 'long' ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.5)',
+          shape: trade.direction === 'long' ? 'arrowUp' : 'arrowDown',
+          text: `${trade.direction === 'long' ? 'L' : 'S'}`,
+        });
+      }
+    }
+
+    // Sort markers by time (required by lightweight-charts)
+    markers.sort((a, b) => a.time - b.time);
+
+    if (markers.length > 0) {
+      try {
+        cs.setMarkers(markers as any);
+      } catch (e) {
+        console.warn('[Chart] Failed to set markers:', e);
+      }
+    }
   }, [openTrades, recentTrades, symbol, data]);
 
   // ============================================================

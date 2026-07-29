@@ -86,10 +86,14 @@ const SCHEMA_SQL = `
   );
 
   CREATE TABLE IF NOT EXISTS system_settings (
-    key TEXT PRIMARY KEY,
+    key TEXT NOT NULL,
+    user_id TEXT NOT NULL DEFAULT '__global__',
     value TEXT NOT NULL DEFAULT '',
-    updated_at TEXT DEFAULT (datetime('now'))
+    updated_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (key, user_id)
   );
+
+  CREATE INDEX IF NOT EXISTS idx_system_settings_user ON system_settings(user_id);
 
   CREATE INDEX IF NOT EXISTS idx_trader_state_user ON trader_state(user_id);
   CREATE INDEX IF NOT EXISTS idx_trades_user ON trades(user_id);
@@ -110,12 +114,16 @@ const MIGRATION_SQLS = [
   // Phase 2: add strategy_id (added after initial table creation)
   "ALTER TABLE trader_state ADD COLUMN strategy_id TEXT DEFAULT 'momentum'",
   "ALTER TABLE trades ADD COLUMN strategy_id TEXT DEFAULT 'momentum'",
-  // Phase 3: system_settings table (admin panel)
+  // Phase 3: system_settings table (admin panel) — per-user
   `CREATE TABLE IF NOT EXISTS system_settings (
-    key TEXT PRIMARY KEY,
+    key TEXT NOT NULL,
+    user_id TEXT NOT NULL DEFAULT '__global__',
     value TEXT NOT NULL DEFAULT '',
-    updated_at TEXT DEFAULT (datetime('now'))
+    updated_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (key, user_id)
   )`,
+  // Phase 3b: add user_id column to existing system_settings (if old schema)
+  "ALTER TABLE system_settings ADD COLUMN user_id TEXT DEFAULT '__global__'",
 ];
 
 export async function initDB(): Promise<void> {
@@ -564,16 +572,22 @@ export async function getSetting(key: string): Promise<string | null> {
   }
 }
 
-export async function setSetting(key: string, value: string): Promise<void> {
+export async function setSetting(key: string, value: string, userId: string = '__global__'): Promise<void> {
   await tursoDb.execute(
-    "INSERT OR REPLACE INTO system_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))",
-    [key, value],
+    "INSERT OR REPLACE INTO system_settings (key, user_id, value, updated_at) VALUES (?, ?, ?, datetime('now'))",
+    [key, userId, value],
   );
 }
 
-export async function getAllSettings(): Promise<Record<string, string>> {
+export async function getAllSettings(userId?: string): Promise<Record<string, string>> {
   try {
-    const result = await tursoDb.execute('SELECT key, value FROM system_settings');
+    // If userId provided, return user-specific settings
+    // If not provided, return global settings (backwards compat)
+    const targetUserId = userId ?? '__global__';
+    const result = await tursoDb.execute(
+      'SELECT key, value FROM system_settings WHERE user_id = ?',
+      [targetUserId]
+    );
     const map: Record<string, string> = {};
     for (const row of result.rows) {
       map[row.key as string] = row.value as string;
@@ -584,6 +598,6 @@ export async function getAllSettings(): Promise<Record<string, string>> {
   }
 }
 
-export async function deleteSetting(key: string): Promise<void> {
-  await tursoDb.execute('DELETE FROM system_settings WHERE key = ?', [key]);
+export async function deleteSetting(key: string, userId: string = '__global__'): Promise<void> {
+  await tursoDb.execute('DELETE FROM system_settings WHERE key = ? AND user_id = ?', [key, userId]);
 }
