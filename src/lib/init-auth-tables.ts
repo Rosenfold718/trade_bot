@@ -109,6 +109,17 @@ export async function initAuthTables(): Promise<void> {
       "details" TEXT,
       "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS "SupportTicket" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "userId" TEXT NOT NULL,
+      "username" TEXT NOT NULL,
+      "message" TEXT NOT NULL,
+      "requestFaster" BOOLEAN NOT NULL DEFAULT 0,
+      "emailSent" BOOLEAN NOT NULL DEFAULT 0,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS "SupportTicket_createdAt_idx" ON "SupportTicket"("createdAt");
   `.split(';').filter(s => s.trim().length > 0).map(s => s.trim() + ';');
 
   for (const stmt of statements) {

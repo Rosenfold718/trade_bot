@@ -273,3 +273,22 @@ export async function upsertSubscription(
   if (!sub) throw new Error('Failed to upsert subscription');
   return sub;
 }
+
+// ============================================================
+// Support tickets
+// ============================================================
+
+export async function createSupportTicket(data: {
+  userId: string;
+  username: string;
+  message: string;
+  requestFaster: boolean;
+}): Promise<string> {
+  const id = `ticket-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  await getClient().execute(
+    `INSERT INTO "SupportTicket" (id, userId, username, message, requestFaster, emailSent, createdAt)
+     VALUES (?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)`,
+    [id, data.userId, data.username, data.message, data.requestFaster ? 1 : 0]
+  );
+  return id;
+}
