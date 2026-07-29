@@ -112,6 +112,27 @@ export async function POST(request: NextRequest) {
 
       if (amount <= 0) return NextResponse.json({ error: 'Invalid amount' }, { status: 400 });
 
+      // Validate trade parameters
+      const maxAllowedLeverage = 3;
+      if (leverage > maxAllowedLeverage) {
+        return NextResponse.json({ error: `Максимальное плечо: ${maxAllowedLeverage}x` }, { status: 400 });
+      }
+      if (amount > 25) {
+        return NextResponse.json({ error: 'Максимальная сумма сделки: $25' }, { status: 400 });
+      }
+      if (stopLoss <= 0 || takeProfit <= 0) {
+        return NextResponse.json({ error: 'SL и TP должны быть больше 0' }, { status: 400 });
+      }
+      // Check SL/TP distances are reasonable
+      const slDist = Math.abs(entryPrice - stopLoss) / entryPrice;
+      const tpDist = Math.abs(takeProfit - entryPrice) / entryPrice;
+      if (slDist > 0.08) {
+        return NextResponse.json({ error: 'Stop-loss слишком далёкий (макс. 8%)' }, { status: 400 });
+      }
+      if (tpDist > 0.20) {
+        return NextResponse.json({ error: 'Take-profit слишком далёкий (макс. 20%)' }, { status: 400 });
+      }
+
       const state = await getTraderState(userId, strategyId);
       if (state.balance < amount) {
         return NextResponse.json({ error: 'Insufficient balance' }, { status: 400 });
@@ -132,7 +153,7 @@ export async function POST(request: NextRequest) {
       const priceChange = trade.direction === 'long'
         ? (exitPrice - trade.entry_price) / trade.entry_price
         : (trade.entry_price - exitPrice) / trade.entry_price;
-      const pnl = trade.amount * priceChange * trade.leverage - trade.amount * 0.001;
+      const pnl = trade.amount * priceChange * trade.leverage - trade.amount * 0.001 - (trade.amount / trade.leverage) * 0.001;
 
       await closeTrade(tradeId, exitPrice, pnl);
 
@@ -140,10 +161,11 @@ export async function POST(request: NextRequest) {
       let newBalance = state.balance + trade.amount + pnl;
 
       // Debt repayment: 10% of positive PnL goes to debt, but don't block trading
+      let debtRepaid: number | undefined;
       if (pnl > 0 && state.debt_to_repay > 0) {
-        const repayAmount = Math.min(pnl * 0.1, state.debt_to_repay);
-        await repayDebt(userId, repayAmount, strategyId);
-        newBalance -= repayAmount;
+        debtRepaid = Math.min(pnl * 0.1, state.debt_to_repay);
+        await repayDebt(userId, debtRepaid, strategyId);
+        newBalance -= debtRepaid;
       }
 
       // Ensure balance never goes below 0 (safety floor)
@@ -151,7 +173,7 @@ export async function POST(request: NextRequest) {
 
       await updateBalance(userId, newBalance, strategyId);
 
-      return NextResponse.json({ success: true, pnl, newBalance });
+      return NextResponse.json({ success: true, pnl, newBalance, debtRepaid: debtRepaid && debtRepaid > 0 ? debtRepaid : undefined });
     }
 
     if (action === 'update-sl') {
@@ -266,7 +288,7 @@ export async function POST(request: NextRequest) {
             const priceChange = trade.direction === 'long'
               ? (candleClose - trade.entry_price) / trade.entry_price
               : (trade.entry_price - candleClose) / trade.entry_price;
-            const pnl = trade.amount * priceChange * trade.leverage - trade.amount * 0.001;
+            const pnl = trade.amount * priceChange * trade.leverage - trade.amount * 0.001 - (trade.amount / trade.leverage) * 0.001;
 
             await closeTrade(trade.id, candleClose, pnl);
 

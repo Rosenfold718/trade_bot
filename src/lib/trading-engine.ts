@@ -1,4 +1,4 @@
-import type { CandleData, IndicatorSignal, TradingDecision, BacktestTrade, BacktestSummary } from './types';
+import type { CandleData, IndicatorSignal, TradingDecision } from './types';
 import { getStrategy, type StrategyConfig } from './strategies';
 
 // ============================================================
@@ -44,27 +44,47 @@ function ema(data: number[], period: number): number[] {
 
 function calcRSI(closes: number[], period: number = 14): number {
   if (closes.length < period + 1) return 50;
-  let gains = 0;
-  let losses = 0;
-  for (let i = closes.length - period; i < closes.length; i++) {
+  // Wilder's smoothing method
+  const multiplier = 1 / period;
+  let avgGain = 0;
+  let avgLoss = 0;
+
+  // Initial SMA for first period
+  for (let i = 1; i <= period; i++) {
     const change = closes[i] - closes[i - 1];
-    if (change > 0) gains += change;
-    else losses += Math.abs(change);
+    if (change > 0) avgGain += change;
+    else avgLoss += Math.abs(change);
   }
-  if (losses === 0) return 100;
-  const rs = (gains / period) / (losses / period);
+  avgGain /= period;
+  avgLoss /= period;
+
+  // Wilder's smoothing for remaining periods
+  for (let i = period + 1; i < closes.length; i++) {
+    const change = closes[i] - closes[i - 1];
+    if (change > 0) avgGain = avgGain * (1 - multiplier) + change * multiplier;
+    else avgLoss = avgLoss * (1 - multiplier) + Math.abs(change) * multiplier;
+  }
+
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
   return 100 - (100 / (1 + rs));
 }
 
 function calcMACD(closes: number[]): { macdLine: number; signalLine: number; histogram: number } {
   const ema12 = ema(closes, 12);
   const ema26 = ema(closes, 26);
-  const macdLineArr = ema12.map((v, i) => (isNaN(v) || isNaN(ema26[i])) ? NaN : v - ema26[i]);
-  const validMacd = macdLineArr.filter(v => !isNaN(v));
+  const macdLineArr: number[] = [];
+  for (let i = 0; i < closes.length; i++) {
+    if (isNaN(ema12[i]) || isNaN(ema26[i])) macdLineArr.push(NaN);
+    else macdLineArr.push(ema12[i] - ema26[i]);
+  }
+  if (closes.length < 35) return { macdLine: 0, signalLine: 0, histogram: 0 };
+  // Filter NaN only for signal EMA, but use full array length
+  const validMacd = macdLineArr.slice(26); // Start from where EMA26 becomes valid
   if (validMacd.length < 9) return { macdLine: 0, signalLine: 0, histogram: 0 };
   const signalArr = ema(validMacd, 9);
   const macdLine = validMacd[validMacd.length - 1];
-  const signalLine = signalArr[signalArr.length - 1];
+  const signalLine = signalArr[signalArr.length - 1] || 0;
   return { macdLine, signalLine, histogram: macdLine - signalLine };
 }
 
@@ -72,7 +92,7 @@ function calcBollingerBands(closes: number[], period: number = 20, stdDev: numbe
   if (closes.length < period) return { upper: 0, middle: 0, lower: 0, position: 0.5 };
   const slice = closes.slice(-period);
   const middle = slice.reduce((a, b) => a + b, 0) / period;
-  const variance = slice.reduce((sum, val) => sum + Math.pow(val - middle, 2), 0) / period;
+  const variance = slice.reduce((sum, val) => sum + Math.pow(val - middle, 2), 0) / (period - 1);
   const std = Math.sqrt(variance);
   const upper = middle + stdDev * std;
   const lower = middle - stdDev * std;
@@ -338,8 +358,26 @@ function spikeGuard(
   rsi: number,
   direction: 'long' | 'short' | 'none',
   ema20: number,
+  thresholds?: {
+    atrRatioMax?: number;
+    roc3Max?: number;
+    rsiOverbought?: number;
+    rsiOversold?: number;
+    emaDistMax?: number;
+    cciMax?: number;
+  }
 ): { blocked: boolean; reason: string } {
   if (direction === 'none') return { blocked: false, reason: '' };
+
+  // Default thresholds (for 1H/4H)
+  const t = {
+    atrRatioMax: thresholds?.atrRatioMax ?? 2.5,
+    roc3Max: thresholds?.roc3Max ?? 8,
+    rsiOverbought: thresholds?.rsiOverbought ?? 78,
+    rsiOversold: thresholds?.rsiOversold ?? 22,
+    emaDistMax: thresholds?.emaDistMax ?? 5,
+    cciMax: thresholds?.cciMax ?? 200,
+  };
 
   const last = candles[candles.length - 1];
   const candleShape = analyzeCandleShape(last);
@@ -352,13 +390,13 @@ function spikeGuard(
 
   const isLong = direction === 'long';
 
-  // 1. Current candle is a spike (ATR ratio > 2.5)
-  if (candleATRRatio > 2.5) {
+  // 1. Current candle is a spike (ATR ratio)
+  if (candleATRRatio > t.atrRatioMax) {
     return { blocked: true, reason: `Спайк-свеча (ATR×${candleATRRatio.toFixed(1)})` };
   }
 
   // 2. 3-candle velocity too high
-  if (roc3 > 8.0) {
+  if (roc3 > t.roc3Max) {
     return { blocked: true, reason: `Сильное движение ROC3=${roc3.toFixed(1)}%` };
   }
 
@@ -368,26 +406,26 @@ function spikeGuard(
   }
 
   // 4. RSI extreme — don't buy overbought, don't sell oversold
-  if (isLong && rsi > 78) {
+  if (isLong && rsi > t.rsiOverbought) {
     return { blocked: true, reason: `RSI перекуплен (${rsi.toFixed(0)})` };
   }
-  if (!isLong && rsi < 22) {
+  if (!isLong && rsi < t.rsiOversold) {
     return { blocked: true, reason: `RSI перепродан (${rsi.toFixed(0)})` };
   }
 
   // 5. Overextended from EMA20
-  if (isLong && distFromEMA20 > 5.0) {
+  if (isLong && distFromEMA20 > t.emaDistMax) {
     return { blocked: true, reason: `Цена выше EMA20 на ${distFromEMA20.toFixed(1)}%` };
   }
-  if (!isLong && distFromEMA20 < -5.0) {
+  if (!isLong && distFromEMA20 < -t.emaDistMax) {
     return { blocked: true, reason: `Цена ниже EMA20 на ${Math.abs(distFromEMA20).toFixed(1)}%` };
   }
 
   // 6. CCI extreme
-  if (isLong && cci > 200) {
+  if (isLong && cci > t.cciMax) {
     return { blocked: true, reason: `CCI перекуплен (${cci.toFixed(0)})` };
   }
-  if (!isLong && cci < -200) {
+  if (!isLong && cci < -t.cciMax) {
     return { blocked: true, reason: `CCI перепродан (${cci.toFixed(0)})` };
   }
 
@@ -681,6 +719,7 @@ export function makeStrategyDecision(
   candles: CandleData[],
   idleMinutes: number = 0,
   strategyOverride?: StrategyOverrides & Partial<StrategyConfig>,
+  weights?: Record<string, number>,
 ): TradingDecision {
   const base = getStrategy(strategyId);
   if (!base) return noDecision(symbol, candles);
@@ -690,13 +729,15 @@ export function makeStrategyDecision(
     ? { ...base, ...strategyOverride } as StrategyConfig
     : base;
 
+  const effectiveWeights = weights ?? {};
+
   switch (strategyId) {
     case 'scalper':
-      return makeScalpHunterDecision(symbol, candles, strategy, idleMinutes);
+      return makeScalpHunterDecision(symbol, candles, strategy, idleMinutes, effectiveWeights);
     case 'position-alpha':
-      return makePositionAlphaDecision(symbol, candles, strategy, idleMinutes);
+      return makePositionAlphaDecision(symbol, candles, strategy, idleMinutes, effectiveWeights);
     default:
-      return makeMomentumDecision(symbol, candles, strategy, idleMinutes);
+      return makeMomentumDecision(symbol, candles, strategy, idleMinutes, effectiveWeights);
   }
 }
 
@@ -709,8 +750,9 @@ function makeMomentumDecision(
   candles: CandleData[],
   strategy: StrategyConfig,
   _idleMinutes: number = 0,
+  weights: Record<string, number> = {},
 ): TradingDecision {
-  const indicators = analyzeIndicators(candles, {});
+  const indicators = analyzeIndicators(candles, weights);
   const closes = candles.map(c => c.close);
   const price = closes[closes.length - 1];
   const atr = calcATR(candles);
@@ -728,11 +770,12 @@ function makeMomentumDecision(
   let shortCount = 0;
 
   for (const ind of indicators) {
+    const w = weights[ind.name] ?? 1;
     if (ind.signal > 0) {
-      longScore += ind.strength;
+      longScore += ind.strength * w;
       longCount++;
     } else if (ind.signal < 0) {
-      shortScore += ind.strength;
+      shortScore += ind.strength * w;
       shortCount++;
     }
   }
@@ -812,6 +855,7 @@ function makeScalpHunterDecision(
   candles: CandleData[],
   strategy: StrategyConfig,
   _idleMinutes: number = 0,
+  weights: Record<string, number> = {},
 ): TradingDecision {
   if (candles.length < 25) return noDecision(symbol, candles);
 
@@ -918,8 +962,9 @@ function makeScalpHunterDecision(
   let shortScore = 0;
 
   for (const ind of indicators) {
-    if (ind.signal > 0) { longCount++; longScore += ind.strength; }
-    else if (ind.signal < 0) { shortCount++; shortScore += ind.strength; }
+    const w = weights[ind.name] ?? 1;
+    if (ind.signal > 0) { longCount++; longScore += ind.strength * w; }
+    else if (ind.signal < 0) { shortCount++; shortScore += ind.strength * w; }
   }
 
   if (longCount < 2 && shortCount < 2) {
@@ -943,11 +988,18 @@ function makeScalpHunterDecision(
 
   // ── SPIKE GUARD (Scalper version — relaxed thresholds for 5m TF) ──
   // Scalping can tolerate more volatility, but still block extreme spikes.
-  // Use spikeGuard with standard thresholds; it auto-adapts via ATR/ROC.
+  // Use spikeGuard with scalper-specific thresholds (wider for 5m timeframe).
   {
     const ema20Arr = ema(closes, 20);
     const ema20 = ema20Arr[ema20Arr.length - 1] || price;
-    const guard = spikeGuard(candles, closes, atr, rsi, direction, ema20);
+    const guard = spikeGuard(candles, closes, atr, rsi, direction, ema20, {
+      atrRatioMax: 4.0,
+      roc3Max: 15,
+      rsiOverbought: 85,
+      rsiOversold: 15,
+      emaDistMax: 8,
+      cciMax: 300,
+    });
     if (guard.blocked) {
       console.log(`[Scalper] ${symbol} ${direction.toUpperCase()} blocked: ${guard.reason}`);
       return { symbol, direction: 'none', score: Math.max(longScore, shortScore), leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
@@ -982,6 +1034,7 @@ function makePositionAlphaDecision(
   candles: CandleData[],
   strategy: StrategyConfig,
   _idleMinutes: number = 0,
+  weights: Record<string, number> = {},
 ): TradingDecision {
   if (candles.length < 250) return noDecision(symbol, candles);
 
@@ -1132,7 +1185,8 @@ function makePositionAlphaDecision(
   for (let i = 1; i < indicators.length; i++) {
     if (indicators[i].signal === trendDir) {
       agreeCount++;
-      score += indicators[i].strength;
+      const w = weights[indicators[i].name] ?? 1;
+      score += indicators[i].strength * w;
     }
   }
 
@@ -1175,124 +1229,6 @@ function makePositionAlphaDecision(
     : price * (1 - takeProfitPercent);
 
   return { symbol, direction, score, leverage, stopLoss, takeProfit, indicators };
-}
-
-// ============================================================
-// Backtesting
-// ============================================================
-
-export function runBacktest(
-  symbol: string,
-  candles: CandleData[],
-  weights: Record<string, number>,
-  initialBalance: number = 100,
-): BacktestSummary {
-  const minCandles = 200;
-  if (candles.length < minCandles) {
-    return {
-      symbol,
-      total_trades: 0,
-      winning_trades: 0,
-      losing_trades: 0,
-      total_pnl: 0,
-      winrate: 0,
-      profit_factor: 0,
-      indicator_performance: {},
-    };
-  }
-
-  let balance = initialBalance;
-  const trades: BacktestTrade[] = [];
-  const indicatorPerformance: Record<string, { wins: number; losses: number; pnl: number }> = {};
-  const indicatorNames = ['RSI', 'MACD', 'EMA_50', 'EMA_200', 'Bollinger', 'Volume', 'StochRSI', 'ADX', 'OBV', 'VWAP'];
-  for (const name of indicatorNames) {
-    indicatorPerformance[name] = { wins: 0, losses: 0, pnl: 0 };
-  }
-
-  let i = minCandles;
-  while (i < candles.length - 1) {
-    const historicalCandles = candles.slice(0, i + 1);
-    const decision = makeTradingDecision(symbol, historicalCandles, weights);
-
-    if (decision.direction !== 'none' && balance > 0) {
-      const amount = balance * 0.1 * decision.leverage;
-      if (amount < 0.01) { i++; continue; }
-
-      const entryPrice = candles[i].close;
-      let exitPrice = entryPrice;
-      let j = i + 1;
-      const maxHold = Math.min(i + 24, candles.length); // max 24h hold
-
-      while (j < maxHold) {
-        const candle = candles[j];
-        if (decision.direction === 'long') {
-          if (candle.low <= decision.stopLoss) { exitPrice = decision.stopLoss; break; }
-          if (candle.high >= decision.takeProfit) { exitPrice = decision.takeProfit; break; }
-        } else {
-          if (candle.high >= decision.stopLoss) { exitPrice = decision.stopLoss; break; }
-          if (candle.low <= decision.takeProfit) { exitPrice = decision.takeProfit; break; }
-        }
-        exitPrice = candle.close;
-        j++;
-      }
-
-      const priceChange = decision.direction === 'long'
-        ? (exitPrice - entryPrice) / entryPrice
-        : (entryPrice - exitPrice) / entryPrice;
-      const pnl = (amount * priceChange) - (amount * 0.001); // 0.1% fee
-      balance += pnl;
-
-      const activeIndicators = decision.indicators
-        .filter(ind => ind.signal !== 0)
-        .map(ind => ind.name);
-
-      const isWin = pnl > 0;
-      trades.push({
-        symbol,
-        entry_price: entryPrice,
-        exit_price: exitPrice,
-        amount,
-        leverage: decision.leverage,
-        direction: decision.direction,
-        pnl,
-        indicators_used: activeIndicators,
-      });
-
-      for (const indName of activeIndicators) {
-        if (indicatorPerformance[indName]) {
-          if (isWin) {
-            indicatorPerformance[indName].wins++;
-            indicatorPerformance[indName].pnl += pnl;
-          } else {
-            indicatorPerformance[indName].losses++;
-            indicatorPerformance[indName].pnl += pnl;
-          }
-        }
-      }
-
-      i = j; // Move past the trade duration
-    } else {
-      i++;
-    }
-  }
-
-  const winningTrades = trades.filter(t => t.pnl > 0);
-  const losingTrades = trades.filter(t => t.pnl <= 0);
-  const totalWins = winningTrades.reduce((s, t) => s + t.pnl, 0);
-  const totalLosses = Math.abs(losingTrades.reduce((s, t) => s + t.pnl, 0));
-  const winrate = trades.length > 0 ? (winningTrades.length / trades.length) * 100 : 0;
-  const profitFactor = totalLosses > 0 ? totalWins / totalLosses : totalWins > 0 ? 999 : 0;
-
-  return {
-    symbol,
-    total_trades: trades.length,
-    winning_trades: winningTrades.length,
-    losing_trades: losingTrades.length,
-    total_pnl: balance - initialBalance,
-    winrate,
-    profit_factor,
-    indicator_performance: indicatorPerformance,
-  };
 }
 
 // ============================================================
@@ -1362,42 +1298,6 @@ export function analyzeOrderBook(
     signal,
     strength,
   };
-}
-
-// ============================================================
-// Weight Optimization (Post-Backtest Learning)
-// ============================================================
-
-export function optimizeWeights(
-  currentWeights: Record<string, number>,
-  allSummaries: BacktestSummary[],
-): Record<string, number> {
-  const newWeights: Record<string, number> = { ...currentWeights };
-  const indicatorAgg: Record<string, { totalWins: number; totalTrades: number; totalPnl: number }> = {};
-
-  for (const summary of allSummaries) {
-    for (const [name, perf] of Object.entries(summary.indicator_performance)) {
-      if (!indicatorAgg[name]) indicatorAgg[name] = { totalWins: 0, totalTrades: 0, totalPnl: 0 };
-      indicatorAgg[name].totalWins += perf.wins;
-      indicatorAgg[name].totalTrades += perf.wins + perf.losses;
-      indicatorAgg[name].totalPnl += perf.pnl;
-    }
-  }
-
-  for (const [name, agg] of Object.entries(indicatorAgg)) {
-    if (agg.totalTrades < 3) continue; // Not enough data
-    const indicatorWinrate = agg.totalWins / agg.totalTrades;
-    // Scale weight: bad indicators get 0.2, good ones get up to 2.5
-    if (indicatorWinrate > 0.55) {
-      newWeights[name] = Math.min(2.5, 1.0 + (indicatorWinrate - 0.5) * 5);
-    } else if (indicatorWinrate < 0.45) {
-      newWeights[name] = Math.max(0.2, 1.0 - (0.5 - indicatorWinrate) * 5);
-    } else {
-      newWeights[name] = 1.0;
-    }
-  }
-
-  return newWeights;
 }
 
 // ============================================================

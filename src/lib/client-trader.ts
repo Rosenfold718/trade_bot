@@ -82,7 +82,12 @@ export async function findBestSignal(
 
   // System setting: how many symbols to scan (or per-strategy override)
   const scanLimit = strategyId === 'scalper' ? 30 : 20;
-  const checkSymbols = available.sort(() => Math.random() - 0.5).slice(0, scanLimit);
+  // Sort by volume rank (top symbols first), then shuffle within tiers
+  const topSymbols = available.slice(0, 10); // Top 10 by volume - highest priority
+  const midSymbols = available.slice(10, 25); // Next 15
+  const restSymbols = available.slice(25);    // Rest
+  const shuffle = (arr: string[]) => arr.sort(() => Math.random() - 0.5);
+  const checkSymbols = [...shuffle(topSymbols), ...shuffle(midSymbols), ...shuffle(restSymbols)].slice(0, scanLimit);
 
   if (strategy.timeFilterEnabled) {
     const mskHour = new Date().toLocaleTimeString('en-US', { timeZone: 'Europe/Moscow', hour: 'numeric', hour12: false }).padStart(2, '0');
@@ -431,7 +436,7 @@ export async function monitorTradesClient(
         const priceChange = trade.direction === 'long'
           ? (effectiveExitPrice - trade.entry_price) / trade.entry_price
           : (trade.entry_price - effectiveExitPrice) / trade.entry_price;
-        const pnl = trade.amount * priceChange * trade.leverage - trade.amount * 0.001;
+        const pnl = trade.amount * priceChange * trade.leverage - trade.amount * 0.001 - (trade.amount / trade.leverage) * 0.001;
         closedTrades.push({ tradeId: trade.id, symbol: trade.symbol, direction: trade.direction, pnl, reason, exitPrice: effectiveExitPrice });
       }
     } catch { continue; }

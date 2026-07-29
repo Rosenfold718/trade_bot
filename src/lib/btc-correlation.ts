@@ -36,7 +36,7 @@ let _cache: {
 };
 
 const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
-const LOOKBACK_CANDLES = 50; // 50 hourly candles ≈ 2 days
+const LOOKBACK_CANDLES = 200; // 200 hourly candles ≈ 8 days
 const CORRELATION_THRESHOLD = 0.5; // |r| > 0.5 = correlated
 
 // ============================================================
@@ -117,8 +117,8 @@ function analyzeBTCRegime(candles: CandleData[]): BTCRegime {
     ema50 = closes[i] * k50 + ema50 * (1 - k50);
   }
 
-  // EMA200 (use all available data)
-  const ema200Period = Math.min(20, Math.floor(n / 3));
+  // EMA200 — proper calculation with 200 candles
+  const ema200Period = Math.min(200, Math.floor(n / 2));
   let ema200 = closes.slice(0, ema200Period).reduce((s, v) => s + v, 0) / ema200Period;
   const k200 = 2 / (ema200Period + 1);
   for (let i = ema200Period; i < n; i++) {

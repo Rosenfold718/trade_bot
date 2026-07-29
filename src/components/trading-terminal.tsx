@@ -349,6 +349,9 @@ export default function TradingTerminal() {
               const closeData = await closeRes.json();
               if (closeData.success) {
                 addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Закрыта ${ct.symbol}: ${ct.reason} | PnL: ${ct.pnl >= 0 ? '+' : ''}$${ct.pnl.toFixed(2)}`, ct.pnl >= 0 ? 'trade' : 'error');
+                if (closeData.debtRepaid && closeData.debtRepaid > 0) {
+                  addLog(`💰 ${closeData.debtRepaid.toFixed(2)}$ из прибыли направлено на погашение долга`, 'trade');
+                }
               }
             } catch { /* silent */ }
           }
@@ -490,6 +493,9 @@ export default function TradingTerminal() {
       if (closeData.success) {
         const pnl = closeData.pnl ?? 0;
         addLog(`Ручное закрытие ${trade.symbol.replace('USDT', '')}: PnL ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`, pnl >= 0 ? 'trade' : 'error');
+        if (closeData.debtRepaid && closeData.debtRepaid > 0) {
+          addLog(`💰 ${closeData.debtRepaid.toFixed(2)}$ из прибыли направлено на погашение долга`, 'trade');
+        }
         // Refresh state
         try {
           const res = await fetch(`/api/trader?strategyId=${activeStrategy}`);
