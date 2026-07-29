@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic';
 import { useTerminalStore } from '@/lib/store';
 import { STRATEGIES, getStrategy } from '@/lib/strategies';
 import { cn } from '@/lib/utils';
-import { Menu, X, ChevronDown, BarChart3, RotateCcw, FileSpreadsheet, Settings, Loader2, TrendingUp, TrendingDown, Minus, Activity, Brain, BookOpen } from 'lucide-react';
+import { Menu, X, ChevronDown, BarChart3, RotateCcw, FileSpreadsheet, ShieldCheck, Loader2, TrendingUp, TrendingDown, Minus, Activity, Brain } from 'lucide-react';
 import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
   AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
@@ -20,10 +20,7 @@ import OrderBook from '@/components/order-book';
 import { DEFAULT_INDICATORS, type IndicatorConfig } from '@/components/chart';
 import type { CandleData, TraderState, Trade, IndicatorWeight } from '@/lib/types';
 import AdminPanel from '@/components/admin-panel';
-import ManualDialog from '@/components/manual-dialog';
-import BacktestDialog from '@/components/backtest-dialog';
 import { fetchSettings, invalidateSettingsCache } from '@/lib/settings-cache';
-import { resolveSymbol, findCoinPrice } from '@/lib/symbol-alias';
 
 const MomentumReport = dynamic(() => import('@/components/momentum-report'), {
   ssr: false,
@@ -119,25 +116,37 @@ export default function TradingTerminal() {
   const [reportStrategyId, setReportStrategyId] = useState<string | null>(null);
   const [showMobilePanel, setShowMobilePanel] = useState<string | null>(null);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
-  const [showManual, setShowManual] = useState(false);
-  const [showBacktest, setShowBacktest] = useState(false);
 
-  // Indicator state — all OFF by default (user can toggle manually)
-  // Clear old cached indicators on first load to apply new defaults
+  // Indicator state — derived from active strategy, with localStorage override
   const [indicators, setIndicators] = useState<Record<string, IndicatorConfig>>(() => {
     const base = mergeStrategyIndicators('momentum');
     if (typeof window !== 'undefined') {
       try {
-        // Clear stale cached indicator visibility (migration: all indicators now default OFF)
-        localStorage.removeItem('chart-indicators');
+        const saved = localStorage.getItem('chart-indicators');
+        if (saved) return { ...base, ...JSON.parse(saved) };
       } catch { /* ignore */ }
     }
     return base;
   });
 
-  // When strategy changes, reset indicators to strategy defaults (all OFF)
+  // When strategy changes, reset indicators to strategy defaults (keep localStorage overrides)
   useEffect(() => {
     const base = mergeStrategyIndicators(activeStrategy);
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('chart-indicators');
+        if (saved) {
+          const overrides: Record<string, Partial<IndicatorConfig>> = JSON.parse(saved);
+          // Only apply overrides for indicators that exist in the new strategy's config
+          for (const key of Object.keys(overrides)) {
+            if (base[key]) {
+              base[key] = { ...base[key], ...overrides[key] };
+            }
+          }
+          return setIndicators(base);
+        }
+      } catch { /* ignore */ }
+    }
     setIndicators(base);
   }, [activeStrategy]);
 
@@ -145,7 +154,9 @@ export default function TradingTerminal() {
     setIndicators(prev => ({ ...prev, [id]: { ...prev[id], visible: !prev[id].visible } }));
   }, []);
 
-  // No longer persist indicators to localStorage — always start OFF
+  useEffect(() => {
+    try { localStorage.setItem('chart-indicators', JSON.stringify(indicators)); } catch { /* ignore */ }
+  }, [indicators]);
 
   const initDone = useRef(false);
   const [initFailed, setInitFailed] = useState(false);
@@ -228,35 +239,7 @@ export default function TradingTerminal() {
   const fetchCandles = useCallback(async (symbol: string, tf: Timeframe) => {
     setChartLoading(true);
     try {
-      // Resolve symbol for Binance API (e.g., MATICUSDT → POLUSDT for orderbook, but klines still work for MATIC)
-      // Note: MATICUSDT klines still work on Binance, so we use the original symbol for chart data
-      // to preserve price continuity with the trade's entry price.
       const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${tf.interval}&limit=${tf.limit}`);
-      if (!res.ok) {
-        // If the symbol fails (e.g., delisted), try the resolved alias
-        const resolved = resolveSymbol(symbol);
-        if (resolved !== symbol) {
-          const retryRes = await fetch(`https://api.binance.com/api/v3/klines?symbol=${resolved}&interval=${tf.interval}&limit=${tf.limit}`);
-          if (retryRes.ok) {
-            const raw = await retryRes.json();
-            if (Array.isArray(raw) && raw.length > 0) {
-              const c: CandleData[] = raw.map((k: (string | number)[]) => ({
-                time: Math.floor(Number(k[0]) / 1000),
-                open: parseFloat(String(k[1])),
-                high: parseFloat(String(k[2])),
-                low: parseFloat(String(k[3])),
-                close: parseFloat(String(k[4])),
-                volume: parseFloat(String(k[5])),
-              }));
-              setCandles(c);
-              setChartLoading(false);
-              return;
-            }
-          }
-        }
-        setChartLoading(false);
-        return;
-      }
       const raw = await res.json();
       if (Array.isArray(raw) && raw.length > 0) {
         const c: CandleData[] = raw.map((k: (string | number)[]) => ({
@@ -268,14 +251,6 @@ export default function TradingTerminal() {
           volume: parseFloat(String(k[5])),
         }));
         setCandles(c);
-        // Seed coin price from last candle into store
-        const lastClose = c[c.length - 1]?.close;
-        if (lastClose && lastClose > 0) {
-          const existing = useTerminalStore.getState().coins.find(cc => cc.symbol === symbol);
-          if (!existing) {
-            useTerminalStore.getState().updateCoinPrice({ s: symbol, c: String(lastClose), P: '0', v: '0', h: '0', l: '0', o: '0' });
-          }
-        }
       }
     } catch (err) {
       console.error('Klines error:', err);
@@ -289,285 +264,246 @@ export default function TradingTerminal() {
     fetchCandles(selectedSymbol, timeframe);
   }, [selectedSymbol, timeframe, fetchCandles]);
 
-  // Shared fetch function for strategy state
-  const fetchStrategyState = useCallback(async (strategyId: string) => {
-    try {
-      const res = await fetch(`/api/trader?strategyId=${strategyId}`);
-      const data = await res.json();
-      if (data.state) setStrategyTraderState(strategyId, data.state as TraderState);
-      if (data.openTrades) setStrategyOpenTrades(strategyId, data.openTrades as Trade[]);
-      if (data.recentTrades) setStrategyRecentTrades(strategyId, data.recentTrades as Trade[]);
-      if (data.totalClosedPnl !== undefined) setStrategyTotalClosedPnl(strategyId, data.totalClosedPnl as number);
-      if (data.closedTradeCount !== undefined) setStrategyClosedTradeCount(strategyId, data.closedTradeCount as number);
-    } catch { /* silent */ }
-  }, [setStrategyTraderState, setStrategyOpenTrades, setStrategyRecentTrades, setStrategyTotalClosedPnl, setStrategyClosedTradeCount]);
-
-  // Immediate fetch when strategy changes
-  useEffect(() => {
-    fetchStrategyState(activeStrategy);
-  }, [activeStrategy, fetchStrategyState]);
-
   // Poll active strategy state
   useEffect(() => {
-    const interval = setInterval(() => {
-      fetchStrategyState(activeStrategy);
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/trader?strategyId=${activeStrategy}`);
+        const data = await res.json();
+        if (data.state) setTraderState(data.state as TraderState);
+        if (data.openTrades) setOpenTrades(data.openTrades as Trade[]);
+        if (data.recentTrades) setRecentTrades(data.recentTrades as Trade[]);
+        if (data.totalClosedPnl !== undefined) setStrategyTotalClosedPnl(activeStrategy, data.totalClosedPnl as number);
+        if (data.closedTradeCount !== undefined) setStrategyClosedTradeCount(activeStrategy, data.closedTradeCount as number);
+      } catch { /* silent */ }
     }, 15000);
     return () => clearInterval(interval);
-  }, [activeStrategy, fetchStrategyState]);
+  }, [setTraderState, setOpenTrades, setRecentTrades, setStrategyTotalClosedPnl, setStrategyClosedTradeCount, activeStrategy]);
 
-  // Auto-trading loop — runs each strategy at its own interval
-  // Momentum: 5min, Scalper: 1min (disabled), Position Alpha: 30min
-  // Each strategy has its own cooldown map and timer.
+  // Auto-trading loop — runs for ALL strategies in parallel
+  // NOTE: autoTrading and addLog are the ONLY reactive deps — all state is read fresh via refs/callbacks
   useEffect(() => {
     if (!autoTrading) return;
     let cancelled = false;
 
-    // Persistent cooldown maps (survive across cycles)
-    const cooldownMaps: Record<string, Map<string, number>> = {};
-    for (const s of STRATEGIES) {
-      cooldownMaps[s.id] = new Map();
-    }
-
-    // Throttle idle diagnostic logs: max once per 3 minutes per strategy
-    const lastIdleLog = new Map<string, number>();
-
-    const runStrategyCycle = async (strategyId: string) => {
+    const runCycle = async () => {
       if (cancelled) return;
       try {
         const { runAutoTradeCycle } = await import('@/lib/client-trader');
-        const strategy = getStrategy(strategyId);
-        if (!strategy) return;
 
-        // ── ENABLED CHECK: skip disabled strategies entirely ──
-        if ('enabled' in strategy && !(strategy as any).enabled) return;
-
+        // Load settings once per cycle for all strategies (non-blocking fallback on failure)
         let sysSettings: Record<string, string> = {};
         try {
           sysSettings = await fetchSettings();
-        } catch { /* use defaults */ }
-
-        const currentStates = useTerminalStore.getState().strategyStates;
-        const ss = currentStates[strategyId];
-        if (!ss) return;
-
-        const sOpenTrades = ss.openTrades ?? [];
-        const sTraderState = ss.traderState;
-        const balance = sTraderState?.balance ?? 100;
-        const recentTrades = ss.recentTrades ?? [];
-
-        // Calculate 24h PnL
-        const now = Date.now();
-        const dayMs = 24 * 60 * 60 * 1000;
-        const recentPnl24h = recentTrades
-          .filter(t => t.closed_at && (now - new Date(t.closed_at).getTime()) < dayMs)
-          .reduce((sum, t) => sum + (t.pnl ?? 0), 0);
-
-        // Cross-strategy symbol lock
-        const globalLockedSymbols = new Set<string>();
-        for (const s of STRATEGIES) {
-          const sState = currentStates[s.id];
-          for (const t of (sState?.openTrades ?? [])) globalLockedSymbols.add(t.symbol);
+        } catch (err) {
+          console.warn('[AutoTrade] Settings fetch failed, using defaults:', err);
         }
 
-        const cooldownSymbols = cooldownMaps[strategyId];
-        const drawdownLookback = (strategy as any).drawdownLookback || 5;
-        const recentForDrawdown = recentTrades.slice(0, drawdownLookback);
+        // Read fresh state for each strategy (avoids stale closure)
+        const currentStates = useTerminalStore.getState().strategyStates;
 
-        const result = await runAutoTradeCycle(
-          sOpenTrades, strategyId, timeframe.interval, balance, 0,
-          recentPnl24h, sysSettings, globalLockedSymbols,
-          cooldownSymbols, recentForDrawdown,
-        );
+        // ── Cross-strategy symbol lock ──
+        // Collect ALL open symbols across ALL strategies so no two strategies
+        // open the same symbol in the same cycle (prevents 3-4 identical losing trades)
+        const globalLockedSymbols = new Set<string>();
+        for (const s of STRATEGIES) {
+          const ss = currentStates[s.id];
+          for (const t of (ss?.openTrades ?? [])) globalLockedSymbols.add(t.symbol);
+        }
+
+        // Run cycles SEQUENTIALLY (not parallel) so each strategy sees symbols
+        // opened by the previous strategy in this same cycle
+        const results: Array<{ strategyId: string; result: any }> = [];
+        for (const s of STRATEGIES) {
+          if (cancelled) break;
+          const ss = currentStates[s.id];
+          const sOpenTrades = ss?.openTrades ?? [];
+          const sTraderState = ss?.traderState;
+          const balance = sTraderState?.balance ?? 100;
+
+          // Calculate actual PnL from trades closed in the last 24h (enables daily loss limit)
+          const now = Date.now();
+          const dayMs = 24 * 60 * 60 * 1000;
+          const recentPnl24h = (ss?.recentTrades ?? [])
+            .filter(t => t.closed_at && (now - new Date(t.closed_at).getTime()) < dayMs)
+            .reduce((sum, t) => sum + (t.pnl ?? 0), 0);
+
+          try {
+            const result = await runAutoTradeCycle(sOpenTrades, s.id, timeframe.interval, balance, 0, recentPnl24h, sysSettings, globalLockedSymbols);
+            // If this strategy opened a new trade, lock that symbol for subsequent strategies
+            if (result.newTrades && result.newTrades.length > 0) {
+              for (const nt of result.newTrades) globalLockedSymbols.add(nt.symbol);
+            }
+            results.push({ strategyId: s.id, result });
+          } catch (err) {
+            console.error(`[AutoTrade][${s.id}] Error:`, err);
+            results.push({ strategyId: s.id, result: { message: `Error: ${err instanceof Error ? err.message : 'unknown'}`, action: 'idle' as const, closedTrades: [], trailingUpdates: [], tpRepairs: [] } });
+          }
+        }
 
         if (cancelled) return;
 
-        const r = result as {
-          action: string;
-          message: string;
-          closedTrades: Array<{ tradeId: string; symbol: string; direction: string; pnl: number; reason: string; exitPrice: number }>;
-          trailingUpdates: Array<{ tradeId: string; newStopLoss: number; reason: string }>;
-          tpRepairs: Array<{ tradeId: string; newTakeProfit: number; reason: string }>;
-          partialCloses?: Array<{ tradeId: string; symbol: string; closedAmount: number; pnl: number; reason: string; exitPrice: number; newRemainingAmount: number; newPartialState: string; newStopLoss?: number }>;
-          newTrades?: Array<{ symbol: string; direction: string; price: number; leverage: number; stopLoss: number; takeProfit: number; amount: number; strategyId: string; label: string; pattern?: { name?: string; direction?: string; reliability?: number; strength?: number; zone_high?: number; zone_low?: number; start_time?: number; end_time?: number } | null }>;
-        };
+        for (const { strategyId, result } of results) {
+          const r = result as {
+            action: string;
+            message: string;
+            closedTrades: Array<{ tradeId: string; symbol: string; direction: string; pnl: number; reason: string; exitPrice: number }>;
+            trailingUpdates: Array<{ tradeId: string; newStopLoss: number; reason: string }>;
+            tpRepairs: Array<{ tradeId: string; newTakeProfit: number; reason: string }>;
+            newTrades?: Array<{ symbol: string; direction: string; price: number; leverage: number; stopLoss: number; takeProfit: number; amount: number; strategyId: string; label: string }>;
+          };
 
-        if (r.message) {
-          if (r.action === 'new-trade') {
-            addLog(`[${strategy.name}] ${r.message}`, 'trade');
-          } else if (r.action === 'monitor') {
-            addLog(`[${strategy.name}] ${r.message}`, 'info');
-          } else if (r.action === 'idle') {
-            // Log idle diagnostics, but throttled (every 3 min per strategy)
-            const now = Date.now();
-            const lastLog = lastIdleLog.get(strategyId) ?? 0;
-            if (now - lastLog > 180_000) {
-              lastIdleLog.set(strategyId, now);
-              addLog(`[${strategy.name}] ${r.message}`, 'info');
+          console.log(`[AutoTrade][${strategyId}]`, r.message);
+          addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] ${r.message}`, r.action === 'new-trade' ? 'trade' : 'info');
+
+          // Process closed trades — aggregate into one log entry
+          if (r.closedTrades.length > 0) {
+            const totalPnl = r.closedTrades.reduce((sum, ct) => sum + ct.pnl, 0);
+            const winners = r.closedTrades.filter(ct => ct.pnl >= 0).length;
+            const losers = r.closedTrades.filter(ct => ct.pnl < 0).length;
+            const parts: string[] = [];
+            if (winners > 0) parts.push(`${winners} прибыльн.`);
+            if (losers > 0) parts.push(`${losers} убыточн.`);
+            addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Закрыто ${r.closedTrades.length} сделок (${parts.join(', ')}): PnL ${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`, totalPnl >= 0 ? 'trade' : 'error');
+            for (const ct of r.closedTrades) {
+              try {
+                const closeRes = await fetch('/api/trader', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ action: 'close-trade', tradeId: ct.tradeId, exitPrice: ct.exitPrice, strategyId }),
+                });
+                const closeData = await closeRes.json();
+                if (closeData.success && closeData.debtRepaid && closeData.debtRepaid > 0) {
+                  addLog(`💰 ${closeData.debtRepaid.toFixed(2)}$ из прибыли направлено на погашение долга`, 'trade');
+                }
+              } catch { /* silent */ }
             }
           }
-          console.log(`[AutoTrade][${strategyId}]`, r.message);
-        }
 
-        // Process closed trades
-        if (r.closedTrades.length > 0) {
-          const totalPnl = r.closedTrades.reduce((sum, ct) => sum + ct.pnl, 0);
-          const winners = r.closedTrades.filter(ct => ct.pnl >= 0).length;
-          const losers = r.closedTrades.filter(ct => ct.pnl < 0).length;
-          const parts: string[] = [];
-          if (winners > 0) parts.push(`${winners} прибыльн.`);
-          if (losers > 0) parts.push(`${losers} убыточн.`);
-          addLog(`[${strategy.name}] Закрыто ${r.closedTrades.length} (${parts.join(', ')}): ${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`, totalPnl >= 0 ? 'trade' : 'error');
-          for (const ct of r.closedTrades) {
+          // Apply trailing stop updates
+          for (const tu of r.trailingUpdates ?? []) {
             try {
-              const closeRes = await fetch('/api/trader', {
+              await fetch('/api/trader', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'close-trade', tradeId: ct.tradeId, exitPrice: ct.exitPrice, strategyId }),
+                body: JSON.stringify({ action: 'update-sl', tradeId: tu.tradeId, newStopLoss: tu.newStopLoss, strategyId }),
               });
-              const closeData = await closeRes.json();
-              if (closeData.success && closeData.debtRepaid && closeData.debtRepaid > 0) {
-                addLog(`💰 ${closeData.debtRepaid.toFixed(2)}$ из прибыли на погашение долга`, 'trade');
-              }
+              addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Trailing SL: ${tu.reason}`, 'info');
             } catch { /* silent */ }
           }
-        }
 
-        // Apply trailing stop updates
-        for (const tu of r.trailingUpdates ?? []) {
-          try {
-            await fetch('/api/trader', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: 'update-sl', tradeId: tu.tradeId, newStopLoss: tu.newStopLoss, strategyId }),
-            });
-            addLog(`[${strategy.name}] Trailing: ${tu.reason}`, 'info');
-          } catch { /* silent */ }
-        }
-
-        // Apply TP repairs
-        for (const tpr of r.tpRepairs ?? []) {
-          try {
-            await fetch('/api/trader', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: 'update-tp', tradeId: tpr.tradeId, newTakeProfit: tpr.newTakeProfit, strategyId }),
-            });
-            addLog(`[${strategy.name}] TP ремонт: ${tpr.reason}`, 'info');
-          } catch { /* silent */ }
-        }
-
-        // Collect IDs of fully closed trades — skip partial close for these
-        const fullyClosedIds = new Set(r.closedTrades.map(ct => ct.tradeId));
-
-        // Process partial TP closes (TP1, TP2)
-        for (const pc of (r.partialCloses ?? [])) {
-          if (fullyClosedIds.has(pc.tradeId)) continue; // trade was fully closed, skip partial
-          try {
-            const pcRes = await fetch('/api/trader', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                action: 'partial-close-trade', tradeId: pc.tradeId, strategyId,
-                closeAmount: pc.closedAmount, pnl: pc.pnl,
-                newRemainingAmount: pc.newRemainingAmount, newPartialState: pc.newPartialState,
-                newStopLoss: pc.newStopLoss,
-              }),
-            });
-            const pcData = await pcRes.json();
-            if (pcData.success) {
-              addLog(`[${strategy.name}] ${pc.symbol.replace('USDT', '')} ${pc.reason}: +$${pc.pnl.toFixed(2)} (осталось $${pc.newRemainingAmount.toFixed(2)})`, 'trade');
-            }
-          } catch { /* silent */ }
-        }
-
-        // Open new trades with per-strategy staleness check
-        const stalenessMaxPct = (strategy as any).entryStalenessMaxPct ?? 0.005;
-        for (const nt of (r.newTrades ?? [])) {
-          try {
-            // Use WebSocket price from coins store (live) or fall back to trade price
-            const wsPrice = useTerminalStore.getState().coins.find(c => c.symbol === nt.symbol)?.price;
-            const livePrice = (wsPrice && wsPrice > 0) ? wsPrice : nt.price;
-
-            const priceDrift = Math.abs(livePrice - nt.price) / nt.price;
-            if (priceDrift > stalenessMaxPct) {
-              addLog(`[${strategy.name}] Пропуск ${nt.symbol.replace('USDT', '')}: цена ушла ${(priceDrift * 100).toFixed(2)}% (лимит ${(stalenessMaxPct * 100).toFixed(1)}%)`, 'info');
-              continue;
-            }
-
-            const slDistPct = nt.price > 0 ? Math.abs(nt.price - nt.stopLoss) / nt.price : 0;
-            const tpDistPct = nt.price > 0 ? Math.abs(nt.takeProfit - nt.price) / nt.price : 0;
-            const isLong = nt.direction === 'long';
-            const adjustedSL = isLong ? livePrice * (1 - slDistPct) : livePrice * (1 + slDistPct);
-            const adjustedTP = isLong ? livePrice * (1 + tpDistPct) : livePrice * (1 - tpDistPct);
-
-            const openRes = await fetch('/api/trader', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                action: 'open-trade', symbol: nt.symbol, entryPrice: livePrice, amount: nt.amount,
-                leverage: nt.leverage, direction: nt.direction, stopLoss: adjustedSL, takeProfit: adjustedTP, strategyId,
-                ...(nt.pattern ? { pattern: nt.pattern } : {}),
-              }),
-            });
-            const openData = await openRes.json();
-            if (openData.success) {
-              addLog(`[${strategy.name}] Открыта ${nt.direction.toUpperCase()} ${nt.symbol.replace('USDT', '')} @ $${livePrice.toFixed(2)} | ${nt.leverage}x | $${nt.amount.toFixed(2)}`, 'trade');
-            } else {
-              addLog(`[${strategy.name}] Ошибка: ${openData.error || 'unknown'}`, 'error');
-            }
-          } catch (err) {
-            addLog(`[${strategy.name}] Ошибка сети: ${err instanceof Error ? err.message : 'unknown'}`, 'error');
+          // Apply TP repairs
+          for (const tpr of r.tpRepairs ?? []) {
+            try {
+              await fetch('/api/trader', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'update-tp', tradeId: tpr.tradeId, newTakeProfit: tpr.newTakeProfit, strategyId }),
+              });
+              addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] TP ремонт: ${tpr.reason}`, 'info');
+            } catch { /* silent */ }
           }
-        }
 
-        // Refresh strategy state
-        try {
-          const res = await fetch(`/api/trader?strategyId=${strategyId}`);
-          const data = await res.json();
-          if (data.state) setStrategyTraderState(strategyId, data.state as TraderState);
-          if (data.openTrades) setStrategyOpenTrades(strategyId, data.openTrades as Trade[]);
-          if (data.recentTrades) setStrategyRecentTrades(strategyId, data.recentTrades as Trade[]);
-          if (data.totalClosedPnl !== undefined) setStrategyTotalClosedPnl(strategyId, data.totalClosedPnl);
-          if (data.closedTradeCount !== undefined) setStrategyClosedTradeCount(strategyId, data.closedTradeCount);
-        } catch { /* silent */ }
+          // Open new trades (may be multiple: secure + runner)
+          // ── Entry price staleness check ──
+          // Re-fetch the live price before opening. If price has moved more than
+          // 0.5% from the signal price, SKIP the trade — the signal is stale and
+          // entering now means chasing price / buying the top / selling the bottom.
+          for (const nt of (r.newTrades ?? [])) {
+            try {
+              let livePrice = nt.price;
+              try {
+                const priceRes = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${nt.symbol}`);
+                if (priceRes.ok) {
+                  const priceData = await priceRes.json();
+                  livePrice = parseFloat(priceData.price);
+                }
+              } catch { /* fallback to signal price */ }
+
+              const priceDrift = Math.abs(livePrice - nt.price) / nt.price;
+              if (priceDrift > 0.005) {
+                addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Пропуск ${nt.symbol.replace('USDT', '')}: цена ушла ${priceDrift > 0 ? '+' : '-'}${(priceDrift * 100).toFixed(2)}% от сигнала — вход отменён`, 'info');
+                continue; // skip this trade, signal is stale
+              }
+
+              // Recalculate SL/TP relative to live price (preserve the % distance from signal)
+              const slDistPct = nt.price > 0 ? Math.abs(nt.price - nt.stopLoss) / nt.price : 0;
+              const tpDistPct = nt.price > 0 ? Math.abs(nt.takeProfit - nt.price) / nt.price : 0;
+              const isLong = nt.direction === 'long';
+              const adjustedSL = isLong ? livePrice * (1 - slDistPct) : livePrice * (1 + slDistPct);
+              const adjustedTP = isLong ? livePrice * (1 + tpDistPct) : livePrice * (1 - tpDistPct);
+
+              const openRes = await fetch('/api/trader', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'open-trade',
+                  symbol: nt.symbol, entryPrice: livePrice, amount: nt.amount,
+                  leverage: nt.leverage, direction: nt.direction,
+                  stopLoss: adjustedSL, takeProfit: adjustedTP,
+                  strategyId,
+                }),
+              });
+              const openData = await openRes.json();
+              if (openData.success) {
+                addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Открыта ${nt.direction.toUpperCase()} ${nt.symbol.replace('USDT', '')} @ $${livePrice.toFixed(2)} | ${nt.leverage}x | $${nt.amount.toFixed(2)}`, 'trade');
+              } else {
+                addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Ошибка открытия: ${openData.error || 'unknown'}`, 'error');
+              }
+            } catch (err) {
+              addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Ошибка сети: ${err instanceof Error ? err.message : 'unknown'}`, 'error');
+            }
+          }
+
+          // Refresh this strategy's state
+          try {
+            const res = await fetch(`/api/trader?strategyId=${strategyId}`);
+            const data = await res.json();
+            if (data.state) setStrategyTraderState(strategyId, data.state as TraderState);
+            if (data.openTrades) setStrategyOpenTrades(strategyId, data.openTrades as Trade[]);
+            if (data.recentTrades) setStrategyRecentTrades(strategyId, data.recentTrades as Trade[]);
+            if (data.totalClosedPnl !== undefined) setStrategyTotalClosedPnl(strategyId, data.totalClosedPnl);
+            if (data.closedTradeCount !== undefined) setStrategyClosedTradeCount(strategyId, data.closedTradeCount);
+          } catch { /* silent */ }
+        }
       } catch (err) {
-        console.error(`[AutoTrade][${strategyId}] Cycle error:`, err);
-        addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Ошибка цикла: ${err instanceof Error ? err.message : 'unknown'}`, 'error');
+        console.error('[AutoTrade] Cycle error:', err);
+        addLog(`Ошибка цикла: ${err instanceof Error ? err.message : 'unknown'}`, 'error');
       }
     };
 
-    const enabledStrategies = STRATEGIES.filter(s => (s as any).enabled !== false);
-    addLog(`Авто-трейдинг запущен (${enabledStrategies.map(s => s.name).join(', ')})`, 'trade');
-
-    // Initial run for all enabled strategies
-    for (const s of enabledStrategies) {
-      runStrategyCycle(s.id);
-    }
-
-    // Per-strategy intervals
-    const intervals: ReturnType<typeof setInterval>[] = [];
-    for (const s of STRATEGIES) {
-      const cycleMs = (s as any).cycleIntervalMs || 30000;
-      if ((s as any).enabled === false) continue; // don't set timer for disabled
-      const interval = setInterval(() => runStrategyCycle(s.id), cycleMs);
-      intervals.push(interval);
-      console.log(`[AutoTrade] ${s.name}: cycle every ${Math.round(cycleMs / 1000)}s`);
-    }
-
+    addLog('Авто-трейдинг запущен (3 стратегии)', 'trade');
+    runCycle();
+    const interval = setInterval(runCycle, 30000);
     return () => {
       cancelled = true;
-      for (const interval of intervals) clearInterval(interval);
+      clearInterval(interval);
       addLog('Авто-трейдинг остановлен', 'info');
     };
-  }, [autoTrading, addLog, setStrategyTraderState, setStrategyOpenTrades, setStrategyRecentTrades, setStrategyTotalClosedPnl, setStrategyClosedTradeCount, timeframe]);
+  }, [autoTrading, addLog]);
 
   // Manual close trade handler
   const manualCloseTrade = useCallback(async (trade: Trade) => {
     try {
-      // Use WebSocket price from coins store
-      const coinPrice = useTerminalStore.getState().coins.find(c => c.symbol === trade.symbol)?.price;
+      // Try Binance price first, fall back to coin list price
       let exitPrice = 0;
-      if (coinPrice && coinPrice > 0) {
-        exitPrice = coinPrice;
-      } else {
-        addLog(`Не удалось получить цену для ${trade.symbol.replace('USDT', '')}`, 'error');
-        return;
+      try {
+        // Use server-side proxy to avoid CORS/network issues
+        const priceRes = await fetch(`/api/price?symbol=${trade.symbol}`);
+        if (priceRes.ok) {
+          const priceData = await priceRes.json();
+          exitPrice = priceData.price;
+        }
+      } catch { /* Proxy failed, try coin list */ }
+
+      if (!exitPrice || exitPrice <= 0) {
+        const coinPrice = useTerminalStore.getState().coins.find(c => c.symbol === trade.symbol)?.price;
+        if (coinPrice && coinPrice > 0) {
+          exitPrice = coinPrice;
+        } else {
+          addLog(`Не удалось получить цену для ${trade.symbol.replace('USDT', '')}`, 'error');
+          return;
+        }
       }
 
       console.log(`[ManualClose] Closing ${trade.symbol} @ $${exitPrice}, entry=$${trade.entry_price}`);
@@ -655,7 +591,7 @@ export default function TradingTerminal() {
                     {totalClosedPnl >= 0 ? '+' : ''}${totalClosedPnl.toFixed(2)}
                   </span>
                   <span className={cn('text-[10px]', totalClosedPnl >= 0 ? 'text-green-400/60' : 'text-red-400/60')}>
-                    ({totalClosedPnl >= 0 ? '+' : ''}{(totalClosedPnl / (traderState.initial_balance || 100) * 100).toFixed(1)}%)
+                    ({totalClosedPnl >= 0 ? '+' : ''}{totalClosedPnl.toFixed(1)}%)
                   </span>
                 </div>
               )}
@@ -675,40 +611,16 @@ export default function TradingTerminal() {
             <span className="text-[10px] font-medium tracking-wide hidden sm:inline">ОТЧЁТ</span>
           </button>
           <button
-            onClick={() => setShowManual(true)}
-            className={cn(
-              'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all duration-200',
-              'bg-sky-500/10 border-sky-500/20 text-sky-400/80',
-              'hover:bg-sky-500/20 hover:border-sky-500/30',
-            )}
-            title="Справка"
-          >
-            <BookOpen className="w-3.5 h-3.5" />
-            <span className="text-[10px] font-medium tracking-wide hidden sm:inline">СПРАВКА</span>
-          </button>
-          <button
-            onClick={() => setShowBacktest(true)}
-            className={cn(
-              'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all duration-200',
-              'bg-rose-500/10 border-rose-500/20 text-rose-400/80',
-              'hover:bg-rose-500/20 hover:border-rose-500/30',
-            )}
-            title="Бэктест 100 аккаунтов"
-          >
-            <BarChart3 className="w-3.5 h-3.5" />
-            <span className="text-[10px] font-medium tracking-wide hidden lg:inline">БЭКТЕСТ</span>
-          </button>
-          <button
             onClick={() => setShowAdminPanel(true)}
             className={cn(
               'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all duration-200',
               'bg-emerald-500/10 border-emerald-500/20 text-emerald-400/80',
               'hover:bg-emerald-500/20 hover:border-emerald-500/30',
             )}
-            title="Настройки"
+            title="Админ-панель"
           >
-            <Settings className="w-3.5 h-3.5" />
-            <span className="text-[10px] font-medium tracking-wide hidden sm:inline">НАСТРОЙКИ</span>
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span className="text-[10px] font-medium tracking-wide hidden sm:inline">АДМИН</span>
           </button>
         </div>
       </header>
@@ -834,7 +746,7 @@ export default function TradingTerminal() {
             </div>
 
             {/* Order Book — desktop only */}
-            <div className="w-56 xl:w-64 2xl:w-72 shrink-0 border-l border-white/[0.06]">
+            <div className="w-56 xl:w-64 2xl:w-72 shrink-0 border-l border-white/[0.06] hidden lg:block">
               <OrderBook key={selectedSymbol} />
             </div>
           </div>
@@ -915,14 +827,8 @@ export default function TradingTerminal() {
         {/* Strategy Report */}
         {showReport && <MomentumReport onClose={() => { setShowReport(false); setReportStrategyId(null); }} strategyId={reportStrategyId ?? activeStrategy} />}
 
-        {/* Manual Dialog */}
-        <ManualDialog open={showManual} onClose={() => setShowManual(false)} />
-
         {/* Admin Panel */}
         <AdminPanel open={showAdminPanel} onClose={() => setShowAdminPanel(false)} />
-
-        {/* Backtest Dialog */}
-        <BacktestDialog open={showBacktest} onClose={() => setShowBacktest(false)} />
       </div>
     </div>
   );
@@ -1000,117 +906,28 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
 }) {
   const [closingTrade, setClosingTrade] = useState<Trade | null>(null);
   const [closingLoading, setClosingLoading] = useState(false);
+  const [expandedView, setExpandedView] = useState(false);
 
-  const allTrades = useMemo(
-    () => [...openTrades, ...recentTrades].slice(0, 30),
-    [openTrades, recentTrades],
-  );
+  // Calculate live PnL for a single trade
+  const calcPnl = (trade: Trade): number | null => {
+    if (trade.status !== 'open') return trade.pnl ?? null;
+    const livePrice = coins.find(c => c.symbol === trade.symbol)?.price;
+    if (!livePrice || livePrice <= 0) return null;
+    const isLong = trade.direction === 'long';
+    const priceChange = isLong
+      ? (livePrice - trade.entry_price) / trade.entry_price
+      : (trade.entry_price - livePrice) / trade.entry_price;
+    return trade.amount * priceChange * trade.leverage;
+  };
 
-  // Helper: get live price from WebSocket coins store, with REST fallback
-  const fallbackPricesRef = useRef<Record<string, number>>({});
-  const pendingFetchesRef = useRef<Record<string, Promise<number | undefined>>>({});
-
-  const getLivePrice = useCallback((symbol: string): number | undefined => {
-    // 1. Check WS data first (with alias resolution)
-    const wsPrice = findCoinPrice(coins, symbol);
-    if (wsPrice && wsPrice > 0) return wsPrice;
-    // 2. Check fallback cache for exact symbol
-    const cached = fallbackPricesRef.current[symbol];
-    if (cached && cached > 0) return cached;
-    // 3. For old aliased symbols (e.g., MATICUSDT), check cache for original symbol
-    //    This ensures price scale matches the entry_price
-    const resolved = resolveSymbol(symbol);
-    if (resolved !== symbol) {
-      const resolvedCached = fallbackPricesRef.current[resolved];
-      if (resolvedCached && resolvedCached > 0) {
-        // Only use resolved price if the trade's entry_price is in the new scale
-        // Otherwise, the old symbol's price is needed for correct PnL
-        return undefined; // Force REST fetch of original symbol
-      }
-    }
-    return undefined;
-  }, [coins]);
-
-  // Fetch missing prices from Binance REST for open trades
-  useEffect(() => {
-    const openSymbols = [...new Set(openTrades.filter(t => t.status === 'open').map(t => t.symbol))];
-    let cancelled = false;
-    for (const sym of openSymbols) {
-      if (getLivePrice(sym)) continue; // already have price
-      if (pendingFetchesRef.current[sym]) continue; // already fetching
-      const p = fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}`)
-        .then(r => r.json())
-        .then(d => {
-          if (cancelled) return undefined;
-          const price = parseFloat(d.price);
-          if (price > 0) {
-            fallbackPricesRef.current[sym] = price;
-            // Also push into the store so it shows in the coin list
-            // Use resolved symbol to avoid polluting with old names (e.g., MATICUSDT)
-            const resolvedSym = resolveSymbol(sym);
-            const existing = useTerminalStore.getState().coins.find(c => c.symbol === resolvedSym);
-            if (!existing) {
-              useTerminalStore.getState().updateCoinPrice({
-                s: resolvedSym, c: String(price), P: '0', v: '0', h: String(price), l: String(price), o: String(price),
-              });
-            }
-          }
-          return price > 0 ? price : undefined;
-        })
-        .catch(() => undefined)
-        .finally(() => { delete pendingFetchesRef.current[sym]; });
-      pendingFetchesRef.current[sym] = p;
-    }
-    return () => { cancelled = true; };
-  }, [openTrades, getLivePrice]);
-
-  // Periodically refresh fallback prices every 30s
-  useEffect(() => {
-    const interval = setInterval(() => {
-      for (const sym of Object.keys(fallbackPricesRef.current)) {
-        // If WS now has this price, remove from fallback
-        const wsPrice = useTerminalStore.getState().coins.find(c => c.symbol === sym)?.price;
-        if (wsPrice && wsPrice > 0) {
-          delete fallbackPricesRef.current[sym];
-          continue;
-        }
-        // Refresh from REST and update store
-        fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}`)
-          .then(r => r.json())
-          .then(d => {
-            const price = parseFloat(d.price);
-            if (price > 0) {
-              fallbackPricesRef.current[sym] = price;
-              useTerminalStore.getState().updateCoinPrice({
-                s: sym, c: String(price), P: '0', v: '0', h: String(price), l: String(price), o: String(price),
-              });
-            }
-          })
-          .catch(() => {});
-      }
-    }, 30000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Calculate total unrealized PnL for open trades
   const totalOpenPnl = useMemo(() => {
     let total = 0;
     for (const trade of openTrades) {
-      if (trade.status !== 'open') continue;
-      const livePrice = getLivePrice(trade.symbol);
-      if (!livePrice || livePrice <= 0) continue;
-      const isLong = trade.direction === 'long';
-      const priceChange = isLong
-        ? (livePrice - trade.entry_price) / trade.entry_price
-        : (trade.entry_price - livePrice) / trade.entry_price;
-      const effectiveAmount = trade.remaining_amount ?? trade.amount;
-      const lev = trade.leverage || 1;
-      total += effectiveAmount * priceChange * lev - effectiveAmount * 0.001 - (effectiveAmount / lev) * 0.001;
+      const pnl = calcPnl(trade);
+      if (pnl != null) total += pnl;
     }
     return total;
-  }, [openTrades, getLivePrice]);
-
-  // Total realized PnL now comes from DB (totalClosedPnl prop) — no more computing from recentTrades
+  }, [openTrades, coins]);
 
   const handleCloseTrade = (trade: Trade) => {
     setClosingTrade(trade);
@@ -1127,84 +944,33 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
     }
   };
 
-  // Calculate PnL preview for closing trade
   const closingPnl = useMemo(() => {
     if (!closingTrade) return null;
-    const livePrice = getLivePrice(closingTrade.symbol);
-    if (!livePrice || livePrice <= 0) return null;
-    const isLong = closingTrade.direction === 'long';
-    const priceChange = isLong
-      ? (livePrice - closingTrade.entry_price) / closingTrade.entry_price
-      : (closingTrade.entry_price - livePrice) / closingTrade.entry_price;
-    return (closingTrade.remaining_amount ?? closingTrade.amount) * priceChange * closingTrade.leverage;
-  }, [closingTrade, getLivePrice]);
+    return calcPnl(closingTrade);
+  }, [closingTrade, coins]);
 
-  if (allTrades.length === 0 && openTrades.length === 0) {
-    return (
-      <>
-        <AlertDialog open={!!closingTrade} onOpenChange={(open) => { if (!open) setClosingTrade(null); }}>
-          <AlertDialogContent className="bg-[#0d0d14] border-white/10 max-w-sm">
-            <AlertDialogHeader>
-              <AlertDialogTitle className="text-white text-base flex items-center gap-2">
-                <X className="w-4 h-4 text-red-400" />
-                Закрыть сделку?
-              </AlertDialogTitle>
-              <AlertDialogDescription className="text-white/50 text-sm space-y-2">
-                {closingTrade && (
-                  <div className="bg-white/[0.03] rounded-lg p-3 space-y-1.5 text-xs font-mono">
-                    <div className="flex justify-between">
-                      <span className="text-white/40">Монета</span>
-                      <span className="text-white font-semibold">{closingTrade.symbol.replace('USDT', '')}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-white/40">Направление</span>
-                      <span className={closingTrade.direction === 'long' ? 'text-green-400' : 'text-red-400'}>{closingTrade.direction === 'long' ? 'LONG ↑' : 'SHORT ↓'}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-white/40">Цена входа</span>
-                      <span className="text-white">${fmtP(closingTrade.entry_price)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-white/40">Объём</span>
-                      <span className="text-cyan-400/80">${closingTrade.amount.toFixed(2)}</span>
-                    </div>
-                    {closingPnl !== null && (
-                      <div className="flex justify-between pt-1 border-t border-white/[0.06]">
-                        <span className="text-white/40">Ожидаемый PnL</span>
-                        <span className={cn('font-bold', closingPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
-                          {closingPnl >= 0 ? '+' : ''}{closingPnl.toFixed(2)}$
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                )}
-                <p className="text-white/30 text-xs pt-1">
-                  Позиция будет закрыта по текущей рыночной цене. Нереализованный PnL станет реализованным и изменит баланс.
-                </p>
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel className="bg-white/[0.04] border-white/10 text-white/60 hover:bg-white/[0.08] hover:text-white/80">Отмена</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={(e) => { e.preventDefault(); confirmCloseTrade(); }}
-                disabled={closingLoading}
-                className="bg-red-600 hover:bg-red-700 text-white border-0"
-              >
-                {closingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Закрыть позицию'}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-        <div className="h-24 flex items-center justify-center">
-          <span className="text-xs text-white/20 font-mono">Нет сделок</span>
-        </div>
-      </>
-    );
-  }
+  // Group open trades by direction
+  const longTrades = openTrades.filter(t => t.direction === 'long');
+  const shortTrades = openTrades.filter(t => t.direction === 'short');
+  const closedTradesList = recentTrades.slice(0, 20);
 
-  return (
-    <>
-    {/* Close Trade Confirmation Modal */}
+  const hasAnyTrades = openTrades.length > 0 || recentTrades.length > 0;
+
+  // Per-group PnL totals
+  const longPnl = useMemo(() => {
+    let t = 0; for (const tr of longTrades) { const p = calcPnl(tr); if (p != null) t += p; } return t;
+  }, [longTrades, coins]);
+  const shortPnl = useMemo(() => {
+    let t = 0; for (const tr of shortTrades) { const p = calcPnl(tr); if (p != null) t += p; } return t;
+  }, [shortTrades, coins]);
+
+  const [longCollapsed, setLongCollapsed] = useState(false);
+  const [shortCollapsed, setShortCollapsed] = useState(false);
+  const [closedCollapsed, setClosedCollapsed] = useState(true);
+  const [expandedTradeId, setExpandedTradeId] = useState<string | null>(null);
+
+  // Close Trade Confirmation Modal (rendered once)
+  const closeConfirmModal = (
     <AlertDialog open={!!closingTrade} onOpenChange={(open) => { if (!open) setClosingTrade(null); }}>
       <AlertDialogContent className="bg-[#0d0d14] border-white/10 max-w-sm">
         <AlertDialogHeader>
@@ -1242,7 +1008,7 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
               </div>
             )}
             <p className="text-white/30 text-xs pt-1">
-              Позиция будет закрыта по текущей рыночной цене. Нереализованный PnL станет реализованным и изменит баланс.
+              Позиция будет закрыта по текущей рыночной цене.
             </p>
           </AlertDialogDescription>
         </AlertDialogHeader>
@@ -1253,135 +1019,389 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
             disabled={closingLoading}
             className="bg-red-600 hover:bg-red-700 text-white border-0"
           >
-            {closingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Закрыть позицию'}
+            {closingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Закрыть'}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
 
-    <div className="h-full flex flex-col">
-      <div className="flex-1 overflow-x-auto overflow-y-auto">
-        <table className="w-full text-xs min-w-[560px]">
-          <thead className="sticky top-0 bg-[#0d0d14] z-10">
-            <tr className="text-white/25 border-b border-white/[0.06]">
-              <th className="text-left font-medium py-2.5 px-3 md:px-4">Символ</th>
-              <th className="text-left font-medium py-2.5 px-2">Напр.</th>
-              <th className="text-right font-medium py-2.5 px-2 hidden md:table-cell">Вход</th>
-              <th className="text-right font-medium py-2.5 px-2 hidden lg:table-cell">Выход</th>
-              <th className="text-right font-medium py-2.5 px-2 hidden sm:table-cell">Объём</th>
-              <th className="text-right font-medium py-2.5 px-2 hidden lg:table-cell">Плечо</th>
-              <th className="text-right font-medium py-2.5 px-2">PnL</th>
-              <th className="text-center font-medium py-2.5 px-2">Открыта</th>
-              <th className="text-center font-medium py-2.5 px-2 hidden sm:table-cell">Статус</th>
-              <th className="text-center font-medium py-2.5 px-2">Действия</th>
-            </tr>
-          </thead>
-          <tbody>
-          {allTrades.map((trade) => {
-            const isLong = trade.direction === 'long';
-            const isOpen = trade.status === 'open';
-
-            // Calculate live PnL for open trades, fallback for closed with NULL pnl
-            let displayPnl = trade.pnl;
-            if (isOpen) {
-              const livePrice = getLivePrice(trade.symbol);
-              if (livePrice && livePrice > 0) {
-                const priceChange = isLong
-                  ? (livePrice - trade.entry_price) / trade.entry_price
-                  : (trade.entry_price - livePrice) / trade.entry_price;
-                const effectiveAmount = trade.remaining_amount ?? trade.amount;
-                displayPnl = effectiveAmount * priceChange * trade.leverage;
-              }
-            } else if (displayPnl == null && trade.exit_price != null && trade.entry_price) {
-              // Closed trade with NULL pnl — recalculate from entry/exit prices
-              const effAmt = trade.remaining_amount ?? trade.amount;
-              const pc = isLong
-                ? (trade.exit_price - trade.entry_price) / trade.entry_price
-                : (trade.entry_price - trade.exit_price) / trade.entry_price;
-              const fee = effAmt * 0.001 + (effAmt / (trade.leverage || 1)) * 0.001;
-              displayPnl = effAmt * pc * trade.leverage - fee;
-            }
-
-            return (
-              <tr
-                key={trade.id}
-                className="border-b border-white/[0.03] hover:bg-white/[0.04] transition-colors cursor-pointer"
-                onClick={() => onSelectTrade(trade)}
-              >
-                <td className="py-2.5 px-3 md:px-4 font-mono text-white/80 font-semibold">
-                  {trade.symbol.replace('USDT', '')}
-                </td>
-                <td className="py-2.5 px-2">
-                  <span className={cn('font-mono font-bold text-[11px]', isLong ? 'text-green-400' : 'text-red-400')}>
-                    {isLong ? 'LONG' : 'SHORT'}
-                  </span>
-                </td>
-                <td className="py-2.5 px-2 text-right font-mono text-white/50">
-                  {typeof trade.entry_price === 'number'
-                    ? trade.entry_price < 1 ? trade.entry_price.toPrecision(4) : trade.entry_price.toFixed(2)
-                    : '—'}
-                </td>
-                <td className="py-2.5 px-2 text-right font-mono text-white/50">
-                  {trade.exit_price != null && typeof trade.exit_price === 'number'
-                    ? trade.exit_price < 1 ? trade.exit_price.toPrecision(4) : trade.exit_price.toFixed(2)
-                    : '—'}
-                </td>
-                <td className="py-2.5 px-2 text-right font-mono text-cyan-400/70 font-semibold">
-                  ${typeof trade.amount === 'number' ? trade.amount.toFixed(2) : '—'}
-                </td>
-                <td className="py-2.5 px-2 text-right font-mono text-white/40 hidden lg:table-cell">{trade.leverage ?? '—'}x</td>
-                <td className={cn('py-2.5 px-2 text-right font-mono font-bold', displayPnl == null ? 'text-white/25' : displayPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
-                  {displayPnl != null && typeof displayPnl === 'number'
-                    ? `${displayPnl >= 0 ? '+' : ''}$${displayPnl.toFixed(2)}`
-                    : '—'}
-                </td>
-                <td className="py-2.5 px-2 text-center font-mono text-white/20 text-[10px]">
-                  {new Date(trade.opened_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                </td>
-                <td className="py-2.5 px-2 text-center hidden sm:table-cell">
-                  <span className={cn('text-[10px] font-mono font-medium px-2 py-0.5 rounded-md', isOpen
-                    ? 'bg-yellow-500/10 text-yellow-400/80 border border-yellow-500/20'
-                    : 'bg-white/5 text-white/40 border border-white/10'
-                  )}>
-                    {isOpen ? 'ОТКР' : 'ЗАКР'}
-                  </span>
-                </td>
-                <td className="py-2.5 px-2 text-center">
-                  {isOpen ? (
-                    <button
-                      onClick={() => handleCloseTrade(trade)}
-                      className="px-2 py-1 rounded-md bg-white/[0.04] hover:bg-red-500/20 text-white/30 hover:text-red-400 text-[10px] font-medium transition-all duration-150 min-w-[44px] min-h-[28px] flex items-center justify-center gap-1 mx-auto border border-white/[0.06] hover:border-red-500/30"
-                      title="Закрыть сделку вручную"
-                    >
-                      <X className="w-3 h-3" />Закр.
-                    </button>
-                  ) : (
-                    <span className="text-white/10 text-[10px]">—</span>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      </div>
-      {/* Summary footer */}
-      <div className="shrink-0 border-t border-white/[0.06] bg-[#0d0d14] px-4 py-2 flex items-center justify-between">
-        <div className="flex items-center gap-2 md:gap-3 min-w-0">
-          {openTrades.length > 0 && (
-            <span className="text-[10px] text-white/25 font-mono">
-              Открыто: {openTrades.length}
-            </span>
-          )}
-          <span className={cn('text-[10px] font-mono font-medium', totalOpenPnl >= 0 ? 'text-green-400/60' : 'text-red-400/60')}>
-            Нереализ.: {totalOpenPnl >= 0 ? '+' : ''}${totalOpenPnl.toFixed(2)}
-          </span>
+  if (!hasAnyTrades) {
+    return (
+      <>
+        {closeConfirmModal}
+        <div className="h-full flex items-center justify-center">
+          <span className="text-xs text-white/20 font-mono">Нет сделок</span>
         </div>
-        <span className={cn('text-[10px] font-mono font-semibold', (totalClosedPnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400')}>
-          Реализ.: {(totalClosedPnl ?? 0) >= 0 ? '+' : ''}${(totalClosedPnl ?? 0).toFixed(2)}{closedTradeCount !== undefined ? ` (${closedTradeCount})` : ''}
+      </>
+    );
+  }
+
+  // Collapsible direction group header
+  const DirectionGroupHeader = ({ direction, count, groupPnl, collapsed, onToggle }: {
+    direction: 'long' | 'short'; count: number; groupPnl: number; collapsed: boolean; onToggle: () => void;
+  }) => {
+    const isLong = direction === 'long';
+    return (
+      <button
+        onClick={onToggle}
+        className={cn(
+          'w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[11px] font-mono transition-all border',
+          isLong
+            ? 'bg-green-500/[0.04] border-green-500/[0.08] hover:bg-green-500/[0.08]'
+            : 'bg-red-500/[0.04] border-red-500/[0.08] hover:bg-red-500/[0.08]',
+        )}
+      >
+        {isLong ? (
+          <TrendingUp className="w-3 h-3 text-green-400/70 shrink-0" />
+        ) : (
+          <TrendingDown className="w-3 h-3 text-red-400/70 shrink-0" />
+        )}
+        <span className={cn('font-bold text-[11px]', isLong ? 'text-green-400/80' : 'text-red-400/80')}>
+          {isLong ? 'LONG' : 'SHORT'}
         </span>
+        <span className={cn(
+          'ml-auto px-1.5 py-px rounded text-[10px] font-bold leading-none',
+          isLong ? 'bg-green-500/10 text-green-400/70' : 'bg-red-500/10 text-red-400/70',
+        )}>
+          {count}
+        </span>
+        <span className={cn(
+          'font-semibold text-[10px] tabular-nums',
+          groupPnl >= 0 ? 'text-green-400/70' : 'text-red-400/70',
+        )}>
+          {groupPnl >= 0 ? '+' : ''}{groupPnl.toFixed(2)}$
+        </span>
+        <ChevronDown className={cn(
+          'w-3 h-3 text-white/20 shrink-0 transition-transform duration-200',
+          collapsed && '-rotate-90',
+        )} />
+      </button>
+    );
+  };
+
+  // Compact trade row
+  const CompactTradeRow = ({ trade }: { trade: Trade }) => {
+    const pnl = calcPnl(trade);
+    const isLong = trade.direction === 'long';
+    const isExpanded = expandedTradeId === trade.id;
+    return (
+      <div
+        className={cn(
+          'group border transition-colors',
+          isLong
+            ? 'border-green-500/[0.06] hover:border-green-500/15'
+            : 'border-red-500/[0.06] hover:border-red-500/15',
+          isExpanded
+            ? 'bg-white/[0.03]'
+            : 'bg-white/[0.01] hover:bg-white/[0.025]',
+        )}
+      >
+        <button
+          onClick={() => { onSelectTrade(trade); setExpandedTradeId(prev => prev === trade.id ? null : trade.id); }}
+          className={cn(
+            'w-full flex items-center gap-2 px-2.5 py-1 text-[10px] font-mono transition-all',
+            isExpanded && 'pb-0.5',
+          )}
+        >
+          <span className={cn('font-semibold text-[11px] truncate min-w-0', isLong ? 'text-green-400/80' : 'text-red-400/80')}>
+            {trade.symbol.replace('USDT', '')}
+          </span>
+          <span className="text-white/25 text-[9px] shrink-0">{trade.leverage ?? '—'}x</span>
+          <span className={cn(
+            'ml-auto font-semibold tabular-nums shrink-0',
+            pnl != null && pnl >= 0 ? 'text-green-400' : pnl != null ? 'text-red-400' : 'text-white/20',
+          )}>
+            {pnl != null ? `${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}$` : '...'}
+          </span>
+          <button
+            onClick={(e) => { e.stopPropagation(); handleCloseTrade(trade); }}
+            className={cn(
+              'shrink-0 w-4 h-4 rounded flex items-center justify-center text-[10px] transition-all',
+              'opacity-0 group-hover:opacity-100',
+              'text-white/20 hover:text-red-400 hover:bg-red-500/15',
+            )}
+          >
+            ×
+          </button>
+        </button>
+        {/* Expandable detail row (click on row to select, this shows on toggle) */}
+        {isExpanded && (
+          <div className="px-2.5 pb-1.5 space-y-0.5 text-[9px] font-mono text-white/30 border-t border-white/[0.04] pt-1">
+            <div className="flex justify-between">
+              <span>Вход</span>
+              <span className="text-white/50">
+                {typeof trade.entry_price === 'number'
+                  ? trade.entry_price < 1 ? trade.entry_price.toPrecision(4) : trade.entry_price.toFixed(2)
+                  : '—'}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span>Объём</span>
+              <span className="text-cyan-400/50">${typeof trade.amount === 'number' ? trade.amount.toFixed(2) : '—'}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Плечо</span>
+              <span className="text-white/50">{trade.leverage ?? '—'}x</span>
+            </div>
+          </div>
+        )}
       </div>
-    </div>
+    );
+  };
+
+  // Compact view: grouped LONG/SHORT with collapsible sections
+  if (!expandedView) {
+    return (
+      <>
+        {closeConfirmModal}
+        <div className="h-full flex flex-col">
+          {/* Summary bar */}
+          <div className="shrink-0 px-3 pt-2 pb-1.5 border-b border-white/[0.06]">
+            <div className="flex items-center justify-between text-[10px] font-mono">
+              <div className="flex items-center gap-2">
+                <span className="text-white/40 font-semibold">{openTrades.length}</span>
+                <span className="text-white/20">открытых</span>
+                <span className={cn('ml-1 font-semibold tabular-nums', totalOpenPnl >= 0 ? 'text-green-400/70' : 'text-red-400/70')}>
+                  {totalOpenPnl >= 0 ? '+' : ''}{totalOpenPnl.toFixed(2)}$
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-white/20 text-[9px]">Реал.</span>
+                <span className={cn('font-bold tabular-nums', (totalClosedPnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400')}>
+                  {(totalClosedPnl ?? 0) >= 0 ? '+' : ''}${(totalClosedPnl ?? 0).toFixed(2)}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Scrollable trade list */}
+          <div className="flex-1 min-h-0 overflow-y-auto px-2.5 py-2 space-y-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-white/20">
+            {/* LONG group */}
+            {longTrades.length > 0 && (
+              <div className="space-y-1">
+                <DirectionGroupHeader
+                  direction="long"
+                  count={longTrades.length}
+                  groupPnl={longPnl}
+                  collapsed={longCollapsed}
+                  onToggle={() => setLongCollapsed(v => !v)}
+                />
+                {!longCollapsed && (
+                  <div className="space-y-px max-h-48 overflow-y-auto rounded-md [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/[0.08] [&::-webkit-scrollbar-thumb]:rounded-full">
+                    {longTrades.map(trade => (
+                      <CompactTradeRow
+                        key={trade.id}
+                        trade={trade}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* SHORT group */}
+            {shortTrades.length > 0 && (
+              <div className="space-y-1">
+                <DirectionGroupHeader
+                  direction="short"
+                  count={shortTrades.length}
+                  groupPnl={shortPnl}
+                  collapsed={shortCollapsed}
+                  onToggle={() => setShortCollapsed(v => !v)}
+                />
+                {!shortCollapsed && (
+                  <div className="space-y-px max-h-48 overflow-y-auto rounded-md [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/[0.08] [&::-webkit-scrollbar-thumb]:rounded-full">
+                    {shortTrades.map(trade => (
+                      <CompactTradeRow
+                        key={trade.id}
+                        trade={trade}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Visual separator between open and closed */}
+            {closedTradesList.length > 0 && (
+              <div className="relative my-1">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-white/[0.06]" />
+                </div>
+                <div className="relative flex justify-center">
+                  <span className="bg-[#0a0a0f] px-2 text-[9px] text-white/15 font-mono">Закрытые</span>
+                </div>
+              </div>
+            )}
+
+            {/* Closed trades group */}
+            {closedTradesList.length > 0 && (
+              <div className="space-y-1">
+                <button
+                  onClick={() => setClosedCollapsed(v => !v)}
+                  className="w-full flex items-center gap-2 px-2.5 py-1 rounded-md text-[10px] font-mono bg-white/[0.02] border border-white/[0.06] hover:bg-white/[0.04] transition-all"
+                >
+                  <Minus className="w-3 h-3 text-white/20 shrink-0" />
+                  <span className="text-white/30 font-medium">Закрытые</span>
+                  <span className="ml-auto px-1.5 py-px rounded text-[10px] font-bold leading-none bg-white/5 text-white/30">
+                    {closedTradeCount ?? recentTrades.length}
+                  </span>
+                  <ChevronDown className={cn(
+                    'w-3 h-3 text-white/15 shrink-0 transition-transform duration-200',
+                    closedCollapsed && '-rotate-90',
+                  )} />
+                </button>
+                {!closedCollapsed && (
+                  <div className="space-y-px max-h-36 overflow-y-auto rounded-md [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/[0.08] [&::-webkit-scrollbar-thumb]:rounded-full">
+                    {closedTradesList.map(trade => {
+                      const pnl = trade.pnl ?? 0;
+                      const isLong = trade.direction === 'long';
+                      return (
+                        <button
+                          key={trade.id}
+                          onClick={() => onSelectTrade(trade)}
+                          className="w-full flex items-center gap-2 px-2.5 py-1 text-[10px] font-mono bg-white/[0.01] hover:bg-white/[0.03] border border-white/[0.03] hover:border-white/[0.08] transition-all rounded-sm"
+                        >
+                          <span className={cn(
+                            'text-[8px] font-bold shrink-0',
+                            isLong ? 'text-green-400/30' : 'text-red-400/30',
+                          )}>
+                            {isLong ? 'L' : 'S'}
+                          </span>
+                          <span className="text-white/30 truncate min-w-0">
+                            {trade.symbol.replace('USDT', '')}
+                          </span>
+                          <span className={cn(
+                            'ml-auto font-semibold tabular-nums shrink-0 text-[9px]',
+                            pnl >= 0 ? 'text-green-400/40' : 'text-red-400/40',
+                          )}>
+                            {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}$
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Footer with expand toggle */}
+          <div className="shrink-0 border-t border-white/[0.06] px-3 py-1.5 flex items-center justify-between bg-[#0d0d14]">
+            <span className="text-[9px] text-white/15 font-mono">{openTrades.length} откр. · {closedTradeCount ?? recentTrades.length} закр.</span>
+            <button
+              onClick={() => setExpandedView(true)}
+              className="text-[9px] text-white/25 hover:text-white/50 transition-colors"
+            >
+              Таблица ↓
+            </button>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  // Expanded table view (full table)
+  return (
+    <>
+      {closeConfirmModal}
+      <div className="h-full flex flex-col">
+        <div className="flex-1 overflow-x-auto overflow-y-auto">
+          <table className="w-full text-xs min-w-[560px]">
+            <thead className="sticky top-0 bg-[#0d0d14] z-10">
+              <tr className="text-white/25 border-b border-white/[0.06]">
+                <th className="text-left font-medium py-2 px-3">Символ</th>
+                <th className="text-left font-medium py-2 px-2">Напр.</th>
+                <th className="text-right font-medium py-2 px-2 hidden md:table-cell">Вход</th>
+                <th className="text-right font-medium py-2 px-2">PnL</th>
+                <th className="text-right font-medium py-2 px-2 hidden sm:table-cell">Объём</th>
+                <th className="text-right font-medium py-2 px-2 hidden lg:table-cell">Плечо</th>
+                <th className="text-center font-medium py-2 px-2 hidden sm:table-cell">Статус</th>
+                <th className="text-center font-medium py-2 px-2">×</th>
+              </tr>
+            </thead>
+            <tbody>
+            {[...openTrades, ...recentTrades.slice(0, 20)].map((trade) => {
+              const isLong = trade.direction === 'long';
+              const isOpen = trade.status === 'open';
+              const displayPnl = calcPnl(trade);
+
+              return (
+                <tr
+                  key={trade.id}
+                  className="border-b border-white/[0.03] hover:bg-white/[0.04] transition-colors cursor-pointer"
+                  onClick={() => onSelectTrade(trade)}
+                >
+                  <td className="py-2 px-3 font-mono text-white/80 font-semibold">
+                    {trade.symbol.replace('USDT', '')}
+                  </td>
+                  <td className="py-2 px-2">
+                    <span className={cn('font-mono font-bold text-[11px]', isLong ? 'text-green-400' : 'text-red-400')}>
+                      {isLong ? 'L' : 'S'}
+                    </span>
+                  </td>
+                  <td className="py-2 px-2 text-right font-mono text-white/50 hidden md:table-cell">
+                    {typeof trade.entry_price === 'number'
+                      ? trade.entry_price < 1 ? trade.entry_price.toPrecision(4) : trade.entry_price.toFixed(2)
+                      : '—'}
+                  </td>
+                  <td className={cn('py-2 px-2 text-right font-mono font-bold', displayPnl == null ? 'text-white/25' : displayPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
+                    {displayPnl != null && typeof displayPnl === 'number'
+                      ? `${displayPnl >= 0 ? '+' : ''}$${displayPnl.toFixed(2)}`
+                      : '—'}
+                  </td>
+                  <td className="py-2 px-2 text-right font-mono text-cyan-400/70 hidden sm:table-cell">
+                    ${typeof trade.amount === 'number' ? trade.amount.toFixed(2) : '—'}
+                  </td>
+                  <td className="py-2 px-2 text-right font-mono text-white/40 hidden lg:table-cell">{trade.leverage ?? '—'}x</td>
+                  <td className="py-2 px-2 text-center hidden sm:table-cell">
+                    <span className={cn('text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-md', isOpen
+                      ? 'bg-yellow-500/10 text-yellow-400/80 border border-yellow-500/20'
+                      : 'bg-white/5 text-white/40 border border-white/10'
+                    )}>
+                      {isOpen ? 'ОТКР' : 'ЗАКР'}
+                    </span>
+                  </td>
+                  <td className="py-2 px-2 text-center">
+                    {isOpen ? (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleCloseTrade(trade); }}
+                        className="w-6 h-6 rounded bg-white/[0.04] hover:bg-red-500/20 text-white/20 hover:text-red-400 transition-all flex items-center justify-center"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    ) : (
+                      <span className="text-white/5 text-[10px]">—</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+            </tbody>
+          </table>
+        </div>
+        {/* Footer */}
+        <div className="shrink-0 border-t border-white/[0.06] bg-[#0d0d14] px-3 py-1.5 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-[10px] font-mono">
+            <span className="text-white/25">Открыто: {openTrades.length}</span>
+            <span className={cn('font-medium', totalOpenPnl >= 0 ? 'text-green-400/60' : 'text-red-400/60')}>
+              {totalOpenPnl >= 0 ? '+' : ''}{totalOpenPnl.toFixed(2)}$
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className={cn('text-[10px] font-mono font-semibold', (totalClosedPnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400')}>
+              Реал.: {(totalClosedPnl ?? 0) >= 0 ? '+' : ''}${(totalClosedPnl ?? 0).toFixed(2)}
+            </span>
+            <button
+              onClick={() => setExpandedView(false)}
+              className="text-[9px] text-white/25 hover:text-white/50 transition-colors"
+            >
+              Компакт ↑
+            </button>
+          </div>
+        </div>
+      </div>
     </>
   );
 }
@@ -1457,15 +1477,14 @@ function BTCRegimeBar() {
 
   const loadDetailedAnalysis = useCallback(async () => {
     try {
-      const { refreshBTCCorrelation, forceRefreshBTCCorrelation, getBTCRegime, getBTCRegimeSummary, getAllCorrelations } = await import('@/lib/btc-correlation');
-      await forceRefreshBTCCorrelation();
+      const { refreshBTCCorrelation, getBTCRegime, getBTCRegimeSummary, getAllCorrelations } = await import('@/lib/btc-correlation');
       await refreshBTCCorrelation();
       const regimeData = getBTCRegime();
       const summary = getBTCRegimeSummary();
       const correlations = getAllCorrelations().sort((a, b) => Math.abs(b.correlation) - Math.abs(a.correlation));
 
-      // Fetch BTC candles — 500 for proper analysis
-      const res = await fetch('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=500');
+      // Fetch BTC candles for mini-chart data
+      const res = await fetch('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=60');
       const raw = await res.json();
       const btcCandles = raw.map((k: (string | number)[]) => ({
         time: Math.floor(Number(k[0]) / 1000),
@@ -1608,7 +1627,7 @@ function BTCRegimeBar() {
                   })()}
                 </svg>
               </div>
-              <div className="text-[10px] text-white/15 text-right mt-1">500 часовых свечей</div>
+              <div className="text-[10px] text-white/15 text-right mt-1">60 часовых свечей</div>
             </div>
 
             {/* Technical Indicators Grid */}
@@ -1842,30 +1861,14 @@ function DraggableTradePanel({ focusedTradeId, symbol, onClose }: { focusedTrade
   const mins = diffMin % 60;
   const durationStr = hours > 0 ? `${hours}ч ${mins}м` : `${mins}м`;
 
-  // Calculate partial TP levels (same logic as client-trader.ts)
-  const partialState = (activeTrade as any).partial_state ?? 'full';
-  const remainingAmount = (activeTrade as any).remaining_amount ?? activeTrade.amount;
-  const initialSlDistance = activeTrade.entry_price != null && activeTrade.stop_loss != null
-    ? Math.abs(activeTrade.entry_price - activeTrade.stop_loss) : 0;
-  const tp1Price = initialSlDistance > 0
-    ? (isLong ? activeTrade.entry_price! + initialSlDistance : activeTrade.entry_price! - initialSlDistance) : null;
-  const tp2Price = initialSlDistance > 0
-    ? (isLong ? activeTrade.entry_price! + initialSlDistance * 1.5 : activeTrade.entry_price! - initialSlDistance * 1.5) : null;
-
-  let distTP = 0, distSL = 0, distTP1 = 0, distTP2 = 0;
+  let distTP = 0, distSL = 0;
   if (isOpen) {
-    distSL = isLong
-      ? (livePrice - (activeTrade.stop_loss ?? livePrice)) / livePrice * 100
-      : ((activeTrade.stop_loss ?? livePrice) - livePrice) / livePrice * 100;
-    if (tp1Price) {
-      distTP1 = isLong ? (tp1Price - livePrice) / livePrice * 100 : (livePrice - tp1Price) / livePrice * 100;
-    }
-    if (tp2Price) {
-      distTP2 = isLong ? (tp2Price - livePrice) / livePrice * 100 : (livePrice - tp2Price) / livePrice * 100;
-    }
     distTP = isLong
       ? ((activeTrade.take_profit ?? livePrice) - livePrice) / livePrice * 100
       : (livePrice - (activeTrade.take_profit ?? livePrice)) / livePrice * 100;
+    distSL = isLong
+      ? (livePrice - (activeTrade.stop_loss ?? livePrice)) / livePrice * 100
+      : ((activeTrade.stop_loss ?? livePrice) - livePrice) / livePrice * 100;
   }
 
   return (
@@ -1925,28 +1928,16 @@ function DraggableTradePanel({ focusedTradeId, symbol, onClose }: { focusedTrade
           <span className="text-[10px] text-white/25">Вход</span>
           <span className="text-[10px] font-mono text-white/50">${fmtP(activeTrade.entry_price)}</span>
         </div>
-        {isOpen && tp1Price != null && (
-          <div className={cn('flex items-center justify-between', partialState !== 'full' && 'opacity-40 line-through')}>
-            <span className="text-[10px] text-green-400/50">TP1 {partialState !== 'full' ? '✓' : ''} ({distTP1 >= 0 ? '+' : ''}{distTP1.toFixed(1)}%)</span>
-            <span className="text-[10px] font-mono text-green-400/70">${fmtP(tp1Price)}</span>
-          </div>
-        )}
-        {isOpen && tp2Price != null && (
-          <div className={cn('flex items-center justify-between', partialState !== 'tp1_hit' && 'opacity-40 line-through')}>
-            <span className="text-[10px] text-emerald-400/50">TP2 {partialState === 'tp2_hit' ? '✓' : ''} ({distTP2 >= 0 ? '+' : ''}{distTP2.toFixed(1)}%)</span>
-            <span className="text-[10px] font-mono text-emerald-400/70">${fmtP(tp2Price)}</span>
+        {isOpen && activeTrade.take_profit != null && (
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-green-400/50">TP ({distTP >= 0 ? '+' : ''}{distTP.toFixed(1)}%)</span>
+            <span className="text-[10px] font-mono text-green-400/70">${fmtP(activeTrade.take_profit)}</span>
           </div>
         )}
         {isOpen && activeTrade.stop_loss != null && (
           <div className="flex items-center justify-between">
             <span className="text-[10px] text-red-400/50">SL ({distSL <= 0 ? '' : '+'}{distSL.toFixed(1)}%)</span>
             <span className="text-[10px] font-mono text-red-400/70">${fmtP(activeTrade.stop_loss)}</span>
-          </div>
-        )}
-        {isOpen && partialState !== 'full' && (
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] text-yellow-400/50">Позиция</span>
-            <span className="text-[10px] font-mono text-yellow-400/70">${remainingAmount.toFixed(1)} ({Math.round(remainingAmount / activeTrade.amount * 100)}%)</span>
           </div>
         )}
         <div className="flex items-center justify-between">
@@ -1961,25 +1952,6 @@ function DraggableTradePanel({ focusedTradeId, symbol, onClose }: { focusedTrade
           <span className="text-[10px] text-white/25">Открыта</span>
           <span className="text-[10px] font-mono text-white/20">{new Date(activeTrade.opened_at).toLocaleString('ru-RU', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' } as Intl.DateTimeFormatOptions)}</span>
         </div>
-        {/* Pattern Pro: detected pattern */}
-        {activeTrade.pattern_name && (
-          <div className="mt-1 pt-1.5 border-t border-white/5">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] text-violet-400/60">Фигура</span>
-              <span className={cn('text-[10px] font-mono font-semibold',
-                activeTrade.pattern_direction === 'bullish' ? 'text-green-400/80' : activeTrade.pattern_direction === 'bearish' ? 'text-red-400/80' : 'text-white/50'
-              )}>
-                {activeTrade.pattern_direction === 'bullish' ? '▲ ' : activeTrade.pattern_direction === 'bearish' ? '▼ ' : ''}{activeTrade.pattern_name}
-              </span>
-            </div>
-            {activeTrade.pattern_reliability != null && (
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-white/25">Надёжность</span>
-                <span className="text-[10px] font-mono text-white/40">{(activeTrade.pattern_reliability * 100).toFixed(0)}%</span>
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );
