@@ -27,9 +27,12 @@ export default function ControlPanel() {
   const [savingDeposit, setSavingDeposit] = useState(false);
   const {
     traderState, isLoading, setIsLoading,
-    autoTrading, setAutoTrading, setOpenTrades, setRecentTrades,
+    autoTrading, setAutoTrading,
     activeStrategy, strategyStates,
-    setTraderState, setTotalClosedPnl, setClosedTradeCount,
+    setStrategyTraderState, setStrategyOpenTrades, setStrategyRecentTrades,
+    setStrategyTotalClosedPnl, setStrategyClosedTradeCount,
+    setTraderState, setOpenTrades, setRecentTrades,
+    setTotalClosedPnl, setClosedTradeCount,
   } = useTerminalStore();
 
   const strategy = getStrategy(activeStrategy);
@@ -40,16 +43,26 @@ export default function ControlPanel() {
 
     setIsLoading(true);
     try {
+      // 1. Reset on server (delete trades + set balance/initial_balance)
       await fetch('/api/reset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ strategyId: activeStrategy, balance: amount }),
       });
-      setTraderState({ id: activeStrategy, strategy_id: activeStrategy, balance: amount, borrowed_funds: 0, debt_to_repay: 0, is_active: true, initial_balance: amount });
-      setOpenTrades([]);
-      setRecentTrades([]);
-      setTotalClosedPnl(0);
-      setClosedTradeCount(0);
+
+      // 2. Re-fetch state from server to guarantee sync
+      const initRes = await fetch(`/api/init?strategyId=${activeStrategy}`);
+      if (initRes.ok) {
+        const initData = await initRes.json();
+        if (initData.state) {
+          setStrategyTraderState(activeStrategy, initData.state);
+        }
+        setStrategyOpenTrades(activeStrategy, initData.openTrades ?? []);
+        setStrategyRecentTrades(activeStrategy, initData.recentTrades ?? []);
+        setStrategyTotalClosedPnl(activeStrategy, initData.totalClosedPnl ?? 0);
+        setStrategyClosedTradeCount(activeStrategy, initData.closedTradeCount ?? 0);
+      }
+
       setResetAmount('');
     } catch (err) {
       console.error('Reset error:', err);
@@ -68,8 +81,8 @@ export default function ControlPanel() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ strategyId: activeStrategy, initialBalance: val }),
       });
-      if (res.ok) {
-        setTraderState({ ...traderState!, initial_balance: val });
+      if (res.ok && traderState) {
+        setStrategyTraderState(activeStrategy, { ...traderState, initial_balance: val });
         setEditingDeposit(false);
       }
     } catch (err) {
