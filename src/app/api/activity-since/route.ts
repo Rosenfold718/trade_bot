@@ -3,19 +3,6 @@ import { initDB, tursoDb, getTraderState } from '@/lib/db';
 import { getAuthUserId } from '@/lib/auth-helpers';
 import { getSetting, setSetting } from '@/lib/db';
 
-interface ActivityEvent {
-  type: 'trade_closed' | 'trade_opened' | 'balance_change';
-  strategyId: string;
-  symbol: string;
-  direction?: string;
-  pnl?: number;
-  amount?: number;
-  leverage?: number;
-  entry_price?: number;
-  balance?: number;
-  timestamp: string;
-}
-
 export async function GET(request: NextRequest) {
   try {
     const userId = await getAuthUserId();
@@ -27,28 +14,23 @@ export async function GET(request: NextRequest) {
     const lastLoginStr = await getSetting(`last_login_${userId}`);
     const lastLogin = lastLoginStr ? new Date(lastLoginStr) : null;
 
-    // Update last login to now
-    const now = new Date().toISOString();
-    await setSetting(`last_login_${userId}`, now, userId);
-
-    // If no last login (first time), return empty — nothing to report
-    if (!lastLogin) {
-      return NextResponse.json({
-        hasChanges: false,
-        lastLogin: null,
-        closedTrades: [],
-        openTrades: [],
-        balances: [],
-        events: [],
-      });
+    // If no last login (first time with this feature), use 24h baseline
+    // so returning users see recent activity even on first login after deploy
+    let baseline: string;
+    if (lastLogin) {
+      baseline = lastLoginStr;
+    } else {
+      // First time — look back 24 hours
+      const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      baseline = dayAgo;
     }
 
-    // Fetch closed trades since last login across all strategies
+    // Fetch closed trades since baseline across all strategies
     const closedResult = await tursoDb.execute(
       `SELECT * FROM trades 
        WHERE user_id = ? AND status = 'closed' AND closed_at > ? 
        ORDER BY closed_at DESC`,
-      [userId, lastLoginStr]
+      [userId, baseline]
     );
     const closedTrades = closedResult.rows.map(row => ({
       id: row.id as string,
@@ -66,7 +48,7 @@ export async function GET(request: NextRequest) {
       closed_at: row.closed_at as string,
     }));
 
-    // Fetch currently open trades (opened since or before last login — all open trades matter)
+    // Fetch currently open trades (all open trades matter)
     const openResult = await tursoDb.execute(
       `SELECT * FROM trades 
        WHERE user_id = ? AND status = 'open'
@@ -101,11 +83,18 @@ export async function GET(request: NextRequest) {
     }
 
     // Determine if there are meaningful changes
-    const hasChanges = closedTrades.length > 0 || openTrades.length > 0;
+    const hasChanges = closedTrades.length > 0 || openTrades.length > 0 || balances.length > 0;
 
-    // Format time ago
-    const lastLoginDate = new Date(lastLoginStr);
-    const diffMs = Date.now() - lastLoginDate.getTime();
+    // Only update last_login if there ARE changes (or if first time — set baseline)
+    // This prevents rapid page refreshes from resetting the timer
+    const now = new Date().toISOString();
+    if (hasChanges || !lastLogin) {
+      await setSetting(`last_login_${userId}`, now, userId);
+    }
+
+    // Format time ago — use baseline, not the actual last login for first-timers
+    const referenceDate = lastLogin ? new Date(lastLoginStr) : new Date(baseline);
+    const diffMs = Date.now() - referenceDate.getTime();
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
     let timeAgo: string;
@@ -117,10 +106,15 @@ export async function GET(request: NextRequest) {
       timeAgo = `${diffDays} д.`;
     }
 
+    // First-time display string
+    const displayLoginTime = lastLogin
+      ? referenceDate.toLocaleString('ru-RU')
+      : new Date(baseline).toLocaleString('ru-RU');
+
     return NextResponse.json({
       hasChanges,
       lastLogin: lastLoginStr,
-      lastLoginTime: lastLoginDate.toLocaleString('ru-RU'),
+      lastLoginTime: displayLoginTime,
       timeAgo,
       closedTrades,
       openTrades,

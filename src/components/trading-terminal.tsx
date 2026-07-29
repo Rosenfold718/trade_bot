@@ -193,9 +193,27 @@ export default function TradingTerminal() {
         if (data.closedTradeCount !== undefined) setStrategyClosedTradeCount(strategyId, data.closedTradeCount as number);
       }
 
-      // Also set the global weights (shared across strategies)
-      const firstData = results[0]?.data;
-      if (firstData?.weights) setWeights(firstData.weights as IndicatorWeight[]);
+      // Set the global weights (shared across strategies) — try all results, not just first
+      let weightsSet = false;
+      for (const r of results) {
+        if (r.data?.weights && r.data.weights.length > 0) {
+          setWeights(r.data.weights as IndicatorWeight[]);
+          weightsSet = true;
+          break;
+        }
+      }
+      // Fallback: if no weights loaded from any strategy init, fetch via dedicated endpoint
+      if (!weightsSet) {
+        try {
+          const wRes = await fetch('/api/weights');
+          if (wRes.ok) {
+            const wData = await wRes.json();
+            if (Array.isArray(wData) && wData.length > 0) {
+              setWeights(wData as IndicatorWeight[]);
+            }
+          }
+        } catch { /* ignore */ }
+      }
 
       // If no state loaded at all, allow retry
       if (!anyStateLoaded) {

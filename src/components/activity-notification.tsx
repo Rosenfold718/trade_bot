@@ -105,6 +105,8 @@ export default function ActivityNotification({ onComplete }: ActivityNotificatio
     }
   }, [loading, data, onComplete]);
 
+  const isFirstTime = data?.lastLogin === null;
+
   if (loading || !data) {
     return (
       <div className="fixed inset-0 z-[300] bg-[#0a0a0f]/95 backdrop-blur-sm flex items-center justify-center">
@@ -135,10 +137,12 @@ export default function ActivityNotification({ onComplete }: ActivityNotificatio
                 <Activity className="h-5 w-5 text-emerald-400" />
               </div>
               <div className="flex-1 min-w-0">
-                <h2 className="text-base font-bold text-white">Что произошло за ваше отсутствие</h2>
+                <h2 className="text-base font-bold text-white">
+                  {isFirstTime ? 'Текущее состояние аккаунта' : 'Что произошло за ваше отсутствие'}
+                </h2>
                 <div className="flex items-center gap-2 text-[10px] text-white/30 font-mono">
                   <Clock className="w-3 h-3" />
-                  <span>Последний вход: {data.lastLoginTime} ({data.timeAgo} назад)</span>
+                  <span>{isFirstTime ? `Активность за последние 24 ч.` : `Последний вход: ${data.lastLoginTime} (${data.timeAgo} назад)`}</span>
                 </div>
               </div>
             </div>
