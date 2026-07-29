@@ -10,8 +10,9 @@ import {
   Loader2, CheckCircle, LogOut, Shield, Zap, Star, Crown, Gem,
   Clock, Copy, ExternalLink, Wallet, Send, Check,
   HelpCircle, MessageSquare, ChevronDown, ChevronUp, AlertTriangle,
-  HeadphonesIcon, X,
+  HeadphonesIcon, X, FileText,
 } from 'lucide-react';
+import OfferModal from '@/components/offer-modal';
 
 
 const WALLET_ADDRESS = 'UQC2_CBuEhAmxr4fJBt-gGdP8u3Mc1-RNcinUPc6ydxz1cJO';
@@ -50,6 +51,11 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
   const [txHash, setTxHash] = useState('');
   const [walletCopied, setWalletCopied] = useState(false);
   const [binanceIdCopied, setBinanceIdCopied] = useState(false);
+  // Offer acceptance state
+  const [offerAccepted, setOfferAccepted] = useState(false);
+  const [offerOpen, setOfferOpen] = useState(false);
+  const [checkingOffer, setCheckingOffer] = useState(true);
+
   const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState('');
   const [submitted, setSubmitted] = useState(false);
@@ -70,6 +76,28 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
       setSupportEmail(userEmail);
     }
   }, [userEmail]);
+
+  // Check if user already accepted the offer
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/offer-status');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.accepted) setOfferAccepted(true);
+        }
+      } catch { /* ignore */ }
+      setCheckingOffer(false);
+    })();
+  }, []);
+
+  const handleAcceptOffer = async () => {
+    setOfferAccepted(true);
+    setOfferOpen(false);
+    try {
+      await fetch('/api/offer-status', { method: 'POST' });
+    } catch { /* ignore */ }
+  };
 
   const activePlan = PLANS.find(p => p.id === selectedPlan) ?? PLANS[1];
 
@@ -495,6 +523,44 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
             <div className="bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 text-sm text-red-400">{error}</div>
           )}
 
+          {/* Mandatory offer acceptance */}
+          <div className="space-y-2">
+            <div className="flex items-start gap-2.5">
+              <label className="relative flex items-start cursor-pointer mt-0.5">
+                <input
+                  type="checkbox"
+                  checked={offerAccepted}
+                  onChange={(e) => {
+                    if (!e.target.checked) {
+                      setOfferAccepted(false);
+                      return;
+                    }
+                    // First time — show full offer modal
+                    if (!offerAccepted) {
+                      setOfferOpen(true);
+                    }
+                  }}
+                  className="peer sr-only"
+                />
+                <div className="w-4 h-4 mt-0.5 rounded border border-white/20 bg-white/[0.04] peer-checked:bg-emerald-600 peer-checked:border-emerald-600 flex items-center justify-center transition-all shrink-0">
+                  {offerAccepted && <Check className="w-2.5 h-2.5 text-white" />}
+                </div>
+              </label>
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] text-white/40 leading-relaxed">
+                  Я принимаю{' '}
+                  <button
+                    onClick={() => setOfferOpen(true)}
+                    className="text-amber-400/80 hover:text-amber-400 underline underline-offset-2 decoration-amber-400/30"
+                  >
+                    пользовательское соглашение
+                  </button>
+                  {' '}и понимаю риски криптовалютной торговли
+                </p>
+              </div>
+            </div>
+          </div>
+
           {/* Step 3: Submit */}
           <div className="space-y-2">
             <div className="flex items-center gap-2">
@@ -503,11 +569,13 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
             </div>
             <Button
               onClick={handleSubmitPayment}
-              disabled={verifying}
+              disabled={verifying || !offerAccepted}
               className="w-full h-11 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl transition-all duration-200 disabled:opacity-50"
             >
               {verifying ? (
                 <><Loader2 className="w-4 h-4 animate-spin mr-2" />Отправка...</>
+              ) : !offerAccepted ? (
+                <><FileText className="w-4 h-4 mr-2" />Примите соглашение для продолжения</>
               ) : (
                 <><Send className="w-4 h-4 mr-2" />Я оплатил — <span className="text-white/60">${activePlan.priceUSD}</span> ({activePlan.label})</>
               )}
@@ -653,6 +721,7 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
         </Card>
       </div>
     )}
+    <OfferModal open={offerOpen} onClose={() => setOfferOpen(false)} onAccept={handleAcceptOffer} />
     </>
   );
 }
