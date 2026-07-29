@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUserId } from '@/lib/auth-helpers';
-import { initDB } from '@/lib/db';
+import { findUserById } from '@/lib/auth-db';
 import { sendSupportTicket } from '@/lib/email';
 
 export async function POST(request: NextRequest) {
   try {
-    const userId = await getAuthUserId();
+    const userId = await getAuthUserId(request);
     if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await request.json();
@@ -19,21 +19,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Сообщение слишком длинное (макс. 2000 символов)' }, { status: 400 });
     }
 
-    await initDB();
-
-    // Get user info for the email
-    const { tursoDb } = await import('@/lib/db');
-    const userRes = await tursoDb.execute({ sql: 'SELECT username, email FROM users WHERE id = ?', args: [userId] });
-    const user = userRes.rows[0];
-    const username = (user?.username as string) || userId.slice(0, 8);
-    const email = user?.email as string | undefined;
+    // Get user info from auth DB
+    const user = await findUserById(userId);
+    const username = user?.username || userId.slice(0, 8);
 
     // Send email
     await sendSupportTicket({
       username,
       message: message.trim(),
       requestFaster: !!requestFaster,
-      email,
+      email: user?.email || undefined,
     });
 
     return NextResponse.json({ success: true, message: 'Обращение отправлено' });

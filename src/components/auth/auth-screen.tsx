@@ -154,7 +154,7 @@ export default function AuthScreen() {
               disabled={loading}
               className="w-full h-12 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl transition-all text-sm"
             >
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Продолжить к оплате'}
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Перейти к оплате'}
             </Button>
             {error && (
               <p className="text-xs text-red-400/80">{error}</p>
