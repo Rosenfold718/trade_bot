@@ -123,6 +123,7 @@ export async function initAuthTables(): Promise<void> {
     { table: 'PaymentRequest', col: 'planLabel', def: 'ALTER TABLE "PaymentRequest" ADD COLUMN "planLabel" TEXT NOT NULL DEFAULT \'1 месяц\'' },
     { table: 'PaymentRequest', col: 'amountUSD', def: 'ALTER TABLE "PaymentRequest" ADD COLUMN "amountUSD" REAL NOT NULL DEFAULT 0' },
     { table: 'PaymentRequest', col: 'txHash', def: 'ALTER TABLE "PaymentRequest" ADD COLUMN "txHash" TEXT' },
+    { table: 'PaymentRequest', col: 'paymentMethod', def: 'ALTER TABLE "PaymentRequest" ADD COLUMN "paymentMethod" TEXT DEFAULT \'ton\'' },
   ];
 
   for (const m of migrations) {

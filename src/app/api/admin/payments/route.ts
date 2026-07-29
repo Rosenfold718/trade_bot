@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
     const db = getAuthClient();
 
     const result = await db.execute(
-      `SELECT pr.id, pr.userId, pr.months, pr.planLabel, pr.amountUSD, pr.txHash, pr.status, pr.createdAt, pr.reviewedAt, pr.reviewedBy,
+      `SELECT pr.id, pr.userId, pr.months, pr.planLabel, pr.amountUSD, pr.txHash, pr.paymentMethod, pr.status, pr.createdAt, pr.reviewedAt, pr.reviewedBy,
               u.username
        FROM "PaymentRequest" pr
        LEFT JOIN "User" u ON u.id = pr.userId
@@ -39,6 +39,7 @@ export async function GET(request: NextRequest) {
       planLabel: row.planLabel as string,
       amountUSD: Number(row.amountUSD),
       txHash: (row.txHash as string) || null,
+      paymentMethod: (row.paymentMethod as string) || 'ton',
       status: row.status as string,
       createdAt: row.createdAt as string,
       reviewedAt: (row.reviewedAt as string) || null,

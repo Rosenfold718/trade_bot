@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { action, months, txHash } = body as { action: string; months?: number; txHash?: string };
+    const { action, months, txHash, paymentMethod } = body as { action: string; months?: number; txHash?: string; paymentMethod?: string };
 
     if (action === 'confirm-payment') {
       const durationMonths = months && [1, 3, 6, 12].includes(months) ? months : 1;
@@ -97,9 +97,9 @@ export async function POST(request: NextRequest) {
       // Create payment request with exact plan amount
       const requestId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       await db.execute(
-        `INSERT INTO "PaymentRequest" (id, userId, months, planLabel, amountUSD, txHash, status, createdAt)
-         VALUES (?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP)`,
-        [requestId, userId, plan.months, plan.label, plan.priceUSD, txHash || null]
+        `INSERT INTO "PaymentRequest" (id, userId, months, planLabel, amountUSD, txHash, paymentMethod, status, createdAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP)`,
+        [requestId, userId, plan.months, plan.label, plan.priceUSD, txHash || null, paymentMethod || 'ton']
       );
 
       return NextResponse.json({

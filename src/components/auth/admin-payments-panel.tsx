@@ -17,6 +17,7 @@ interface PaymentRequest {
   planLabel: string;
   amountUSD: number;
   txHash: string | null;
+  paymentMethod: string;
   status: string;
   createdAt: string;
 }
@@ -510,6 +511,7 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
                     </div>
                   </div>
                   <div className="flex items-center gap-3 text-[10px] text-white/30">
+                    <span className="px-1.5 py-0.5 rounded bg-white/[0.04] text-white/40">{req.paymentMethod === 'binance' ? 'Binance' : 'TON'}</span>
                     <span className="font-mono text-amber-400/70">${req.amountUSD}</span>
                     <span className="flex items-center gap-1">
                       <Clock className="w-3 h-3" />
