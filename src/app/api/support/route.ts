@@ -12,7 +12,12 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { message, requestFaster } = body as { message?: string; requestFaster?: boolean };
+    const { email, message, requestFaster } = body as { email?: string; message?: string; requestFaster?: boolean };
+
+    // Validate email — mandatory
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      return NextResponse.json({ error: 'Укажите корректный email для ответа' }, { status: 400 });
+    }
 
     if (!message || message.trim().length < 3) {
       return NextResponse.json({ error: 'Сообщение слишком короткое' }, { status: 400 });
@@ -25,20 +30,18 @@ export async function POST(request: NextRequest) {
     // Init auth tables (idempotent)
     await initAuthTables();
 
-    // Get user info — non-blocking
+    // Get username
     let username = userId.slice(0, 8);
-    let userEmail: string | undefined;
     try {
       const user = await findUserById(userId);
-      if (user) {
-        username = user.username;
-        userEmail = user.email || undefined;
-      }
-    } catch (dbErr) {
-      console.warn('[support] Could not fetch user:', dbErr);
+      if (user) username = user.username;
+    } catch {
+      // use fallback
     }
 
-    // 1) Always save to DB first — this is the reliable path
+    const userEmail = email.trim();
+
+    // 1) Save to DB — always
     try {
       await createSupportTicket({
         userId,
@@ -48,20 +51,19 @@ export async function POST(request: NextRequest) {
       });
     } catch (dbErr) {
       console.error('[support] DB save failed:', dbErr);
-      return NextResponse.json({ error: 'Ошибка сохранения обращения. Попробуйте позже.' }, { status: 500 });
+      return NextResponse.json({ error: 'Ошибка сохранения. Попробуйте позже.' }, { status: 500 });
     }
 
-    // 2) Try to send email — best-effort, failure doesn't block success
+    // 2) Send email — best-effort
     try {
       await sendSupportTicket({
         username,
+        userEmail,
         message: message.trim(),
         requestFaster: !!requestFaster,
-        email: userEmail,
       });
     } catch (emailErr) {
-      console.error('[support] Email failed (message saved to DB):', emailErr);
-      // Still return success — message is saved in DB
+      console.error('[support] Email failed (saved to DB):', emailErr);
     }
 
     return NextResponse.json({ success: true });

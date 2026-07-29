@@ -57,6 +57,7 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
 
   // Support modal state
   const [supportOpen, setSupportOpen] = useState(false);
+  const [supportEmail, setSupportEmail] = useState('');
   const [supportMessage, setSupportMessage] = useState('');
   const [supportSending, setSupportSending] = useState(false);
   const [supportSuccess, setSupportSuccess] = useState(false);
@@ -145,10 +146,16 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
     setSupportError('');
     setSupportSending(true);
     try {
+      if (!supportEmail.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supportEmail.trim())) {
+        setSupportError('Укажите корректный email для ответа');
+        setSupportSending(false);
+        return;
+      }
       const res = await fetch('/api/support', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          email: supportEmail.trim(),
           message: supportMessage.trim(),
           requestFaster: submitted,
         }),
@@ -160,6 +167,7 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
           setSupportOpen(false);
           setSupportSuccess(false);
           setSupportMessage('');
+          setSupportEmail('');
         }, 2000);
       } else {
         setSupportError(data.error || 'Ошибка отправки');
@@ -574,6 +582,20 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
                   </div>
                 </div>
 
+                {/* Email */}
+                <div>
+                  <label className="text-[10px] text-white/30 uppercase tracking-wider mb-1 flex items-center gap-1">
+                    Email для ответа <span className="text-red-400">*</span>
+                  </label>
+                  <Input
+                    type="email"
+                    value={supportEmail}
+                    onChange={(e) => setSupportEmail(e.target.value)}
+                    placeholder="your@email.com"
+                    className="h-10 bg-white/[0.04] border-white/[0.08] text-white placeholder:text-white/15 rounded-lg text-xs focus:ring-blue-500/25 focus:border-blue-500/30"
+                  />
+                </div>
+
                 {/* Message */}
                 <div>
                   <label className="text-[10px] text-white/30 uppercase tracking-wider mb-1 block">Сообщение</label>
@@ -596,7 +618,7 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
 
                 <Button
                   onClick={handleSendSupport}
-                  disabled={supportSending || supportMessage.trim().length < 3}
+                  disabled={supportSending || supportMessage.trim().length < 3 || !supportEmail.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supportEmail.trim())}
                   className="w-full h-10 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-all duration-200 disabled:opacity-50"
                 >
                   {supportSending ? (
@@ -610,6 +632,7 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
                   <button
                     onClick={() => {
                       setSupportMessage(`Прошу активировать мой аккаунт быстрее. Логин: ${username}. Тариф: ${activePlan.label} (${activePlan.priceUSD}$). Оплатил через ${paymentMethod === 'binance' ? 'Binance ID' : 'TON'}.`);
+                  if (!supportEmail.trim()) setSupportEmail('');
                     }}
                     className="w-full text-center text-[10px] text-amber-400/60 hover:text-amber-400 transition-colors py-1"
                   >
