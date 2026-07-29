@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createUser, findUserByUsername } from '@/lib/auth-db';
+import { createUser, findUserByUsername, findUserByEmail } from '@/lib/auth-db';
 import { initAuthTables } from '@/lib/init-auth-tables';
 import { initUserTradingData } from '@/lib/db';
 import bcrypt from 'bcryptjs';
@@ -30,9 +30,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Укажите корректный email' }, { status: 400 });
     }
 
-    const existing = await findUserByUsername(username);
-    if (existing) {
+    const existingUser = await findUserByUsername(username);
+    if (existingUser) {
       return NextResponse.json({ error: 'Пользователь с таким логином уже существует' }, { status: 409 });
+    }
+
+    const existingEmail = await findUserByEmail(email);
+    if (existingEmail) {
+      return NextResponse.json({ error: 'Аккаунт с таким email уже зарегистрирован' }, { status: 409 });
     }
 
     const hashedPassword = await bcrypt.hash(password, 12);

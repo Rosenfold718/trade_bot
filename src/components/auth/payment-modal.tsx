@@ -99,6 +99,16 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
     } catch { /* ignore */ }
   };
 
+  // Save acceptance when user toggles checkbox directly
+  const handleCheckboxChange = async (checked: boolean) => {
+    setOfferAccepted(checked);
+    if (checked) {
+      try {
+        await fetch('/api/offer-status', { method: 'POST' });
+      } catch { /* ignore */ }
+    }
+  };
+
   const activePlan = PLANS.find(p => p.id === selectedPlan) ?? PLANS[1];
 
   // Poll subscription status after submission
@@ -297,24 +307,24 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
       onClick={(e) => { if (e.target === e.currentTarget) { e.preventDefault(); e.stopPropagation(); } }}
     >
       <div className="absolute inset-0" />
-      <Card className="relative z-10 w-full max-w-2xl mx-4 bg-[#12121e]/95 border-white/10 rounded-2xl shadow-2xl shadow-black/60 max-h-[92vh] overflow-y-auto">
-        <CardHeader className="p-6 pb-2 text-center">
-          <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mb-4">
-            <Wallet className="w-7 h-7 text-amber-400" />
+      <Card className="relative z-10 w-full max-w-2xl mx-4 bg-[#12121e]/95 border-white/10 rounded-2xl shadow-2xl shadow-black/60 max-h-[95vh] overflow-y-auto custom-scrollbar">
+        <CardHeader className="p-4 sm:p-6 pb-2 text-center">
+          <div className="w-12 h-12 sm:w-14 sm:h-14 mx-auto rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mb-3 sm:mb-4">
+            <Wallet className="w-6 h-6 sm:w-7 sm:h-7 text-amber-400" />
           </div>
-          <CardTitle className="text-lg font-bold text-white">Выберите тариф</CardTitle>
-          <p className="text-sm text-white/40 mt-1">Для доступа к торговому терминалу необходима активная подписка</p>
+          <CardTitle className="text-base sm:text-lg font-bold text-white">Выберите тариф</CardTitle>
+          <p className="text-xs sm:text-sm text-white/40 mt-1">Для доступа к терминалу необходима подписка</p>
         </CardHeader>
-        <CardContent className="p-6 pt-2 space-y-5">
-          {/* Plans — 2x2 grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <CardContent className="p-4 sm:p-6 pt-2 space-y-4 sm:space-y-5">
+          {/* Plans — 2x2 grid, 4 columns on sm+ */}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
             {PLANS.map((plan) => {
               const isSelected = selectedPlan === plan.id;
               return (
                 <button
                   key={plan.id}
                   onClick={() => setSelectedPlan(plan.id)}
-                  className={`relative flex flex-col items-center gap-2 p-4 rounded-xl border transition-all duration-200 cursor-pointer ${
+                  className={`relative flex flex-col items-center gap-1.5 sm:gap-2 p-3 sm:p-4 rounded-xl border transition-all duration-200 cursor-pointer ${
                     isSelected
                       ? 'bg-emerald-500/10 border-emerald-500/40 shadow-lg shadow-emerald-500/5'
                       : 'bg-white/[0.03] border-white/10 hover:bg-white/[0.06] hover:border-white/20'
@@ -326,11 +336,11 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
                     </span>
                   )}
                   <div className={isSelected ? 'text-emerald-400' : 'text-white/40'}>{plan.icon}</div>
-                  <span className={`text-sm font-semibold ${isSelected ? 'text-white' : 'text-white/70'}`}>{plan.label}</span>
-                  <span className={`text-xl font-bold ${isSelected ? 'text-emerald-400' : 'text-white/50'}`}>
+                  <span className={`text-xs sm:text-sm font-semibold ${isSelected ? 'text-white' : 'text-white/70'}`}>{plan.label}</span>
+                  <span className={`text-lg sm:text-xl font-bold ${isSelected ? 'text-emerald-400' : 'text-white/50'}`}>
                     ${plan.priceUSD}
                   </span>
-                  <span className={`text-[10px] ${isSelected ? 'text-emerald-400/60' : 'text-white/25'}`}>
+                  <span className={`text-[9px] sm:text-[10px] ${isSelected ? 'text-emerald-400/60' : 'text-white/25'}`}>
                     {plan.perMonth}
                   </span>
                 </button>
@@ -530,16 +540,7 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
                 <input
                   type="checkbox"
                   checked={offerAccepted}
-                  onChange={(e) => {
-                    if (!e.target.checked) {
-                      setOfferAccepted(false);
-                      return;
-                    }
-                    // First time — show full offer modal
-                    if (!offerAccepted) {
-                      setOfferOpen(true);
-                    }
-                  }}
+                  onChange={(e) => handleCheckboxChange(e.target.checked)}
                   className="peer sr-only"
                 />
                 <div className="w-4 h-4 mt-0.5 rounded border border-white/20 bg-white/[0.04] peer-checked:bg-emerald-600 peer-checked:border-emerald-600 flex items-center justify-center transition-all shrink-0">
@@ -548,12 +549,13 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
               </label>
               <div className="flex-1 min-w-0">
                 <p className="text-[11px] text-white/40 leading-relaxed">
-                  Я принимаю{' '}
+                  Я принимаю условия{' '}
                   <button
+                    type="button"
                     onClick={() => setOfferOpen(true)}
                     className="text-amber-400/80 hover:text-amber-400 underline underline-offset-2 decoration-amber-400/30"
                   >
-                    пользовательское соглашение
+                    пользовательского соглашения
                   </button>
                   {' '}и понимаю риски криптовалютной торговли
                 </p>

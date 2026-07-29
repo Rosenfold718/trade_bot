@@ -356,22 +356,28 @@ export default function TradingTerminal() {
           console.log(`[AutoTrade][${strategyId}]`, r.message);
           addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] ${r.message}`, r.action === 'new-trade' ? 'trade' : 'info');
 
-          // Process closed trades
-          for (const ct of r.closedTrades) {
-            try {
-              const closeRes = await fetch('/api/trader', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'close-trade', tradeId: ct.tradeId, exitPrice: ct.exitPrice, strategyId }),
-              });
-              const closeData = await closeRes.json();
-              if (closeData.success) {
-                addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Закрыта ${ct.symbol}: ${ct.reason} | PnL: ${ct.pnl >= 0 ? '+' : ''}$${ct.pnl.toFixed(2)}`, ct.pnl >= 0 ? 'trade' : 'error');
-                if (closeData.debtRepaid && closeData.debtRepaid > 0) {
+          // Process closed trades — aggregate into one log entry
+          if (r.closedTrades.length > 0) {
+            const totalPnl = r.closedTrades.reduce((sum, ct) => sum + ct.pnl, 0);
+            const winners = r.closedTrades.filter(ct => ct.pnl >= 0).length;
+            const losers = r.closedTrades.filter(ct => ct.pnl < 0).length;
+            const parts: string[] = [];
+            if (winners > 0) parts.push(`${winners} прибыльн.`);
+            if (losers > 0) parts.push(`${losers} убыточн.`);
+            addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Закрыто ${r.closedTrades.length} сделок (${parts.join(', ')}): PnL ${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`, totalPnl >= 0 ? 'trade' : 'error');
+            for (const ct of r.closedTrades) {
+              try {
+                const closeRes = await fetch('/api/trader', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ action: 'close-trade', tradeId: ct.tradeId, exitPrice: ct.exitPrice, strategyId }),
+                });
+                const closeData = await closeRes.json();
+                if (closeData.success && closeData.debtRepaid && closeData.debtRepaid > 0) {
                   addLog(`💰 ${closeData.debtRepaid.toFixed(2)}$ из прибыли направлено на погашение долга`, 'trade');
                 }
-              }
-            } catch { /* silent */ }
+              } catch { /* silent */ }
+            }
           }
 
           // Apply trailing stop updates

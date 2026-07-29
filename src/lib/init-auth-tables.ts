@@ -28,6 +28,7 @@ export async function initAuthTables(): Promise<void> {
       "updatedAt" DATETIME NOT NULL
     );
     CREATE UNIQUE INDEX IF NOT EXISTS "User_username_key" ON "User"("username");
+    CREATE UNIQUE INDEX IF NOT EXISTS "User_email_key" ON "User"("email");
 
     CREATE TABLE IF NOT EXISTS "Account" (
       "id" TEXT NOT NULL PRIMARY KEY,
@@ -124,6 +125,13 @@ export async function initAuthTables(): Promise<void> {
 
   for (const stmt of statements) {
     await client.execute(stmt);
+  }
+
+  // Migrate: add unique index on email if not present
+  try {
+    await client.execute(`SELECT 1 FROM "User_email_key" LIMIT 0`);
+  } catch {
+    try { await client.execute(`CREATE UNIQUE INDEX IF NOT EXISTS "User_email_key" ON "User"("email")`); } catch { /* ignore */ }
   }
 
   // Migrate: add missing columns to existing tables

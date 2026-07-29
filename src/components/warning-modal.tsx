@@ -176,9 +176,9 @@ export default function WarningModal({ onComplete }: WarningModalProps) {
                 size="sm"
                 onClick={() => setPage(p => Math.max(0, p - 1))}
                 disabled={page === 0}
-                className="h-9 px-3 border-white/[0.08] text-white/40 hover:bg-white/[0.04] hover:text-white/60 disabled:opacity-20"
+                className="h-9 w-9 p-0 border-white/[0.12] text-white/50 hover:bg-white/[0.06] hover:text-white/70 disabled:opacity-20"
               >
-                <ChevronLeft className="h-3.5 w-3.5" />
+                <ChevronLeft className="h-4 w-4" />
               </Button>
               <div className="flex-1 flex gap-1.5">
                 {PAGES.map((_, i) => (
@@ -197,9 +197,9 @@ export default function WarningModal({ onComplete }: WarningModalProps) {
                 size="sm"
                 onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
                 disabled={page === totalPages - 1}
-                className="h-9 px-3 border-white/[0.08] text-white/40 hover:bg-white/[0.04] hover:text-white/60 disabled:opacity-20"
+                className="h-9 w-9 p-0 border-white/[0.12] text-white/50 hover:bg-white/[0.06] hover:text-white/70 disabled:opacity-20"
               >
-                <ChevronRight className="h-3.5 w-3.5" />
+                <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
 

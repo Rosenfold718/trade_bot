@@ -91,6 +91,25 @@ export async function findUserByUsername(username: string): Promise<AuthUser | n
   };
 }
 
+export async function findUserByEmail(email: string): Promise<AuthUser | null> {
+  const result = await getClient().execute(
+    `SELECT * FROM "User" WHERE email = ?`,
+    [email]
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    id: row.id as string,
+    username: row.username as string,
+    password: row.password as string,
+    email: (row.email as string) || null,
+    telegram: (row.telegram as string) || null,
+    role: (row.role as string) || 'user',
+    createdAt: row.createdAt as string,
+    updatedAt: row.updatedAt as string,
+  };
+}
+
 export async function findUserById(id: string): Promise<AuthUser | null> {
   const result = await getClient().execute(
     `SELECT * FROM "User" WHERE id = ?`,
