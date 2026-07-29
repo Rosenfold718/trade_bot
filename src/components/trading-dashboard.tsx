@@ -311,33 +311,35 @@ export default function TradingDashboard() {
         </Card>
       )}
 
-      {/* Weights */}
-      <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/[0.06] rounded-xl">
-        <CardHeader className="p-3 pb-2">
-          <CardTitle className="text-[10px] uppercase tracking-widest text-white/25 font-medium">Веса индикаторов</CardTitle>
-        </CardHeader>
-        <CardContent className="p-3 pt-0">
-          <div className="space-y-1.5">
-            {weights.map((w) => (
-              <div key={w.id} className="flex items-center justify-between">
-                <span className="text-[10px] text-white/40 font-mono">{w.indicator_name}</span>
-                <div className="flex items-center gap-2">
-                  <div className="w-16 h-1.5 bg-white/[0.04] rounded-full overflow-hidden">
-                    <div
-                      className={cn(
-                        'h-full rounded-full transition-all duration-500',
-                        w.weight >= 1.5 ? 'bg-green-400' : w.weight >= 1 ? 'bg-amber-400' : 'bg-red-400',
-                      )}
-                      style={{ width: `${Math.min(w.weight / 2.5 * 100, 100)}%` }}
-                    />
+      {/* Weights — only show if loaded */}
+      {weights.length > 0 && (
+        <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/[0.06] rounded-xl">
+          <CardHeader className="p-3 pb-2">
+            <CardTitle className="text-[10px] uppercase tracking-widest text-white/25 font-medium">Веса индикаторов</CardTitle>
+          </CardHeader>
+          <CardContent className="p-3 pt-0">
+            <div className="space-y-1.5">
+              {weights.map((w) => (
+                <div key={w.id} className="flex items-center justify-between">
+                  <span className="text-[10px] text-white/40 font-mono">{w.indicator_name}</span>
+                  <div className="flex items-center gap-2">
+                    <div className="w-16 h-1.5 bg-white/[0.04] rounded-full overflow-hidden">
+                      <div
+                        className={cn(
+                          'h-full rounded-full transition-all duration-500',
+                          w.weight >= 1.5 ? 'bg-green-400' : w.weight >= 1 ? 'bg-amber-400' : 'bg-red-400',
+                        )}
+                        style={{ width: `${Math.min(w.weight / 2.5 * 100, 100)}%` }}
+                      />
+                    </div>
+                    <span className="text-[10px] font-mono text-white/40 w-8 text-right">{w.weight.toFixed(2)}</span>
                   </div>
-                  <span className="text-[10px] font-mono text-white/40 w-8 text-right">{w.weight.toFixed(2)}</span>
                 </div>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

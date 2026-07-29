@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { RotateCcw, Loader2, Zap, Power, DollarSign } from 'lucide-react';
+import { RotateCcw, Loader2, Zap, Power, DollarSign, Pencil, Check, X } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,10 +22,14 @@ import {
 
 export default function ControlPanel() {
   const [resetAmount, setResetAmount] = useState('');
+  const [editingDeposit, setEditingDeposit] = useState(false);
+  const [editDepositValue, setEditDepositValue] = useState('');
+  const [savingDeposit, setSavingDeposit] = useState(false);
   const {
     traderState, isLoading, setIsLoading,
     autoTrading, setAutoTrading, setOpenTrades, setRecentTrades,
     activeStrategy, strategyStates,
+    setTraderState, setTotalClosedPnl, setClosedTradeCount,
   } = useTerminalStore();
 
   const strategy = getStrategy(activeStrategy);
@@ -44,12 +48,40 @@ export default function ControlPanel() {
       setTraderState({ id: activeStrategy, strategy_id: activeStrategy, balance: amount, borrowed_funds: 0, debt_to_repay: 0, is_active: true, initial_balance: amount });
       setOpenTrades([]);
       setRecentTrades([]);
+      setTotalClosedPnl(0);
+      setClosedTradeCount(0);
       setResetAmount('');
     } catch (err) {
       console.error('Reset error:', err);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleSaveDeposit = async () => {
+    const val = parseFloat(editDepositValue);
+    if (!val || val < 10) return;
+    setSavingDeposit(true);
+    try {
+      const res = await fetch('/api/update-deposit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ strategyId: activeStrategy, initialBalance: val }),
+      });
+      if (res.ok) {
+        setTraderState({ ...traderState!, initial_balance: val });
+        setEditingDeposit(false);
+      }
+    } catch (err) {
+      console.error('Deposit update error:', err);
+    } finally {
+      setSavingDeposit(false);
+    }
+  };
+
+  const handleStartEditDeposit = () => {
+    setEditDepositValue((traderState?.initial_balance ?? 100).toFixed(0));
+    setEditingDeposit(true);
   };
 
   const handleToggleAutoTrading = () => {
@@ -60,8 +92,10 @@ export default function ControlPanel() {
   const allBalances = STRATEGIES.map(s => {
     const ss = strategyStates[s.id];
     const balance = ss?.traderState?.balance ?? 0;
+    const initial = ss?.traderState?.initial_balance ?? 100;
+    const pnl = ss?.totalClosedPnl ?? 0;
     const openCount = ss?.openTrades?.length ?? 0;
-    return { ...s, balance, openCount };
+    return { ...s, balance, initial, pnl, openCount };
   });
 
   const totalBalance = allBalances.reduce((sum, s) => sum + s.balance, 0);
@@ -135,20 +169,26 @@ export default function ControlPanel() {
             </div>
           )}
 
-          {/* Per-strategy mini balances */}
+          {/* Per-strategy mini balances with deposit info */}
           {autoTrading && (
             <div className="grid grid-cols-3 gap-1.5 pt-1">
-              {allBalances.map(s => (
-                <div key={s.id} className="text-center">
-                  <div className={cn('text-[10px] font-mono font-bold', s.id === activeStrategy ? s.color : 'text-white/40')}>
-                    {s.name.split(' ')[0]}
+              {allBalances.map(s => {
+                const pct = s.initial > 0 ? ((s.balance - s.initial) / s.initial * 100) : 0;
+                return (
+                  <div key={s.id} className="text-center">
+                    <div className={cn('text-[10px] font-mono font-bold', s.id === activeStrategy ? s.color : 'text-white/40')}>
+                      {s.name.split(' ')[0]}
+                    </div>
+                    <div className="text-[10px] font-mono text-white/50">${s.balance.toFixed(0)}</div>
+                    <div className={cn('text-[9px] font-mono', pct >= 0 ? 'text-green-400/50' : 'text-red-400/50')}>
+                      {pct >= 0 ? '+' : ''}{pct.toFixed(1)}%
+                    </div>
+                    {s.openCount > 0 && (
+                      <div className="text-[9px] font-mono text-yellow-400/50">{s.openCount} откр.</div>
+                    )}
                   </div>
-                  <div className="text-[10px] font-mono text-white/50">${s.balance.toFixed(0)}</div>
-                  {s.openCount > 0 && (
-                    <div className="text-[9px] font-mono text-yellow-400/50">{s.openCount} откр.</div>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </CardContent>
@@ -161,7 +201,54 @@ export default function ControlPanel() {
             <Zap className="h-3 w-3" /> Управление
           </CardTitle>
         </CardHeader>
-        <CardContent className="p-3 pt-0 space-y-2">
+        <CardContent className="p-3 pt-0 space-y-3">
+          {/* Deposit amount editor */}
+          {traderState && (
+            <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.04]">
+              <div className="flex items-center gap-2">
+                <DollarSign className="h-3.5 w-3.5 text-white/25" />
+                <span className="text-[10px] text-white/30">Депозит:</span>
+                {editingDeposit ? (
+                  <div className="flex items-center gap-1.5">
+                    <Input
+                      type="number"
+                      value={editDepositValue}
+                      onChange={(e) => setEditDepositValue(e.target.value)}
+                      className="h-7 w-24 bg-white/[0.06] border-white/[0.1] text-xs text-white px-2 rounded-md"
+                      min="10"
+                      autoFocus
+                      onKeyDown={(e) => e.key === 'Enter' && handleSaveDeposit()}
+                    />
+                    <button
+                      onClick={handleSaveDeposit}
+                      disabled={savingDeposit || !editDepositValue || parseFloat(editDepositValue) < 10}
+                      className="p-1 rounded hover:bg-green-500/20 text-green-400 disabled:opacity-30 transition-colors"
+                    >
+                      {savingDeposit ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                    </button>
+                    <button
+                      onClick={() => setEditingDeposit(false)}
+                      className="p-1 rounded hover:bg-red-500/20 text-white/30 transition-colors"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm font-bold font-mono text-white">${(traderState.initial_balance ?? 100).toFixed(0)}</span>
+                    <button
+                      onClick={handleStartEditDeposit}
+                      className="p-1 rounded hover:bg-white/[0.06] text-white/20 hover:text-white/40 transition-colors"
+                      title="Редактировать депозит"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button
@@ -186,7 +273,7 @@ export default function ControlPanel() {
                     <DollarSign className="h-4 w-4 text-white/30 shrink-0" />
                     <Input
                       type="number"
-                      placeholder="Сумма депозита ($)"
+                      placeholder={`Текущий депозит: $${traderState?.initial_balance?.toFixed(0) ?? '100'}`}
                       value={resetAmount}
                       onChange={(e) => setResetAmount(e.target.value)}
                       className="h-10 bg-white/[0.06] border-white/[0.1] text-sm text-white placeholder:text-white/25 rounded-lg"
