@@ -12,9 +12,7 @@ import {
   HelpCircle, MessageSquare, ChevronDown, ChevronUp, AlertTriangle,
   HeadphonesIcon, X,
 } from 'lucide-react';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
-} from '@/components/ui/dialog';
+
 
 const WALLET_ADDRESS = 'UQC2_CBuEhAmxr4fJBt-gGdP8u3Mc1-RNcinUPc6ydxz1cJO';
 const BINANCE_ID = '220296531';
@@ -536,83 +534,94 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
       </Card>
     </div>
 
-    {/* Support Modal */}
-    <Dialog open={supportOpen} onOpenChange={setSupportOpen}>
-      <DialogContent className="bg-[#12121e] border-white/10 max-w-md">
-        <DialogHeader>
-          <DialogTitle className="text-white text-base flex items-center gap-2">
-            <HeadphonesIcon className="w-5 h-5 text-blue-400" />
-            Техподдержка
-          </DialogTitle>
-          <DialogDescription className="text-white/40 text-xs">
-            Опишите проблему — мы получим письмо и ответим как можно скорее
-          </DialogDescription>
-        </DialogHeader>
-
-        {supportSuccess ? (
-          <div className="py-8 text-center">
-            <div className="w-12 h-12 mx-auto rounded-full bg-emerald-500/10 flex items-center justify-center mb-3">
-              <CheckCircle className="w-6 h-6 text-emerald-400" />
-            </div>
-            <p className="text-sm text-emerald-400 font-medium">Обращение отправлено!</p>
-            <p className="text-xs text-white/30 mt-1">Мы ответим в ближайшее время</p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {/* Username */}
-            <div>
-              <label className="text-[10px] text-white/30 uppercase tracking-wider mb-1 block">Ваш логин</label>
-              <div className="h-10 bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 flex items-center text-xs text-white/60 font-mono">
-                {username || '—'}
-              </div>
-            </div>
-
-            {/* Message */}
-            <div>
-              <label className="text-[10px] text-white/30 uppercase tracking-wider mb-1 block">Сообщение</label>
-              <Textarea
-                value={supportMessage}
-                onChange={(e) => setSupportMessage(e.target.value)}
-                placeholder="Опишите ваш вопрос или проблему..."
-                rows={4}
-                maxLength={2000}
-                className="bg-white/[0.04] border-white/[0.08] text-white placeholder:text-white/15 rounded-lg text-xs resize-none focus:ring-blue-500/25 focus:border-blue-500/30"
-              />
-              <div className="text-right mt-1">
-                <span className="text-[10px] text-white/20">{supportMessage.length}/2000</span>
-              </div>
-            </div>
-
-            {supportError && (
-              <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2 text-xs text-red-400">{supportError}</div>
-            )}
-
-            <Button
-              onClick={handleSendSupport}
-              disabled={supportSending || supportMessage.trim().length < 3}
-              className="w-full h-10 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-all duration-200 disabled:opacity-50"
-            >
-              {supportSending ? (
-                <><Loader2 className="w-4 h-4 animate-spin mr-2" />Отправка...</>
-              ) : (
-                <><Send className="w-4 h-4 mr-2" />Отправить в техподдержку</>
-              )}
-            </Button>
-
-            {submitted && (
+    {/* Support Modal — custom overlay inside payment modal to avoid z-index conflict */}
+    {supportOpen && (
+      <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setSupportOpen(false)}>
+        <Card className="w-full max-w-md mx-4 bg-[#12121e] border-white/10 rounded-2xl shadow-2xl shadow-black/60" onClick={(e) => e.stopPropagation()}>
+          <CardHeader className="p-5 pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-white text-base flex items-center gap-2">
+                <HeadphonesIcon className="w-5 h-5 text-blue-400" />
+                Техподдержка
+              </CardTitle>
               <button
-                onClick={() => {
-                  setSupportMessage(`Прошу активировать мой аккаунт быстрее. Логин: ${username}. Тариф: ${activePlan.label} (${activePlan.priceUSD}$). Оплатил через ${paymentMethod === 'binance' ? 'Binance ID' : 'TON'}.`);
-                }}
-                className="w-full text-center text-[10px] text-amber-400/60 hover:text-amber-400 transition-colors py-1"
+                onClick={() => setSupportOpen(false)}
+                className="p-1.5 rounded-lg hover:bg-white/[0.06] text-white/30 hover:text-white/60 transition-colors"
               >
-                ⚡ Быстрая активация (заполнить автоматически)
+                <X className="w-4 h-4" />
               </button>
+            </div>
+            <p className="text-white/40 text-xs mt-1">
+              Опишите проблему — мы получим письмо и ответим как можно скорее
+            </p>
+          </CardHeader>
+          <CardContent className="p-5 pt-0">
+            {supportSuccess ? (
+              <div className="py-8 text-center">
+                <div className="w-12 h-12 mx-auto rounded-full bg-emerald-500/10 flex items-center justify-center mb-3">
+                  <CheckCircle className="w-6 h-6 text-emerald-400" />
+                </div>
+                <p className="text-sm text-emerald-400 font-medium">Обращение отправлено!</p>
+                <p className="text-xs text-white/30 mt-1">Мы ответим в ближайшее время</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Username */}
+                <div>
+                  <label className="text-[10px] text-white/30 uppercase tracking-wider mb-1 block">Ваш логин</label>
+                  <div className="h-10 bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 flex items-center text-xs text-white/60 font-mono">
+                    {username || '—'}
+                  </div>
+                </div>
+
+                {/* Message */}
+                <div>
+                  <label className="text-[10px] text-white/30 uppercase tracking-wider mb-1 block">Сообщение</label>
+                  <Textarea
+                    value={supportMessage}
+                    onChange={(e) => setSupportMessage(e.target.value)}
+                    placeholder="Опишите ваш вопрос или проблему..."
+                    rows={4}
+                    maxLength={2000}
+                    className="bg-white/[0.04] border-white/[0.08] text-white placeholder:text-white/15 rounded-lg text-xs resize-none focus:ring-blue-500/25 focus:border-blue-500/30"
+                  />
+                  <div className="text-right mt-1">
+                    <span className="text-[10px] text-white/20">{supportMessage.length}/2000</span>
+                  </div>
+                </div>
+
+                {supportError && (
+                  <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2 text-xs text-red-400">{supportError}</div>
+                )}
+
+                <Button
+                  onClick={handleSendSupport}
+                  disabled={supportSending || supportMessage.trim().length < 3}
+                  className="w-full h-10 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-all duration-200 disabled:opacity-50"
+                >
+                  {supportSending ? (
+                    <><Loader2 className="w-4 h-4 animate-spin mr-2" />Отправка...</>
+                  ) : (
+                    <><Send className="w-4 h-4 mr-2" />Отправить в техподдержку</>
+                  )}
+                </Button>
+
+                {submitted && (
+                  <button
+                    onClick={() => {
+                      setSupportMessage(`Прошу активировать мой аккаунт быстрее. Логин: ${username}. Тариф: ${activePlan.label} (${activePlan.priceUSD}$). Оплатил через ${paymentMethod === 'binance' ? 'Binance ID' : 'TON'}.`);
+                    }}
+                    className="w-full text-center text-[10px] text-amber-400/60 hover:text-amber-400 transition-colors py-1"
+                  >
+                    ⚡ Быстрая активация (заполнить автоматически)
+                  </button>
+                )}
+              </div>
             )}
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
+          </CardContent>
+        </Card>
+      </div>
+    )}
     </>
   );
 }
