@@ -64,8 +64,8 @@ export default function AuthScreen() {
       setError('Логин должен быть не менее 3 символов');
       return;
     }
-    if (email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-      setError('Некорректный формат email');
+    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setError('Укажите корректный email');
       return;
     }
     if (username.length > 20) {
@@ -94,7 +94,7 @@ export default function AuthScreen() {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, email: email.trim() || undefined }),
+        body: JSON.stringify({ username, password, email: email.trim() }),
       });
       const data = await res.json();
 
@@ -247,17 +247,18 @@ export default function AuthScreen() {
                 <div className="space-y-2">
                   <label className="text-[11px] font-medium text-white/40 uppercase tracking-widest">
                     <Mail className="w-3 h-3 inline -mt-0.5 mr-1 text-white/25" />
-                    Email
-                    <span className="text-white/15 normal-case tracking-normal ml-1">— необязательно</span>
+                    Email <span className="text-red-400">*</span>
                   </label>
                   <Input
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="trader@example.com"
+                    required
                     className="h-12 bg-white/[0.04] border-white/[0.08] text-white placeholder:text-white/20 rounded-xl focus:ring-emerald-500/25 focus:border-emerald-500/30 text-[16px]"
                     autoComplete="email"
                   />
+                  <p className="text-[10px] text-white/20">Нужен для ответа из техподдержки</p>
                 </div>
               )}
 
@@ -338,7 +339,7 @@ export default function AuthScreen() {
 
               <Button
                 type="submit"
-                disabled={loading || !username || !password || (mode === 'register' && (!confirmPassword || password !== confirmPassword))}
+                disabled={loading || !username || !password || (mode === 'register' && (!confirmPassword || password !== confirmPassword || !email.trim()))}
                 className="w-full h-12 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-semibold rounded-xl transition-all duration-200 disabled:opacity-30 text-[15px] mt-2"
               >
                 {loading ? (

@@ -10,8 +10,8 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { username, password, email } = body as { username: string; password: string; email?: string };
 
-    if (!username || !password) {
-      return NextResponse.json({ error: 'Логин и пароль обязательны' }, { status: 400 });
+    if (!username || !password || !email) {
+      return NextResponse.json({ error: 'Логин, пароль и email обязательны' }, { status: 400 });
     }
 
     if (username.length < 3 || username.length > 20) {
@@ -26,8 +26,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Пароль: минимум 8 символов' }, { status: 400 });
     }
 
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return NextResponse.json({ error: 'Некорректный email' }, { status: 400 });
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return NextResponse.json({ error: 'Укажите корректный email' }, { status: 400 });
     }
 
     const existing = await findUserByUsername(username);

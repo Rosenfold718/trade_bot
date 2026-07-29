@@ -25,7 +25,7 @@ export const authOptions: NextAuthOptions = {
           const isPasswordValid = await bcrypt.compare(credentials.password, user.password);
           if (!isPasswordValid) return null;
 
-          return { id: user.id, name: user.username, email: `${user.id}@local` };
+          return { id: user.id, name: user.username, email: user.email || undefined };
         } catch (err) {
           console.error('[authorize] Error:', err);
           return null;
@@ -42,6 +42,9 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.id = user.id;
         token.username = user.name;
+        if (user.email && !String(user.email).endsWith('@local')) {
+          token.email = user.email;
+        }
       }
       return token;
     },
@@ -49,6 +52,9 @@ export const authOptions: NextAuthOptions = {
       if (token && session.user) {
         (session.user as any).id = token.id;
         (session.user as any).username = token.username;
+        if (token.email && !String(token.email).endsWith('@local')) {
+          session.user.email = token.email as string;
+        }
       }
       return session;
     },

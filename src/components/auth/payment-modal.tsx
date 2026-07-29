@@ -44,6 +44,7 @@ interface PaymentModalProps {
 export default function PaymentModal({ onClose }: PaymentModalProps) {
   const { data: session } = useSession();
   const username = session?.user?.name || '';
+  const userEmail = (session?.user as any)?.email || '';
   const [selectedPlan, setSelectedPlan] = useState<number>(3);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('ton');
   const [txHash, setTxHash] = useState('');
@@ -62,6 +63,13 @@ export default function PaymentModal({ onClose }: PaymentModalProps) {
   const [supportSending, setSupportSending] = useState(false);
   const [supportSuccess, setSupportSuccess] = useState(false);
   const [supportError, setSupportError] = useState('');
+
+  // Pre-fill support email from session
+  useEffect(() => {
+    if (userEmail && !supportEmail) {
+      setSupportEmail(userEmail);
+    }
+  }, [userEmail]);
 
   const activePlan = PLANS.find(p => p.id === selectedPlan) ?? PLANS[1];
 
