@@ -400,7 +400,7 @@ export default function TradingTerminal() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action: 'update-tp', tradeId: tpr.tradeId, newTakeProfit: tpr.newTakeProfit, strategyId }),
               });
-              addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] TP ремонт: ${tpr.reason}`, 'warn');
+              addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] TP ремонт: ${tpr.reason}`, 'info');
             } catch { /* silent */ }
           }
 
@@ -422,7 +422,7 @@ export default function TradingTerminal() {
 
               const priceDrift = Math.abs(livePrice - nt.price) / nt.price;
               if (priceDrift > 0.005) {
-                addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Пропуск ${nt.symbol.replace('USDT', '')}: цена ушла ${priceDrift > 0 ? '+' : '-'}${(priceDrift * 100).toFixed(2)}% от сигнала — вход отменён`, 'warn');
+                addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Пропуск ${nt.symbol.replace('USDT', '')}: цена ушла ${priceDrift > 0 ? '+' : '-'}${(priceDrift * 100).toFixed(2)}% от сигнала — вход отменён`, 'info');
                 continue; // skip this trade, signal is stale
               }
 
@@ -1511,7 +1511,7 @@ function BTCRegimeBar() {
       }
 
       // Calculate volatility (std dev of returns)
-      const returns = [];
+      const returns: number[] = [];
       for (let i = 1; i < closes.length; i++) returns.push((closes[i] - closes[i - 1]) / closes[i - 1]);
       const meanRet = returns.reduce((s: number, v: number) => s + v, 0) / returns.length;
       const variance = returns.reduce((s: number, v: number) => s + (v - meanRet) ** 2, 0) / returns.length;

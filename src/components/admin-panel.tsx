@@ -1514,8 +1514,8 @@ export default function AdminPanel({ open, onClose }: AdminPanelProps) {
                       `data-[state=active]:bg-${s.color.replace('text-', '')}/15`,
                     )}
                     style={{
-                      '--tw-text-opacity': 1,
-                    }}
+                      '--tw-text-opacity': 1 as unknown as number,
+                    } as React.CSSProperties}
                   >
                     {s.id === 'momentum' && <TrendingUp className="w-3 h-3 mr-1.5" />}
                     {s.id === 'scalper' && <Crosshair className="w-3 h-3 mr-1.5" />}

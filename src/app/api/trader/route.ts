@@ -286,7 +286,12 @@ export async function POST(request: NextRequest) {
 
             if (pnl > 0 && state.debt_to_repay > 0) {
               const repayAmount = Math.min(pnl * 0.1, state.debt_to_repay);
-              await repayDebt(userId, repayAmount, strategyId);
+              // Repay debt: update trader_state directly
+              const { tursoDb } = await import('@/lib/db');
+              await tursoDb.execute(
+                `UPDATE trader_state SET debt_to_repay = MAX(0, debt_to_repay - ?), balance = balance - ? WHERE user_id = ? AND strategy_id = ?`,
+                [repayAmount, repayAmount, userId, strategyId]
+              );
               newBalance -= repayAmount;
             }
 

@@ -124,7 +124,11 @@ export async function initAuthTables(): Promise<void> {
   `.split(';').filter(s => s.trim().length > 0).map(s => s.trim() + ';');
 
   for (const stmt of statements) {
-    await client.execute(stmt);
+    try {
+      await client.execute(stmt);
+    } catch (err) {
+      console.warn('[initAuthTables] Statement failed (non-fatal):', stmt.slice(0, 60), err);
+    }
   }
 
   // Migrate: add unique index on email if not present

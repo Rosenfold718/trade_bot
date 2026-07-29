@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { findUserByUsername, createUser, getAllUsers } from '@/lib/auth-db';
+import { findUserByUsername, createUser, getAllUsers, getAuthClient } from '@/lib/auth-db';
 import { initAuthTables } from '@/lib/init-auth-tables';
 import bcrypt from 'bcryptjs';
 
@@ -30,7 +30,15 @@ export async function GET(request: Request) {
     try {
       const existing = await findUserByUsername('admin');
       if (existing) {
-        lines.push('ℹ️ Админ уже существует, пропускаю');
+        // Ensure admin has correct role (fix if it was set to 'user' by mistake)
+        if (existing.role !== 'admin') {
+          await getAuthClient().execute(
+            `UPDATE "User" SET role = 'admin' WHERE username = 'admin'`
+          );
+          lines.push('✅ Админ обновлён: role исправлен на admin');
+        } else {
+          lines.push('ℹ️ Админ уже существует, пропускаю');
+        }
       } else {
         const hashedPassword = await bcrypt.hash('Admin123', 12);
         const farFuture = new Date();
@@ -46,6 +54,10 @@ export async function GET(request: Request) {
             expiresAt: farFuture.toISOString(),
             lastPaymentAt: new Date().toISOString(),
           }
+        );
+        // Fix role — createUser hardcodes 'user', but admin needs 'admin'
+        await getAuthClient().execute(
+          `UPDATE "User" SET role = 'admin' WHERE username = 'admin'`
         );
         lines.push('✅ Админ создан: login=<b>admin</b> password=<b>Admin123</b>');
       }
