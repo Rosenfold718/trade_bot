@@ -571,12 +571,6 @@ export default function TradingTerminal() {
                   </span>
                 </div>
               )}
-              {traderState.debt_to_repay > 0 && (
-                <div className="flex items-center gap-1.5">
-                  <span className="text-white/25">Долг</span>
-                  <span className="text-red-400 font-medium">${traderState.debt_to_repay.toFixed(2)}</span>
-                </div>
-              )}
             </div>
           )}
           <div className="w-px h-5 bg-white/[0.06] hidden sm:block" />

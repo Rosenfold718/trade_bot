@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { CreditCard, RotateCcw, Play, Loader2, Zap, Power } from 'lucide-react';
+import { RotateCcw, Loader2, Zap, Power, DollarSign } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,85 +21,34 @@ import {
 } from '@/components/ui/alert-dialog';
 
 export default function ControlPanel() {
-  const [creditAmount, setCreditAmount] = useState('');
+  const [resetAmount, setResetAmount] = useState('');
   const {
-    traderState, setTraderState, backtestLoading, setBacktestLoading, isLoading, setIsLoading,
-    autoTrading, setAutoTrading, setOpenTrades, setRecentTrades, setWeights, setBacktestResults,
+    traderState, isLoading, setIsLoading,
+    autoTrading, setAutoTrading, setOpenTrades, setRecentTrades,
     activeStrategy, strategyStates,
   } = useTerminalStore();
 
   const strategy = getStrategy(activeStrategy);
 
-  const handleCredit = async () => {
-    const amount = parseFloat(creditAmount);
-    if (!amount || amount <= 0) return;
-
-    setIsLoading(true);
-    try {
-      const res = await fetch('/api/credit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount, strategyId: activeStrategy }),
-      });
-      const data = await res.json();
-      if (data.success && traderState) {
-        setTraderState({
-          ...traderState,
-          balance: traderState.balance + amount,
-          borrowed_funds: traderState.borrowed_funds + amount,
-        });
-        setCreditAmount('');
-      }
-    } catch (err) {
-      console.error('Credit error:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const handleReset = async () => {
+    const amount = parseFloat(resetAmount);
+    if (!amount || amount < 10) return;
+
     setIsLoading(true);
     try {
-      // Reset only the active strategy
       await fetch('/api/reset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ strategyId: activeStrategy }),
+        body: JSON.stringify({ strategyId: activeStrategy, balance: amount }),
       });
-      // Reset the active strategy's local state
-      setTraderState({ id: activeStrategy, strategy_id: activeStrategy, balance: 100, borrowed_funds: 0, debt_to_repay: 0, is_active: true });
+      setTraderState({ id: activeStrategy, strategy_id: activeStrategy, balance: amount, borrowed_funds: 0, debt_to_repay: 0, is_active: true, initial_balance: amount });
       setOpenTrades([]);
       setRecentTrades([]);
-      setBacktestResults([]);
+      setResetAmount('');
     } catch (err) {
       console.error('Reset error:', err);
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const handleBacktest = async () => {
-    setBacktestLoading(true);
-    try {
-      const res = await fetch('/api/backtest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ strategyId: activeStrategy }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        const wRes = await fetch(`/api/weights?strategyId=${activeStrategy}`);
-        const wData = await wRes.json();
-        if (Array.isArray(wData)) setWeights(wData);
-
-        const bRes = await fetch(`/api/backtest?strategyId=${activeStrategy}`);
-        const bData = await bRes.json();
-        if (Array.isArray(bData)) setBacktestResults(bData);
-      }
-    } catch (err) {
-      console.error('Backtest error:', err);
-    } finally {
-      setBacktestLoading(false);
     }
   };
 
@@ -205,42 +154,6 @@ export default function ControlPanel() {
         </CardContent>
       </Card>
 
-      {/* Credit */}
-      <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/[0.06] rounded-xl">
-        <CardHeader className="p-3 pb-2">
-          <CardTitle className="text-[10px] uppercase tracking-widest text-white/25 font-medium flex items-center gap-1.5">
-            <CreditCard className="h-3 w-3" /> Кредит
-            {strategy && <span className="text-[10px] font-mono ml-auto text-white/20">({strategy.name})</span>}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-3 pt-0 space-y-2">
-          <div className="flex gap-2">
-            <Input
-              type="number"
-              placeholder="Сумма $"
-              value={creditAmount}
-              onChange={(e) => setCreditAmount(e.target.value)}
-              className="h-10 bg-white/[0.04] border-white/[0.06] text-xs text-white/90 placeholder:text-white/25 rounded-lg"
-              min="0"
-              step="10"
-            />
-            <Button
-              size="sm"
-              onClick={handleCredit}
-              disabled={isLoading || !creditAmount}
-              className="h-10 px-3 bg-green-600 hover:bg-green-700 text-white text-xs rounded-lg"
-            >
-              {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Дать'}
-            </Button>
-          </div>
-          {traderState && traderState.debt_to_repay > 0 && (
-            <p className="text-[10px] text-red-400/60 font-mono">
-              Долг: ${traderState.debt_to_repay.toFixed(2)} (10% от прибыли)
-            </p>
-          )}
-        </CardContent>
-      </Card>
-
       {/* Actions */}
       <Card className="bg-[#12121e]/80 backdrop-blur-xl border-white/[0.06] rounded-xl">
         <CardHeader className="p-3 pb-2">
@@ -249,20 +162,6 @@ export default function ControlPanel() {
           </CardTitle>
         </CardHeader>
         <CardContent className="p-3 pt-0 space-y-2">
-          <Button
-            onClick={handleBacktest}
-            disabled={backtestLoading}
-            variant="outline"
-            className="w-full h-10 text-xs rounded-lg border-white/[0.08] text-white/60 hover:bg-white/[0.04] hover:text-white"
-          >
-            {backtestLoading ? (
-              <Loader2 className="h-3 w-3 animate-spin mr-1.5" />
-            ) : (
-              <Play className="h-3 w-3 mr-1.5" />
-            )}
-            {backtestLoading ? 'Бэктест...' : 'Запустить Бэктест'}
-          </Button>
-
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button
@@ -276,19 +175,40 @@ export default function ControlPanel() {
             </AlertDialogTrigger>
             <AlertDialogContent className="bg-[#1a1a2e] border-white/[0.06]">
               <AlertDialogHeader>
-                <AlertDialogTitle className="text-white">Перезапустить {strategy?.name ?? ''}?</AlertDialogTitle>
-                <AlertDialogDescription className="text-white/50">
-                  Баланс: $100, кредит: $0, все сделки очищены. Остальные стратегии не затронуты.
+                <AlertDialogTitle className="text-white">
+                  Перезапустить {strategy?.name ?? ''}?
+                </AlertDialogTitle>
+                <AlertDialogDescription className="text-white/50 space-y-3">
+                  <p>
+                    Укажите сумму депозита для перезапуска стратегии. Все текущие сделки будут закрыты и удалены, история очищена.
+                  </p>
+                  <div className="flex items-center gap-2 pt-1">
+                    <DollarSign className="h-4 w-4 text-white/30 shrink-0" />
+                    <Input
+                      type="number"
+                      placeholder="Сумма депозита ($)"
+                      value={resetAmount}
+                      onChange={(e) => setResetAmount(e.target.value)}
+                      className="h-10 bg-white/[0.06] border-white/[0.1] text-sm text-white placeholder:text-white/25 rounded-lg"
+                      min="10"
+                      step="100"
+                    />
+                  </div>
+                  <p className="text-[10px] text-white/30">
+                    Минимальная сумма: $10. Остальные стратегии не затронуты.
+                  </p>
                 </AlertDialogDescription>
               </AlertDialogHeader>
-              <AlertDialogFooter>
+              <AlertDialogFooter className="gap-2">
                 <AlertDialogCancel className="bg-white/[0.04] border-white/[0.08] text-white/60 hover:bg-white/[0.08]">
                   Отмена
                 </AlertDialogCancel>
                 <AlertDialogAction
                   onClick={handleReset}
-                  className="bg-red-600 hover:bg-red-700 text-white"
+                  disabled={!resetAmount || parseFloat(resetAmount) < 10 || isLoading}
+                  className="bg-red-600 hover:bg-red-700 text-white disabled:opacity-40"
                 >
+                  {isLoading ? <Loader2 className="h-3 w-3 animate-spin mr-1.5" /> : null}
                   Перезапустить
                 </AlertDialogAction>
               </AlertDialogFooter>

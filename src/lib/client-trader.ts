@@ -561,8 +561,25 @@ export async function runAutoTradeCycle(
     ? Math.min(best.decision.takeProfit, best.price + maxTPDistance)
     : Math.max(best.decision.takeProfit, best.price - maxTPDistance);
 
-  // Single trade with the full position size (was split into secure/runner halves).
-  const amount = Math.max(1.5, Math.min(balance * tradeSizePct, 20));
+  // Single trade with dynamic position sizing based on balance.
+  // Risk management: scale position by balance tier with proper % allocation.
+  // - $10–$200: fixed $1.5–$5 range (small account, safe start)
+  // - $200–$1000: 3–6% of balance per trade (proportional growth)
+  // - $1000–$5000: 2–4% of balance (controlled exposure)
+  // - $5000+: 1.5–3% of balance (institutional-grade sizing)
+  let amount: number;
+  if (balance < 200) {
+    amount = Math.max(1.5, Math.min(balance * 0.08, 8));
+  } else if (balance < 1000) {
+    amount = Math.max(5, Math.min(balance * 0.05, 50));
+  } else if (balance < 5000) {
+    amount = Math.max(20, Math.min(balance * 0.03, 150));
+  } else {
+    amount = Math.max(50, Math.min(balance * 0.02, 500));
+  }
+  // Cap with strategy's tradeSizePercent as absolute max (safety)
+  const strategyMax = balance * tradeSizePct;
+  amount = Math.min(amount, strategyMax);
 
   const newTrades: NewTradeInfo[] = [
     { symbol: best.symbol, direction: best.decision.direction, price: best.price, leverage: best.decision.leverage, stopLoss: best.decision.stopLoss, takeProfit, amount, strategyId, label: 'main' },

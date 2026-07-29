@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, getTotalClosedPnl, getClosedTradeCount, openTrade, closeTrade, updateStopLoss, updateTakeProfit, updateBalance, repayDebt, initUserTradingData, getClosedTrades } from '@/lib/db';
+import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, getTotalClosedPnl, getClosedTradeCount, openTrade, closeTrade, updateStopLoss, updateTakeProfit, updateBalance, initUserTradingData, getClosedTrades } from '@/lib/db';
 import { fetchKlines, makeStrategyDecision, fetchTopSymbols } from '@/lib/trading-engine';
 import { getAuthUserId } from '@/lib/auth-helpers';
 import { getStrategy } from '@/lib/strategies';
@@ -158,22 +158,11 @@ export async function POST(request: NextRequest) {
       await closeTrade(tradeId, exitPrice, pnl);
 
       const state = await getTraderState(userId, strategyId);
-      let newBalance = state.balance + trade.amount + pnl;
-
-      // Debt repayment: 10% of positive PnL goes to debt, but don't block trading
-      let debtRepaid: number | undefined;
-      if (pnl > 0 && state.debt_to_repay > 0) {
-        debtRepaid = Math.min(pnl * 0.1, state.debt_to_repay);
-        await repayDebt(userId, debtRepaid, strategyId);
-        newBalance -= debtRepaid;
-      }
-
-      // Ensure balance never goes below 0 (safety floor)
-      if (newBalance < 0) newBalance = 0;
+      const newBalance = Math.max(0, state.balance + trade.amount + pnl);
 
       await updateBalance(userId, newBalance, strategyId);
 
-      return NextResponse.json({ success: true, pnl, newBalance, debtRepaid: debtRepaid && debtRepaid > 0 ? debtRepaid : undefined });
+      return NextResponse.json({ success: true, pnl, newBalance });
     }
 
     if (action === 'update-sl') {
@@ -371,7 +360,18 @@ export async function POST(request: NextRequest) {
       }
 
       const { decision, price, symbol: sym } = bestDecision;
-      const tradeAmount = Math.min(state.balance * 0.15, state.balance);
+      // Dynamic position sizing based on balance (same logic as client-trader)
+      const bal = state.balance;
+      let tradeAmount: number;
+      if (bal < 200) {
+        tradeAmount = Math.max(1.5, Math.min(bal * 0.08, 8));
+      } else if (bal < 1000) {
+        tradeAmount = Math.max(5, Math.min(bal * 0.05, 50));
+      } else if (bal < 5000) {
+        tradeAmount = Math.max(20, Math.min(bal * 0.03, 150));
+      } else {
+        tradeAmount = Math.max(50, Math.min(bal * 0.02, 500));
+      }
       if (tradeAmount < 1) {
         return NextResponse.json({ message: 'Insufficient balance for trade' });
       }

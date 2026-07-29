@@ -48,6 +48,7 @@ export interface TraderState {
   balance: number;
   borrowed_funds: number;
   debt_to_repay: number;
+  initial_balance: number;
   is_active: boolean;
   updated_at?: string;
 }
@@ -76,15 +77,7 @@ export interface IndicatorWeight {
   calculated_winrate: number | null;
 }
 
-export interface BacktestResult {
-  id: string;
-  strategy_name: string;
-  symbol: string;
-  total_trades: number;
-  winrate: number;
-  profit_factor: number;
-  timestamp: string;
-}
+// BacktestResult removed — backtest feature disabled
 
 // ============================================================
 // Trading Engine Types
@@ -106,7 +99,8 @@ export interface TradingDecision {
   indicators: IndicatorSignal[];
 }
 
-export interface BacktestTrade {
+// BacktestTrade removed — backtest feature disabled
+export interface _BacktestTrade {
   symbol: string;
   entry_price: number;
   exit_price: number;
@@ -117,7 +111,7 @@ export interface BacktestTrade {
   indicators_used: string[];
 }
 
-export interface BacktestSummary {
+export interface _BacktestSummary {
   symbol: string;
   total_trades: number;
   winning_trades: number;

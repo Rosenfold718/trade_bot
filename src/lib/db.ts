@@ -124,6 +124,8 @@ const MIGRATION_SQLS = [
   )`,
   // Phase 3b: add user_id column to existing system_settings (if old schema)
   "ALTER TABLE system_settings ADD COLUMN user_id TEXT DEFAULT '__global__'",
+  // Phase 4: add initial_balance column (for custom deposit amounts)
+  "ALTER TABLE trader_state ADD COLUMN initial_balance REAL DEFAULT 100",
 ];
 
 export async function initDB(): Promise<void> {
@@ -242,8 +244,9 @@ export async function getTraderState(userId: string, strategyId: string = 'momen
     id: row.id as string,
     strategy_id: strategyId,
     balance: Number(row.balance),
-    borrowed_funds: Number(row.borrowed_funds),
-    debt_to_repay: Number(row.debt_to_repay),
+    borrowed_funds: Number(row.borrowed_funds ?? 0),
+    debt_to_repay: Number(row.debt_to_repay ?? 0),
+    initial_balance: Number(row.initial_balance ?? row.balance ?? 100),
     is_active: Boolean(row.is_active),
   };
 }
@@ -256,37 +259,20 @@ export async function updateBalance(userId: string, newBalance: number, strategy
   );
 }
 
-export async function addCredit(userId: string, amount: number, strategyId: string = 'momentum'): Promise<void> {
-  const id = `${userId}-${strategyId}`;
-  await tursoDb.execute(
-    "UPDATE trader_state SET borrowed_funds = borrowed_funds + ?, balance = balance + ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?",
-    [amount, amount, id, userId]
-  );
-}
-
-export async function repayDebt(userId: string, amount: number, strategyId: string = 'momentum'): Promise<void> {
-  const state = await getTraderState(userId, strategyId);
-  const actualRepay = Math.min(amount, state.debt_to_repay);
-  const id = `${userId}-${strategyId}`;
-  await tursoDb.execute(
-    "UPDATE trader_state SET debt_to_repay = debt_to_repay - ?, balance = balance - ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?",
-    [actualRepay, actualRepay, id, userId]
-  );
-}
-
-export async function resetTrader(userId: string, strategyId: string = 'momentum'): Promise<void> {
+export async function resetTrader(userId: string, strategyId: string = 'momentum', customBalance?: number): Promise<void> {
   await initDB();
+  const balance = customBalance && customBalance >= 10 ? customBalance : 100;
   const id = `${userId}-${strategyId}`;
   await tursoDb.execute(
-    "UPDATE trader_state SET balance = 100, borrowed_funds = 0, debt_to_repay = 0, is_active = 1, updated_at = datetime('now') WHERE id = ? AND user_id = ?",
-    [id, userId]
+    "UPDATE trader_state SET balance = ?, borrowed_funds = 0, debt_to_repay = 0, initial_balance = ?, is_active = 1, updated_at = datetime('now') WHERE id = ? AND user_id = ?",
+    [balance, balance, id, userId]
   );
   // Delete ALL trades (open + history) for this user/strategy — clean slate
   await tursoDb.execute(
     "DELETE FROM trades WHERE user_id = ? AND strategy_id = ?",
     [userId, strategyId]
   );
-  console.log(`✅ Trader reset complete (with trade history cleared) for user: ${userId}, strategy: ${strategyId}`);
+  console.log(`✅ Trader reset complete (balance=$${balance}) for user: ${userId}, strategy: ${strategyId}`);
 }
 
 // ============================================================
@@ -512,43 +498,8 @@ export async function resetIndicatorWeights(userId: string): Promise<void> {
 }
 
 // ============================================================
-// Backtest Results (per-user)
+// Backtest Results — feature disabled, functions removed
 // ============================================================
-
-export async function saveBacktestResult(
-  userId: string,
-  strategyName: string,
-  symbol: string,
-  totalTrades: number,
-  winrate: number,
-  profitFactor: number,
-): Promise<void> {
-  const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  await tursoDb.execute(
-    `INSERT INTO backtest_results (id, user_id, strategy_name, symbol, total_trades, winrate, profit_factor, timestamp)
-     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
-    [id, userId, strategyName, symbol, totalTrades, winrate, profitFactor]
-  );
-}
-
-export async function getBacktestResults(userId: string): Promise<Array<{
-  id: string; strategy_name: string; symbol: string; total_trades: number;
-  winrate: number; profit_factor: number; timestamp: string;
-}>> {
-  const result = await tursoDb.execute(
-    'SELECT * FROM backtest_results WHERE user_id = ? ORDER BY timestamp DESC LIMIT 20',
-    [userId]
-  );
-  return result.rows.map(row => ({
-    id: row.id as string,
-    strategy_name: row.strategy_name as string,
-    symbol: row.symbol as string,
-    total_trades: Number(row.total_trades),
-    winrate: Number(row.winrate),
-    profit_factor: Number(row.profit_factor),
-    timestamp: row.timestamp as string,
-  }));
-}
 
 // ============================================================
 // Admin: List all users (for monitoring)

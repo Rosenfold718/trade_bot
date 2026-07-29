@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { CoinPrice, TraderState, Trade, IndicatorWeight, BacktestResult, TradingDecision } from '@/lib/types';
+import type { CoinPrice, TraderState, Trade, IndicatorWeight, TradingDecision } from '@/lib/types';
 
 interface StrategySnapshot {
   traderState: TraderState | null;
@@ -57,10 +57,6 @@ interface TerminalStore {
   setStrategyTotalClosedPnl: (strategyId: string, pnl: number) => void;
   setStrategyClosedTradeCount: (strategyId: string, count: number) => void;
 
-  // Backtest results
-  backtestResults: BacktestResult[];
-  setBacktestResults: (results: BacktestResult[]) => void;
-
   // Current analysis
   currentAnalysis: TradingDecision | null;
   setCurrentAnalysis: (analysis: TradingDecision | null) => void;
@@ -72,8 +68,6 @@ interface TerminalStore {
   // UI state
   isLoading: boolean;
   setIsLoading: (loading: boolean) => void;
-  backtestLoading: boolean;
-  setBacktestLoading: (loading: boolean) => void;
   autoTrading: boolean;
   setAutoTrading: (trading: boolean) => void;
 }
@@ -243,9 +237,6 @@ export const useTerminalStore = create<TerminalStore>((set) => ({
     ...(state.activeStrategy === strategyId ? { closedTradeCount } : {}),
   })),
 
-  backtestResults: [],
-  setBacktestResults: (backtestResults) => set({ backtestResults }),
-
   currentAnalysis: null,
   setCurrentAnalysis: (currentAnalysis) => set({ currentAnalysis }),
 
@@ -260,8 +251,6 @@ export const useTerminalStore = create<TerminalStore>((set) => ({
 
   isLoading: false,
   setIsLoading: (isLoading) => set({ isLoading }),
-  backtestLoading: false,
-  setBacktestLoading: (backtestLoading) => set({ backtestLoading }),
   autoTrading: true,
   setAutoTrading: (autoTrading) => set({ autoTrading }),
 }));

@@ -6,7 +6,7 @@ import { getStrategy } from '@/lib/strategies';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Wallet, TrendingUp, TrendingDown, CreditCard, Activity, Gauge, ArrowUpCircle, ArrowDownCircle, MinusCircle } from 'lucide-react';
+import { Wallet, TrendingUp, TrendingDown, Activity, Gauge, ArrowUpCircle, ArrowDownCircle, MinusCircle, BarChart3 } from 'lucide-react';
 import type { Trade, IndicatorSignal } from '@/lib/types';
 
 function formatPrice(price: number): string {
@@ -185,7 +185,7 @@ function RecommendedAction({ score }: { score: number }) {
   return (
     <div className="flex items-center justify-between">
       <div className="flex items-center gap-2">
-        <Gauge className={cn('w-3.5 h-3.5', color)} />
+        <Gauge className={cn('w-3.5 w-3.5', color)} />
         <span className={cn('text-sm font-bold font-mono', color)}>{action}</span>
       </div>
       <Badge variant="outline" className={cn('text-[10px] font-mono px-2 py-0.5', color, bgColor, borderColor)}>
@@ -211,6 +211,10 @@ export default function TradingDashboard() {
     return maxPossible > 0 ? (score / maxPossible) * 10 : 0;
   }, [currentAnalysis]);
 
+  // Calculate return percentage based on initial balance
+  const initialBalance = (traderState as any)?.initial_balance ?? 100;
+  const returnPct = initialBalance > 0 ? ((totalClosedPnl / initialBalance) * 100) : 0;
+
   if (!traderState) {
     return (
       <div className="p-4 space-y-3">
@@ -232,21 +236,21 @@ export default function TradingDashboard() {
         </div>
       )}
 
-      {/* Balance Stats — balance grows with profitable trades, PnL shows growth from initial $100 */}
+      {/* Balance Stats */}
       <div className="grid grid-cols-2 gap-2">
         <StatCard
           label="Баланс депозита"
           value={`$${traderState.balance.toFixed(2)}`}
           icon={Wallet}
           color={strategy?.color ?? 'text-white/70'}
-          subValue={`старт $100 · ${totalClosedPnl >= 0 ? '+' : ''}${totalClosedPnl.toFixed(1)}%`}
+          subValue={`старт $${initialBalance.toFixed(0)} · ${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(1)}%`}
         />
         <StatCard
           label="Рост депозита"
           value={`${totalClosedPnl >= 0 ? '+' : ''}$${totalClosedPnl.toFixed(2)}`}
           icon={totalClosedPnl >= 0 ? TrendingUp : TrendingDown}
           color={totalClosedPnl >= 0 ? 'text-green-400' : 'text-red-400'}
-          subValue={`${closedTradeCount} сделок · ${totalClosedPnl >= 0 ? '+' : ''}${totalClosedPnl.toFixed(1)}%`}
+          subValue={`${closedTradeCount} сделок`}
         />
         <StatCard
           label="Открытых"
@@ -255,10 +259,11 @@ export default function TradingDashboard() {
           color="text-yellow-400"
         />
         <StatCard
-          label="Долг"
-          value={`$${traderState.debt_to_repay.toFixed(2)}`}
-          icon={CreditCard}
-          color={traderState.debt_to_repay > 0 ? 'text-red-400' : 'text-green-400'}
+          label="Всего PnL"
+          value={`${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(1)}%`}
+          icon={BarChart3}
+          color={returnPct >= 0 ? 'text-green-400' : 'text-red-400'}
+          subValue={`${totalClosedPnl >= 0 ? '+' : ''}$${totalClosedPnl.toFixed(2)}`}
         />
       </div>
 

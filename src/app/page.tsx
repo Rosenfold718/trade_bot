@@ -5,6 +5,7 @@ import { useSession, signOut } from 'next-auth/react';
 import dynamic from 'next/dynamic';
 import AuthScreen from '@/components/auth/auth-screen';
 import PaymentModal from '@/components/auth/payment-modal';
+import WarningModal from '@/components/warning-modal';
 import { Loader2, LogOut, Clock, Shield, Users } from 'lucide-react';
 import AdminPaymentsPanel from '@/components/auth/admin-payments-panel';
 
@@ -20,7 +21,7 @@ const TradingTerminal = dynamic(() => import('@/components/trading-terminal'), {
   ),
 });
 
-type AppView = 'auth' | 'payment' | 'terminal';
+type AppView = 'auth' | 'payment' | 'warning' | 'terminal';
 
 // ── Global Error Boundary ──
 class TerminalErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
@@ -74,7 +75,12 @@ export default function Home() {
         const data = await res.json();
         setSubDays(data.daysRemaining ?? 0);
         setPendingLabel(data.pendingRequest?.planLabel || null);
-        setView(data.isActive ? 'terminal' : 'payment');
+        if (data.isActive) {
+          // Active subscription — show warning first
+          setView('warning');
+        } else {
+          setView('payment');
+        }
       } else {
         setView('payment');
       }
@@ -88,7 +94,7 @@ export default function Home() {
   // React to session changes
   useEffect(() => {
     if (status === 'authenticated' && userId) {
- fetch('/api/init', { method: 'POST' }).catch(() => {});
+      fetch('/api/init', { method: 'POST' }).catch(() => {});
       checkSubscription();
     } else if (status === 'unauthenticated') {
       setView('auth');
@@ -99,6 +105,10 @@ export default function Home() {
     updateSession(); // force session refresh
     checkSubscription();
   }, [updateSession, checkSubscription]);
+
+  const handleWarningComplete = useCallback(() => {
+    setView('terminal');
+  }, []);
 
   const handleLogout = useCallback(async () => {
     await signOut({ redirect: false });
@@ -137,6 +147,11 @@ export default function Home() {
   // ── Payment required ──
   if (view === 'payment') {
     return <PaymentModal onClose={handlePaymentSuccess} />;
+  }
+
+  // ── Warning modal ──
+  if (view === 'warning') {
+    return <WarningModal onComplete={handleWarningComplete} />;
   }
 
   // ── Terminal ──

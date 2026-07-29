@@ -65,7 +65,7 @@ const STRATEGY_SETTINGS: SettingDef[] = [
   },
   {
     key: 'maxLeverage',
-    label: 'Макс. кредитное плечо',
+    label: 'Макс. плечо',
     description: 'Максимальное плечо для сделок стратегии',
     type: 'number',
     min: 1,
