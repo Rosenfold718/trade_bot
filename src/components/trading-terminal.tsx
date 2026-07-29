@@ -5,7 +5,14 @@ import dynamic from 'next/dynamic';
 import { useTerminalStore } from '@/lib/store';
 import { STRATEGIES, getStrategy } from '@/lib/strategies';
 import { cn } from '@/lib/utils';
-import { Menu, X, ChevronDown, BarChart3, RotateCcw, FileSpreadsheet, ShieldCheck, Loader2 } from 'lucide-react';
+import { Menu, X, ChevronDown, BarChart3, RotateCcw, FileSpreadsheet, ShieldCheck, Loader2, TrendingUp, TrendingDown, Minus, Activity, Brain } from 'lucide-react';
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
+} from '@/components/ui/alert-dialog';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+} from '@/components/ui/dialog';
 import CoinList from '@/components/coin-list';
 import TradingDashboard from '@/components/trading-dashboard';
 import ControlPanel from '@/components/control-panel';
@@ -873,7 +880,8 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
   onSelectTrade: (trade: Trade) => void;
   onManualClose: (trade: Trade) => void;
 }) {
-  const [closingTradeId, setClosingTradeId] = useState<string | null>(null);
+  const [closingTrade, setClosingTrade] = useState<Trade | null>(null);
+  const [closingLoading, setClosingLoading] = useState(false);
   const allTrades = useMemo(
     () => [...openTrades, ...recentTrades].slice(0, 30),
     [openTrades, recentTrades],
@@ -897,35 +905,153 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
 
   // Total realized PnL now comes from DB (totalClosedPnl prop) — no more computing from recentTrades
 
-  const handleCloseTrade = async (trade: Trade, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (closingTradeId === trade.id) {
-      // Second click = confirm
-      setClosingTradeId('confirming');
-      try {
-        await onManualClose(trade);
-      } finally {
-        setClosingTradeId(null);
-      }
-    } else {
-      // First click = prepare to close
-      setClosingTradeId(trade.id);
-      // Auto-cancel after 3 seconds if not confirmed
-      setTimeout(() => {
-        setClosingTradeId(prev => prev === trade.id ? null : prev);
-      }, 3000);
+  const handleCloseTrade = (trade: Trade) => {
+    setClosingTrade(trade);
+  };
+
+  const confirmCloseTrade = async () => {
+    if (!closingTrade) return;
+    setClosingLoading(true);
+    try {
+      await onManualClose(closingTrade);
+    } finally {
+      setClosingLoading(false);
+      setClosingTrade(null);
     }
   };
 
+  // Calculate PnL preview for closing trade
+  const closingPnl = useMemo(() => {
+    if (!closingTrade) return null;
+    const livePrice = coins.find(c => c.symbol === closingTrade.symbol)?.price;
+    if (!livePrice || livePrice <= 0) return null;
+    const isLong = closingTrade.direction === 'long';
+    const priceChange = isLong
+      ? (livePrice - closingTrade.entry_price) / closingTrade.entry_price
+      : (closingTrade.entry_price - livePrice) / closingTrade.entry_price;
+    return closingTrade.amount * priceChange * closingTrade.leverage;
+  }, [closingTrade, coins]);
+
   if (allTrades.length === 0 && openTrades.length === 0) {
     return (
-      <div className="h-24 flex items-center justify-center">
-        <span className="text-xs text-white/20 font-mono">Нет сделок</span>
-      </div>
+      <>
+        <AlertDialog open={!!closingTrade} onOpenChange={(open) => { if (!open) setClosingTrade(null); }}>
+          <AlertDialogContent className="bg-[#0d0d14] border-white/10 max-w-sm">
+            <AlertDialogHeader>
+              <AlertDialogTitle className="text-white text-base flex items-center gap-2">
+                <X className="w-4 h-4 text-red-400" />
+                Закрыть сделку?
+              </AlertDialogTitle>
+              <AlertDialogDescription className="text-white/50 text-sm space-y-2">
+                {closingTrade && (
+                  <div className="bg-white/[0.03] rounded-lg p-3 space-y-1.5 text-xs font-mono">
+                    <div className="flex justify-between">
+                      <span className="text-white/40">Монета</span>
+                      <span className="text-white font-semibold">{closingTrade.symbol.replace('USDT', '')}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-white/40">Направление</span>
+                      <span className={closingTrade.direction === 'long' ? 'text-green-400' : 'text-red-400'}>{closingTrade.direction === 'long' ? 'LONG ↑' : 'SHORT ↓'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-white/40">Цена входа</span>
+                      <span className="text-white">${fmtP(closingTrade.entry_price)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-white/40">Объём</span>
+                      <span className="text-cyan-400/80">${closingTrade.amount.toFixed(2)}</span>
+                    </div>
+                    {closingPnl !== null && (
+                      <div className="flex justify-between pt-1 border-t border-white/[0.06]">
+                        <span className="text-white/40">Ожидаемый PnL</span>
+                        <span className={cn('font-bold', closingPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
+                          {closingPnl >= 0 ? '+' : ''}{closingPnl.toFixed(2)}$
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <p className="text-white/30 text-xs pt-1">
+                  Позиция будет закрыта по текущей рыночной цене. Нереализованный PnL станет реализованным и изменит баланс.
+                </p>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel className="bg-white/[0.04] border-white/10 text-white/60 hover:bg-white/[0.08] hover:text-white/80">Отмена</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(e) => { e.preventDefault(); confirmCloseTrade(); }}
+                disabled={closingLoading}
+                className="bg-red-600 hover:bg-red-700 text-white border-0"
+              >
+                {closingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Закрыть позицию'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+        <div className="h-24 flex items-center justify-center">
+          <span className="text-xs text-white/20 font-mono">Нет сделок</span>
+        </div>
+      </>
     );
   }
 
   return (
+    <>
+    {/* Close Trade Confirmation Modal */}
+    <AlertDialog open={!!closingTrade} onOpenChange={(open) => { if (!open) setClosingTrade(null); }}>
+      <AlertDialogContent className="bg-[#0d0d14] border-white/10 max-w-sm">
+        <AlertDialogHeader>
+          <AlertDialogTitle className="text-white text-base flex items-center gap-2">
+            <X className="w-4 h-4 text-red-400" />
+            Закрыть сделку?
+          </AlertDialogTitle>
+          <AlertDialogDescription className="text-white/50 text-sm space-y-2">
+            {closingTrade && (
+              <div className="bg-white/[0.03] rounded-lg p-3 space-y-1.5 text-xs font-mono">
+                <div className="flex justify-between">
+                  <span className="text-white/40">Монета</span>
+                  <span className="text-white font-semibold">{closingTrade.symbol.replace('USDT', '')}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-white/40">Направление</span>
+                  <span className={closingTrade.direction === 'long' ? 'text-green-400' : 'text-red-400'}>{closingTrade.direction === 'long' ? 'LONG ↑' : 'SHORT ↓'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-white/40">Цена входа</span>
+                  <span className="text-white">${fmtP(closingTrade.entry_price)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-white/40">Объём</span>
+                  <span className="text-cyan-400/80">${closingTrade.amount.toFixed(2)}</span>
+                </div>
+                {closingPnl !== null && (
+                  <div className="flex justify-between pt-1 border-t border-white/[0.06]">
+                    <span className="text-white/40">Ожидаемый PnL</span>
+                    <span className={cn('font-bold', closingPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
+                      {closingPnl >= 0 ? '+' : ''}{closingPnl.toFixed(2)}$
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+            <p className="text-white/30 text-xs pt-1">
+              Позиция будет закрыта по текущей рыночной цене. Нереализованный PnL станет реализованным и изменит баланс.
+            </p>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel className="bg-white/[0.04] border-white/10 text-white/60 hover:bg-white/[0.08] hover:text-white/80">Отмена</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={(e) => { e.preventDefault(); confirmCloseTrade(); }}
+            disabled={closingLoading}
+            className="bg-red-600 hover:bg-red-700 text-white border-0"
+          >
+            {closingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Закрыть позицию'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+
     <div className="h-full flex flex-col">
       <div className="flex-1 overflow-x-auto overflow-y-auto">
         <table className="w-full text-xs min-w-[560px]">
@@ -1006,22 +1132,13 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
                 </td>
                 <td className="py-2.5 px-2 text-center">
                   {isOpen ? (
-                    closingTradeId === trade.id ? (
-                      <button
-                        onClick={(e) => handleCloseTrade(trade, e)}
-                        className="px-2 py-1 rounded-md bg-red-500/20 hover:bg-red-500/30 text-red-400 text-[10px] font-semibold transition-all duration-150 min-w-[44px] min-h-[28px] flex items-center justify-center gap-1 mx-auto"
-                      >
-                        {closingTradeId === 'confirming' ? <Loader2 className="w-3 h-3 animate-spin" /> : <><X className="w-3 h-3" />Закр.</>}
-                      </button>
-                    ) : (
-                      <button
-                        onClick={(e) => handleCloseTrade(trade, e)}
-                        className="px-2 py-1 rounded-md bg-white/[0.04] hover:bg-white/[0.08] text-white/30 hover:text-white/60 text-[10px] font-medium transition-all duration-150 min-w-[44px] min-h-[28px] flex items-center justify-center gap-1 mx-auto border border-white/[0.06]"
-                        title="Закрыть сделку вручную"
-                      >
-                        <X className="w-3 h-3" />Закр.
-                      </button>
-                    )
+                    <button
+                      onClick={() => handleCloseTrade(trade)}
+                      className="px-2 py-1 rounded-md bg-white/[0.04] hover:bg-red-500/20 text-white/30 hover:text-red-400 text-[10px] font-medium transition-all duration-150 min-w-[44px] min-h-[28px] flex items-center justify-center gap-1 mx-auto border border-white/[0.06] hover:border-red-500/30"
+                      title="Закрыть сделку вручную"
+                    >
+                      <X className="w-3 h-3" />Закр.
+                    </button>
                   ) : (
                     <span className="text-white/10 text-[10px]">—</span>
                   )}
@@ -1049,6 +1166,7 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
         </span>
       </div>
     </div>
+    </>
   );
 }
 
@@ -1090,12 +1208,22 @@ function ActivityLog() {
 
 function BTCRegimeBar() {
   const [regime, setRegime] = useState<{ direction: string; changePct: number; strength: number; correlated: number; independent: number } | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [analysis, setAnalysis] = useState<{
+    regime: { direction: string; strength: number; changePct: number; emaAlignment: string };
+    correlations: Array<{ symbol: string; correlation: number; correlated: boolean; label: string }>;
+    btcPrice: number;
+    btcCandles: Array<{ time: number; close: number; volume: number }>;
+    rsi: number;
+    volatility: number;
+    loaded: boolean;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       try {
-        const { refreshBTCCorrelation, getBTCRegimeSummary, getAllCorrelations } = await import('@/lib/btc-correlation');
+        const { refreshBTCCorrelation, getBTCRegimeSummary, getAllCorrelations, getBTCRegime } = await import('@/lib/btc-correlation');
         if (cancelled) return;
         await refreshBTCCorrelation();
         if (cancelled) return;
@@ -1107,18 +1235,83 @@ function BTCRegimeBar() {
       } catch { /* silent */ }
     };
     load();
-    const interval = setInterval(load, 15 * 60 * 1000); // refresh every 15 min
+    const interval = setInterval(load, 15 * 60 * 1000);
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
+
+  const loadDetailedAnalysis = useCallback(async () => {
+    try {
+      const { refreshBTCCorrelation, getBTCRegime, getBTCRegimeSummary, getAllCorrelations } = await import('@/lib/btc-correlation');
+      await refreshBTCCorrelation();
+      const regimeData = getBTCRegime();
+      const summary = getBTCRegimeSummary();
+      const correlations = getAllCorrelations().sort((a, b) => Math.abs(b.correlation) - Math.abs(a.correlation));
+
+      // Fetch BTC candles for mini-chart data
+      const res = await fetch('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=60');
+      const raw = await res.json();
+      const btcCandles = raw.map((k: (string | number)[]) => ({
+        time: Math.floor(Number(k[0]) / 1000),
+        close: parseFloat(String(k[4])),
+        volume: parseFloat(String(k[5])),
+      }));
+
+      // Calculate RSI(14)
+      const closes = btcCandles.map((c: { close: number }) => c.close);
+      let rsi = 50;
+      if (closes.length >= 15) {
+        let avgGain = 0, avgLoss = 0;
+        for (let i = 1; i <= 14; i++) {
+          const change = closes[i] - closes[i - 1];
+          if (change > 0) avgGain += change; else avgLoss += Math.abs(change);
+        }
+        avgGain /= 14; avgLoss /= 14;
+        for (let i = 15; i < closes.length; i++) {
+          const change = closes[i] - closes[i - 1];
+          avgGain = (avgGain * 13 + (change > 0 ? change : 0)) / 14;
+          avgLoss = (avgLoss * 13 + (change < 0 ? Math.abs(change) : 0)) / 14;
+        }
+        rsi = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+      }
+
+      // Calculate volatility (std dev of returns)
+      const returns = [];
+      for (let i = 1; i < closes.length; i++) returns.push((closes[i] - closes[i - 1]) / closes[i - 1]);
+      const meanRet = returns.reduce((s: number, v: number) => s + v, 0) / returns.length;
+      const variance = returns.reduce((s: number, v: number) => s + (v - meanRet) ** 2, 0) / returns.length;
+      const volatility = Math.sqrt(variance) * 100 * Math.sqrt(24); // annualized (24 periods per day)
+
+      setAnalysis({
+        regime: { direction: summary.direction, strength: parseFloat(summary.strength), changePct: parseFloat(summary.changePct), emaAlignment: summary.emaAlignment },
+        correlations,
+        btcPrice: closes[closes.length - 1],
+        btcCandles,
+        rsi,
+        volatility,
+        loaded: true,
+      });
+    } catch (err) {
+      console.error('[BTC Analysis] Error:', err);
+    }
+  }, []);
+
+  const handleOpenDialog = () => {
+    setDialogOpen(true);
+    loadDetailedAnalysis();
+  };
 
   if (!regime) return null;
 
   const isUp = regime.direction.includes('Рост');
   const isDown = regime.direction.includes('Падение');
-  const isNeutral = regime.direction.includes('Нейтраль');
 
   return (
-    <div className="shrink-0 px-3 sm:px-4 py-1 border-b border-white/[0.04] bg-[#0d0d14]/50 flex items-center gap-3 text-[10px] font-mono">
+    <>
+    <button
+      onClick={handleOpenDialog}
+      className="shrink-0 px-3 sm:px-4 py-1 border-b border-white/[0.04] bg-[#0d0d14]/50 flex items-center gap-3 text-[10px] font-mono hover:bg-white/[0.03] transition-colors w-full text-left"
+    >
+      <Brain className="w-3 h-3 text-amber-400/60 shrink-0" />
       <span className="text-white/20 shrink-0">BTC</span>
       <span className={cn(
         'font-semibold shrink-0',
@@ -1132,12 +1325,190 @@ function BTCRegimeBar() {
       )}>
         {regime.changePct >= 0 ? '+' : ''}{regime.changePct.toFixed(2)}%
       </span>
-      <div className="w-16 h-1 rounded-full bg-white/[0.06] overflow-hidden shrink-0">
-        <div className={cn('h-full rounded-full transition-all duration-500', isUp ? 'bg-emerald-400' : isDown ? 'bg-red-400' : 'bg-white/20')} style={{ width: `${Math.max(5, regime.strength * 100)}%` }} />
-      </div>
-      <span className="text-white/10 hidden sm:inline">|</span>
-      <span className="text-white/15 hidden sm:inline shrink-0">{regime.correlated} корр. / {regime.independent} незав.</span>
-    </div>
+      <div className="flex-1" />
+      <span className="text-white/10 hidden sm:inline shrink-0">{regime.correlated} корр. / {regime.independent} незав.</span>
+      <span className="text-white/15 shrink-0">Анализ →</span>
+    </button>
+
+    {/* BTC Detailed Analysis Modal */}
+    <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <DialogContent className="bg-[#0d0d14] border-white/10 max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="text-white text-base flex items-center gap-2">
+            <Brain className="w-5 h-5 text-amber-400" />
+            Анализ Bitcoin (BTC)
+          </DialogTitle>
+          <DialogDescription className="text-white/40 text-xs">
+            Полный анализ режима BTC и его влияния на альткоины
+          </DialogDescription>
+        </DialogHeader>
+
+        {!analysis || !analysis.loaded ? (
+          <div className="flex items-center justify-center py-12">
+            <div className="flex items-center gap-2 text-white/30 text-xs">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Загрузка анализа...
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4 -mx-1">
+            {/* Price & Change */}
+            <div className="bg-white/[0.03] rounded-lg p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <div className="text-white font-bold text-lg font-mono">${analysis.btcPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                  <div className="text-xs text-white/30 mt-0.5">BTC / USDT</div>
+                </div>
+                <div className="text-right">
+                  <div className={cn('text-lg font-bold font-mono', analysis.regime.changePct >= 0 ? 'text-emerald-400' : 'text-red-400')}>
+                    {analysis.regime.changePct >= 0 ? '+' : ''}{analysis.regime.changePct.toFixed(2)}%
+                  </div>
+                  <div className={cn('text-xs font-medium', isUp ? 'text-emerald-400/60' : isDown ? 'text-red-400/60' : 'text-white/30')}>
+                    {analysis.regime.direction}
+                  </div>
+                </div>
+              </div>
+              {/* Mini sparkline */}
+              <div className="h-12 relative">
+                <svg viewBox="0 0 200 40" className="w-full h-full" preserveAspectRatio="none">
+                  {(() => {
+                    const prices = analysis.btcCandles.map(c => c.close);
+                    const min = Math.min(...prices);
+                    const max = Math.max(...prices);
+                    const range = max - min || 1;
+                    const points = prices.map((p, i) => {
+                      const x = (i / (prices.length - 1)) * 200;
+                      const y = 38 - ((p - min) / range) * 36;
+                      return `${x},${y}`;
+                    }).join(' ');
+                    const color = prices[prices.length - 1] >= prices[0] ? '#22c55e' : '#ef4444';
+                    return (
+                      <g>
+                        <polyline fill="none" stroke={color} strokeWidth="1.5" points={points} />
+                        <line x1="0" y1="38" x2="200" y2="38" stroke="rgba(255,255,255,0.05)" strokeWidth="0.5" />
+                      </g>
+                    );
+                  })()}
+                </svg>
+              </div>
+              <div className="text-[10px] text-white/15 text-right mt-1">60 часовых свечей</div>
+            </div>
+
+            {/* Technical Indicators Grid */}
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-white/[0.03] rounded-lg p-3">
+                <div className="text-[10px] text-white/30 uppercase tracking-wider mb-1">RSI (14)</div>
+                <div className={cn('text-lg font-bold font-mono',
+                  analysis.rsi > 70 ? 'text-red-400' : analysis.rsi < 30 ? 'text-emerald-400' : 'text-white/80'
+                )}>
+                  {analysis.rsi.toFixed(1)}
+                </div>
+                <div className={cn('text-[10px]', analysis.rsi > 70 ? 'text-red-400/50' : analysis.rsi < 30 ? 'text-emerald-400/50' : 'text-white/25')}>
+                  {analysis.rsi > 70 ? 'Перекуплен' : analysis.rsi < 30 ? 'Перепродан' : 'Нейтральная зона'}
+                </div>
+              </div>
+              <div className="bg-white/[0.03] rounded-lg p-3">
+                <div className="text-[10px] text-white/30 uppercase tracking-wider mb-1">Волатильность</div>
+                <div className="text-lg font-bold font-mono text-amber-400/80">
+                  {analysis.volatility.toFixed(1)}%
+                </div>
+                <div className="text-[10px] text-white/25">Годовая (суточн.)</div>
+              </div>
+              <div className="bg-white/[0.03] rounded-lg p-3">
+                <div className="text-[10px] text-white/30 uppercase tracking-wider mb-1">Сила тренда</div>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+                    <div className={cn('h-full rounded-full', isUp ? 'bg-emerald-400' : isDown ? 'bg-red-400' : 'bg-white/20')} style={{ width: `${Math.max(5, analysis.regime.strength * 100)}%` }} />
+                  </div>
+                  <span className="text-sm font-bold font-mono text-white/60">{(analysis.regime.strength * 100).toFixed(0)}%</span>
+                </div>
+              </div>
+              <div className="bg-white/[0.03] rounded-lg p-3">
+                <div className="text-[10px] text-white/30 uppercase tracking-wider mb-1">EMA выравнивание</div>
+                <div className={cn('text-xs font-semibold', analysis.regime.emaAlignment.includes('бычий') ? 'text-emerald-400' : 'text-red-400')}>
+                  {analysis.regime.emaAlignment.includes('бычий') ? <TrendingUp className="w-3 h-3 inline mr-1" /> : <TrendingDown className="w-3 h-3 inline mr-1" />}
+                  {analysis.regime.emaAlignment}
+                </div>
+              </div>
+            </div>
+
+            {/* Trading Implications */}
+            <div className="bg-white/[0.03] rounded-lg p-4">
+              <div className="text-[10px] text-white/30 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <Activity className="w-3 h-3" /> Что это значит для торговли
+              </div>
+              <div className="text-xs text-white/50 space-y-1.5 leading-relaxed">
+                <p>
+                  {analysis.regime.direction.includes('Рост') && (
+                    <>BTC в фазе <span className="text-emerald-400 font-medium">роста</span>. Коррелирующие монеты вероятнее всего будут двигаться вверх. Система отдаёт приоритет LONG-сделкам на монетах, следующих за BTC (+до 20% к скорингу).</>
+                  )}
+                  {analysis.regime.direction.includes('Падение') && (
+                    <>BTC в фазе <span className="text-red-400 font-medium">падения</span>. Коррелирующие монеты вероятнее всего будут двигаться вниз. Система отдаёт приоритет SHORT-сделкам на монетах, следующих за BTC (+до 20% к скорингу).</>
+                  )}
+                  {analysis.regime.direction.includes('Нейтраль') && (
+                    <>BTC в <span className="text-white/40 font-medium">нейтральной зоне</span> — нет чёткого тренда. Корреляционный фильтр отключён. Система опирается только на собственные индикаторы каждой монеты.</>
+                  )}
+                </p>
+                <p className="text-white/25">
+                  Конфликтующие сделки (например, LONG при падающем BTC) получают штраф -30% к скорингу или пропускаются.
+                </p>
+              </div>
+            </div>
+
+            {/* Correlation Table */}
+            <div className="bg-white/[0.03] rounded-lg p-4">
+              <div className="text-[10px] text-white/30 uppercase tracking-wider mb-3 flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  {regime.correlated > 0 ? <span className="text-emerald-400">{regime.correlated} коррелируют</span> : null}
+                  {regime.correlated > 0 && regime.independent > 0 ? <span className="text-white/10">/</span> : null}
+                  {regime.independent > 0 ? <span className="text-white/40">{regime.independent} независимых</span> : null}
+                </span>
+              </div>
+              <div className="max-h-48 overflow-y-auto space-y-0.5">
+                {analysis.correlations.slice(0, 20).map((c) => (
+                  <div key={c.symbol} className="flex items-center justify-between py-1 px-1 rounded hover:bg-white/[0.02] text-[11px] font-mono">
+                    <div className="flex items-center gap-2">
+                      <span className="text-white/50 w-16 truncate">{c.symbol.replace('USDT', '')}</span>
+                      {c.correlated ? (
+                        <span className={cn('text-[9px] px-1.5 py-0.5 rounded', c.correlation > 0 ? 'bg-emerald-500/10 text-emerald-400/60' : 'bg-red-500/10 text-red-400/60')}>
+                          {c.correlation > 0 ? 'Следует' : 'Обратная'}
+                        </span>
+                      ) : (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/[0.03] text-white/20">Свободна</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-16 h-1 rounded-full bg-white/[0.04] overflow-hidden">
+                        <div
+                          className={cn('h-full rounded-full', c.correlated ? (c.correlation > 0 ? 'bg-emerald-400' : 'bg-red-400') : 'bg-white/10')}
+                          style={{ width: `${Math.min(100, Math.abs(c.correlation) * 100)}%` }}
+                        />
+                      </div>
+                      <span className={cn('w-10 text-right', c.correlated ? (c.correlation > 0 ? 'text-emerald-400/50' : 'text-red-400/50') : 'text-white/15')}>
+                        {c.correlation > 0 ? '+' : ''}{c.correlation.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Explanation of % change vs indicators */}
+            <div className="bg-amber-500/[0.05] border border-amber-500/10 rounded-lg p-3">
+              <div className="text-[10px] text-amber-400/70 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                <Activity className="w-3 h-3" /> Разница между % и индикаторами
+              </div>
+              <div className="text-xs text-white/40 space-y-1 leading-relaxed">
+                <p><span className="text-white/60 font-medium">Изменение BTC ({analysis.regime.changePct >= 0 ? '+' : ''}{analysis.regime.changePct.toFixed(2)}%)</span> — это процентное изменение цены BTC за последние ~2 дня (50 часовых свечей).</p>
+                <p><span className="text-white/60 font-medium">Индикаторы монеты</span> — это анализ RSI, MACD, EMA и др. конкретной монеты. Сигнал "Short 61%" означает, что индикаторы этой монеты показывают перевес к шорту с уверенностью 61%.</p>
+                <p>Эти данные <span className="text-amber-400/60">независимы</span>: BTC может падать на 0.28%, но конкретная монета может расти по своим индикаторам. Система учитывает оба фактора при принятии решений.</p>
+              </div>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
 

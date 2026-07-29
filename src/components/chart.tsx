@@ -172,6 +172,8 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
   const indicatorSeriesRef = useRef<Map<string, any>>(new Map());
   // TP line tracking for drag
   const tpLinesMap = useRef<Map<string, { line: any; price: number; tradeId: string }>>(new Map());
+  // Markers plugin ref for lightweight-charts v5
+  const markersPluginRef = useRef<any>(null);
   // Drag state for TP lines
   const dragOverlayRef = useRef<HTMLDivElement>(null);
   const dragStateRef = useRef<{ active: boolean; tradeId: string; startPrice: number; currentPrice: number }>({ active: false, tradeId: '', startPrice: 0, currentPrice: 0 });
@@ -209,6 +211,7 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
       indicatorSeriesRef.current.clear();
       candleSeriesRef.current = null;
       volumeSeriesRef.current = null;
+      markersPluginRef.current = null;
 
       const priceFmt = getPriceFormat(dataRef.current);
 
@@ -406,12 +409,20 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
     // Sort markers by time (required by lightweight-charts)
     markers.sort((a, b) => a.time - b.time);
 
-    if (markers.length > 0) {
-      try {
-        cs.setMarkers(markers as any);
-      } catch (e) {
-        console.warn('[Chart] Failed to set markers:', e);
+    // Use createSeriesMarkers plugin for lightweight-charts v5
+    try {
+      if (markersPluginRef.current) {
+        markersPluginRef.current.setMarkers(markers as any);
+      } else {
+        import('lightweight-charts').then(({ createSeriesMarkers }) => {
+          const plugin = createSeriesMarkers(cs, markers as any);
+          markersPluginRef.current = plugin;
+        }).catch((e: unknown) => {
+          console.warn('[Chart] Failed to create markers plugin:', e);
+        });
       }
+    } catch (e) {
+      console.warn('[Chart] Failed to set markers:', e);
     }
   }, [openTrades, recentTrades, symbol, data]);
 
