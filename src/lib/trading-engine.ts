@@ -644,10 +644,11 @@ export function makeTradingDecision(
   const maxScore = Math.max(absLongScore, absShortScore);
 
   // ============================================================
-  // POINT 3: Confluence filter — require ≥5 indicators to agree
+  // POINT 3: Confluence filter — require ≥6 indicators to agree
+  // Stricter filtering: only take high-conviction signals
   // ============================================================
   const bestCount = Math.max(longCount, shortCount);
-  if (bestCount < 5) {
+  if (bestCount < 6) {
     return {
       symbol,
       direction: 'none',
@@ -837,10 +838,10 @@ function makeMomentumDecision(
     ? 1
     : Math.min(strategy.maxLeverage, Math.max(1, Math.round(maxScore * 1.5)));
 
-  // Wide stop loss: 2.5× ATR, floored at 0.8%, capped at 5% max from entry
-  // (floor prevents noise stop-outs on low-ATR assets; cap limits risk)
-  const stopLossPercent = Math.max(0.008, Math.min(2.5 * atr / price, 0.05));
-  const takeProfitPercent = Math.min(stopLossPercent * strategy.riskRewardRatio, 0.15);
+  // Stop loss: 2× ATR (tight — cuts losses fast), floored at 0.8%, capped at 5%
+  const stopLossPercent = Math.max(0.008, Math.min(2.0 * atr / price, 0.05));
+  // TP uses strategy.riskRewardRatio (4× for Momentum = 1:4 R:R)
+  const takeProfitPercent = Math.min(stopLossPercent * strategy.riskRewardRatio, 0.20);
 
   const stopLoss = direction === 'long'
     ? price * (1 - stopLossPercent)

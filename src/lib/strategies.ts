@@ -49,7 +49,7 @@ export const STRATEGIES: StrategyConfig[] = [
   {
     id: 'momentum',
     name: 'Импульс Pro',
-    description: 'Следование за сильным трендом. Требует ADX > 25, ≥6/10 индикаторов, score > 0.35. Стоп 2.5× ATR, TP 1:3. Проверка SL/TP по закрытию 1H свечи.',
+    description: 'Следование за сильным трендом. Требует ≥6 индикаторов, score > 0.50. Стоп 2× ATR, TP 1:4. Строгий отбор — мало сделок, но каждая с высоким R:R.',
     color: 'text-amber-400',
     bgColor: 'bg-amber-500/10',
     borderColor: 'border-amber-500/30',
@@ -64,11 +64,11 @@ export const STRATEGIES: StrategyConfig[] = [
       swings: { visible: true },
     },
     maxLeverage: 3,
-    riskRewardRatio: 3,
+    riskRewardRatio: 4,
     tradeSizePercent: 0.06,
     maxOpenTrades: 5,         // ↓ с 10 до 5 — меньше одновременных позиций
-    scoreThreshold: 0.35,
-    adxMin: 25,
+    scoreThreshold: 0.50,
+    adxMin: 20,
     mtfEnabled: true,
     timeFilterEnabled: false,
     timeFilterStart: 0,
