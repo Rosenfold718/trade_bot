@@ -71,10 +71,163 @@ export interface SignalDiagnostics {
   volFiltered: number;
   btcFiltered: number;
   cooldowns: number;
+  entryRejected: number; // перегретые точки входа
   bestSymbol: string | null;
   bestScore: number;
   dailyLimitHit: boolean;
   dailyTradeCount: number;
+}
+
+// ── Entry Quality: reject overextended entries, prefer pullbacks ──
+function assessEntryQuality(
+  candles: CandleData[],
+  direction: 'long' | 'short',
+  strategyId: string,
+): { pass: boolean; scoreMultiplier: number; reason: string } {
+  const len = candles.length;
+  if (len < 50) return { pass: true, scoreMultiplier: 1.0, reason: '' };
+
+  const price = candles[len - 1].close;
+  const closes = candles.map(c => c.close);
+
+  // ── 1. Calculate EMA20 and ATR(14) ──
+  const ema20 = calcEMA50(closes, 20);
+  if (isNaN(ema20)) return { pass: true, scoreMultiplier: 1.0, reason: '' };
+
+  // ATR(14)
+  let atrSum = 0;
+  const atrPeriod = Math.min(14, len - 1);
+  for (let i = len - 1 - atrPeriod; i < len; i++) {
+    if (i < 1) continue;
+    const tr = Math.max(
+      candles[i].high - candles[i].low,
+      Math.abs(candles[i].high - candles[i - 1].close),
+      Math.abs(candles[i].low - candles[i - 1].close),
+    );
+    atrSum += tr;
+  }
+  const atr = atrSum / atrPeriod;
+  if (atr <= 0) return { pass: true, scoreMultiplier: 1.0, reason: '' };
+
+  // ── 2. Distance from EMA in ATR units ──
+  const emaDist = (price - ema20) / atr; // positive = above EMA, negative = below
+  const isLong = direction === 'long';
+  const extension = isLong ? emaDist : -emaDist; // how far price is in the trade direction
+
+  // ── 3. Consecutive directional candles (last 3) ──
+  let consecutive = 0;
+  for (let i = len - 1; i >= Math.max(0, len - 5); i--) {
+    const bullish = candles[i].close > candles[i].open;
+    if ((isLong && bullish) || (!isLong && !bullish)) {
+      consecutive++;
+    } else {
+      break;
+    }
+  }
+
+  // ── 4. RSI(14) ──
+  let rsi = 50; // default neutral
+  const rsiPeriod = 14;
+  if (len > rsiPeriod + 1) {
+    let gains = 0, losses = 0;
+    for (let i = len - rsiPeriod; i < len; i++) {
+      const change = closes[i] - closes[i - 1];
+      if (change > 0) gains += change; else losses -= change;
+    }
+    const avgGain = gains / rsiPeriod;
+    const avgLoss = losses / rsiPeriod;
+    if (avgLoss > 0) {
+      const rs = avgGain / avgLoss;
+      rsi = 100 - 100 / (1 + rs);
+    } else if (avgGain > 0) {
+      rsi = 100;
+    }
+  }
+
+  // ── 5. Last 3 candles range (momentum spike) ──
+  const last3Range = len >= 3
+    ? Math.abs(closes[len - 1] - closes[len - 4]) / atr
+    : 0;
+
+  // ── DECISION ──
+  // Strategy-specific thresholds (scalper is more lenient with entry quality)
+  const isScalper = strategyId === 'scalper';
+  const hardLimit = isScalper ? 3.5 : 3.0;   // ATR units — hard reject
+  const softLimit = isScalper ? 2.5 : 2.0;   // ATR units — heavy penalty
+  const pullbackZone = 1.0;                    // ATR units — ideal entry zone
+
+  // HARD REJECT: price is way too far from EMA (chasing the move)
+  if (extension > hardLimit) {
+    return {
+      pass: false,
+      scoreMultiplier: 0,
+      reason: `перегрет: ${extension.toFixed(1)}×ATR от EMA20`,
+    };
+  }
+
+  // HARD REJECT: 4+ consecutive candles in trade direction (exhaustion likely)
+  if (consecutive >= 4 && extension > 1.5) {
+    return {
+      pass: false,
+      scoreMultiplier: 0,
+      reason: `${consecutive} свечей подряд + ${extension.toFixed(1)}×ATR`,
+    };
+  }
+
+  // HARD REJECT: RSI exhaustion
+  if (isLong && rsi > 78) {
+    return { pass: false, scoreMultiplier: 0, reason: `RSI ${rsi.toFixed(0)} (перекупленность)` };
+  }
+  if (!isLong && rsi < 22) {
+    return { pass: false, scoreMultiplier: 0, reason: `RSI ${rsi.toFixed(0)} (перепроданность)` };
+  }
+
+  // Calculate score multiplier
+  let multiplier = 1.0;
+  let reasons: string[] = [];
+
+  // PENALTY: somewhat extended (2-3 ATR from EMA)
+  if (extension > softLimit) {
+    multiplier *= 0.5;
+    reasons.push(`${extension.toFixed(1)}×ATR от EMA`);
+  } else if (extension > pullbackZone) {
+    multiplier *= 0.75;
+    reasons.push(`${extension.toFixed(1)}×ATR от EMA`);
+  }
+
+  // PENALTY: 3 consecutive candles
+  if (consecutive >= 3 && extension > 1.0) {
+    multiplier *= 0.7;
+    reasons.push(`${consecutive} свечей подряд`);
+  }
+
+  // PENALTY: large recent range (momentum spike)
+  if (last3Range > 3.0) {
+    multiplier *= 0.6;
+    reasons.push(`резкий рывок ${last3Range.toFixed(1)}×ATR`);
+  } else if (last3Range > 2.0) {
+    multiplier *= 0.8;
+    reasons.push(`рывок ${last3Range.toFixed(1)}×ATR`);
+  }
+
+  // BONUS: pullback entry — price near or slightly below/above EMA in trade direction
+  if (extension < pullbackZone && extension > -0.5) {
+    multiplier *= 1.15;
+    reasons.push('откат к EMA20');
+  }
+
+  // BONUS: RSI shows room (40-60 is ideal for entry)
+  if (isLong && rsi >= 40 && rsi <= 60) {
+    multiplier *= 1.05;
+  } else if (!isLong && rsi >= 40 && rsi <= 60) {
+    multiplier *= 1.05;
+  }
+
+  return {
+    pass: multiplier >= 0.3,
+    scoreMultiplier: multiplier,
+    reason: reasons.length > 0 ? reasons.join(', ') : '',
+  };
 }
 
 export async function findBestSignal(
@@ -139,6 +292,7 @@ export async function findBestSignal(
   let noneCount = 0;
   let mtfRejected = 0;
   let btcFiltered = 0;
+  let entryRejected = 0;
 
   // ── BTC Regime Pre-check ──
   // Refresh BTC correlation data (cached, only fetches if stale)
@@ -246,6 +400,26 @@ export async function findBestSignal(
         /* volume regime failed — allow trade without filter */
       }
 
+      // ── ENTRY QUALITY FILTER ──
+      // Reject overextended entries (chasing highs/lows), prefer pullbacks to EMA.
+      // This prevents buying the top or selling the bottom of a move.
+      try {
+        const entryQ = assessEntryQuality(candles, decision.direction as 'long' | 'short', strategyId);
+        if (!entryQ.pass) {
+          entryRejected++;
+          console.log(`[findBestSignal] Вход отклонён: ${sym} ${decision.direction} — ${entryQ.reason}`);
+          continue;
+        }
+        if (entryQ.scoreMultiplier !== 1.0) {
+          decision.score *= entryQ.scoreMultiplier;
+          if (entryQ.reason) {
+            (decision as any)._entryReason = entryQ.reason;
+          }
+        }
+      } catch {
+        /* entry quality failed — allow trade without filter */
+      }
+
       // ── BTC Correlation Filter ──
       if (btcAlignmentChecked) {
         const btcCheck = checkBTCCorrelationAlignment(sym, decision.direction as 'long' | 'short');
@@ -273,13 +447,14 @@ export async function findBestSignal(
     volFiltered: volumeFiltered,
     btcFiltered,
     cooldowns: cooldownCount,
+    entryRejected,
     bestSymbol: best?.symbol ?? null,
     bestScore: bestScore,
     dailyLimitHit: false,
     dailyTradeCount: todayTrades,
   };
 
-  console.log(`[findBestSignal][${strategyId}] ${diag.checked} проверено, нет сигнала=${diag.none}, MTF=${diag.mtfRejected}, объём=${diag.volFiltered}, BTC=${diag.btcFiltered}, лучший=${diag.bestSymbol ?? '—'} (${diag.bestScore.toFixed(2)})`);
+  console.log(`[findBestSignal][${strategyId}] ${diag.checked} проверено, нет сигнала=${diag.none}, MTF=${diag.mtfRejected}, объём=${diag.volFiltered}, вход=${diag.entryRejected}, BTC=${diag.btcFiltered}, лучший=${diag.bestSymbol ?? '—'} (${diag.bestScore.toFixed(2)})`);
 
   return best ? { ...best, _diag: diag as any } : null;
 }
@@ -681,7 +856,7 @@ export async function runAutoTradeCycle(
         action: 'idle', closedTrades, trailingUpdates, tpRepairs,
         message: `Дневной лимит сделок: ${todayTradesCount}/${strategy.maxDailyTrades}. До завтра.`,
         scannedCount: 0, bestScore: 0, newCandleHour: currentSlot,
-        diagnostics: { checked: 0, none: 0, mtfRejected: 0, volFiltered: 0, btcFiltered: 0, cooldowns: 0, bestSymbol: null, bestScore: 0, dailyLimitHit: true, dailyTradeCount: todayTradesCount },
+        diagnostics: { checked: 0, none: 0, mtfRejected: 0, volFiltered: 0, btcFiltered: 0, cooldowns: 0, entryRejected: 0, bestSymbol: null, bestScore: 0, dailyLimitHit: true, dailyTradeCount: todayTradesCount },
       };
     }
   }
@@ -696,11 +871,12 @@ export async function runAutoTradeCycle(
 
   if (!best || best.decision.direction === 'none') {
     // Build human-readable diagnostic summary
-    const d = diag ?? { checked: 0, none: 0, mtfRejected: 0, volFiltered: 0, btcFiltered: 0, cooldowns: 0, bestSymbol: null, bestScore: 0, dailyLimitHit: false, dailyTradeCount: todayTradesCount };
+    const d = diag ?? { checked: 0, none: 0, mtfRejected: 0, volFiltered: 0, btcFiltered: 0, cooldowns: 0, entryRejected: 0, bestSymbol: null, bestScore: 0, dailyLimitHit: false, dailyTradeCount: todayTradesCount };
     const filters: string[] = [];
     if (d.none > 0) filters.push(`нет сигнала: ${d.none}`);
     if (d.mtfRejected > 0) filters.push(`старший ТФ: ${d.mtfRejected}`);
     if (d.volFiltered > 0) filters.push(`объёмный фильтр: ${d.volFiltered}`);
+    if (d.entryRejected > 0) filters.push(`плохой вход: ${d.entryRejected}`);
     if (d.btcFiltered > 0) filters.push(`BTC фильтр: ${d.btcFiltered}`);
     if (d.cooldowns > 0) filters.push(`кулдаун: ${d.cooldowns}`);
     const diagMsg = `проверено ${d.checked} — ${filters.length > 0 ? filters.join(', ') : 'слабые сигналы'}`;
@@ -764,7 +940,8 @@ export async function runAutoTradeCycle(
   ];
 
   const coinName = best.symbol.replace('USDT', '');
-  const signalMsg = `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${coinName} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x | $${amount.toFixed(2)} (свободно $${freeBalance.toFixed(1)}) | TP ${strategy.riskRewardRatio}R${volReason}`;
+  const entryReason = (best.decision as any)._entryReason ? ` | вход: ${(best.decision as any)._entryReason}` : '';
+  const signalMsg = `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${coinName} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x | $${amount.toFixed(2)} (свободно $${freeBalance.toFixed(1)}) | TP ${strategy.riskRewardRatio}R${volReason}${entryReason}`;
   return {
     action: 'new-trade', closedTrades, trailingUpdates, tpRepairs, newTrades,
     message: monitorParts.length > 0 ? monitorParts.join(' | ') + ' | ' + signalMsg : signalMsg,
