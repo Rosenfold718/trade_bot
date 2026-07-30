@@ -64,6 +64,19 @@ export async function analyzeSymbol(
 // Client-side auto-trade: find best signal
 // ============================================================
 
+export interface SignalDiagnostics {
+  checked: number;
+  none: number;
+  mtfRejected: number;
+  volFiltered: number;
+  btcFiltered: number;
+  cooldowns: number;
+  bestSymbol: string | null;
+  bestScore: number;
+  dailyLimitHit: boolean;
+  dailyTradeCount: number;
+}
+
 export async function findBestSignal(
   openTradeSymbols: Set<string>,
   strategyId: string = 'momentum',
@@ -81,6 +94,7 @@ export async function findBestSignal(
 
   const symbols = TOP_50_SYMBOLS;
   const now = Date.now();
+  const cooldownCount = [...(cooldownSymbols?.values() ?? [])].filter(t => t > now).length;
   const available = symbols.filter(s => {
     if (openTradeSymbols.has(s)) return false;
     // ── COOLDOWN FILTER: skip symbols recently stopped out ──
@@ -95,9 +109,10 @@ export async function findBestSignal(
   const scanLimit = strategyId === 'scalper' ? 30 : 20;
 
   // ── DAILY TRADE LIMIT ──
+  let todayTrades = 0;
   if (strategy.maxDailyTrades > 0 && typeof window !== 'undefined') {
     const storageKey = `dailyTrades_${strategyId}_${new Date().toISOString().slice(0, 10)}`;
-    const todayTrades = parseInt(sessionStorage.getItem(storageKey) || '0', 10);
+    todayTrades = parseInt(sessionStorage.getItem(storageKey) || '0', 10);
     if (todayTrades >= strategy.maxDailyTrades) {
       console.log(`[findBestSignal][${strategyId}] Daily limit reached: ${todayTrades}/${strategy.maxDailyTrades}`);
       return null;
@@ -251,9 +266,22 @@ export async function findBestSignal(
     } catch { continue; }
   }
 
-  console.log(`[findBestSignal][${strategyId}] Interval:${effectiveInterval} Checked ${checkSymbols.length}, none=${noneCount}, mtf_rejected=${mtfRejected}, vol_filtered=${volumeFiltered}, btc_filtered=${btcFiltered}, best=${best?.symbol ?? 'null'} score=${bestScore.toFixed(2)}`);
+  const diag: SignalDiagnostics = {
+    checked: checkSymbols.length,
+    none: noneCount,
+    mtfRejected,
+    volFiltered: volumeFiltered,
+    btcFiltered,
+    cooldowns: cooldownCount,
+    bestSymbol: best?.symbol ?? null,
+    bestScore: bestScore,
+    dailyLimitHit: false,
+    dailyTradeCount: todayTrades,
+  };
 
-  return best;
+  console.log(`[findBestSignal][${strategyId}] ${diag.checked} проверено, нет сигнала=${diag.none}, MTF=${diag.mtfRejected}, объём=${diag.volFiltered}, BTC=${diag.btcFiltered}, лучший=${diag.bestSymbol ?? '—'} (${diag.bestScore.toFixed(2)})`);
+
+  return best ? { ...best, _diag: diag as any } : null;
 }
 
 function calcEMA50(data: number[], period: number): number {
@@ -548,6 +576,7 @@ export async function runAutoTradeCycle(
     scannedCount: number;
     bestScore: number;
     newCandleHour: number;
+    diagnostics?: SignalDiagnostics;
   }> {
   // ── Load settings once per cycle if not provided ──
   const settings = sysSettings ?? await fetchSettings();
@@ -642,17 +671,43 @@ export async function runAutoTradeCycle(
     return { action: 'monitor', closedTrades, trailingUpdates, tpRepairs, message: msg, scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
   }
 
+  // ── DAILY TRADE LIMIT (check before scanning) ──
+  let todayTradesCount = 0;
+  if (strategy.maxDailyTrades > 0 && typeof window !== 'undefined') {
+    const storageKey = `dailyTrades_${strategyId}_${new Date().toISOString().slice(0, 10)}`;
+    todayTradesCount = parseInt(sessionStorage.getItem(storageKey) || '0', 10);
+    if (todayTradesCount >= strategy.maxDailyTrades) {
+      return {
+        action: 'idle', closedTrades, trailingUpdates, tpRepairs,
+        message: `Дневной лимит сделок: ${todayTradesCount}/${strategy.maxDailyTrades}. До завтра.`,
+        scannedCount: 0, bestScore: 0, newCandleHour: currentSlot,
+        diagnostics: { checked: 0, none: 0, mtfRejected: 0, volFiltered: 0, btcFiltered: 0, cooldowns: 0, bestSymbol: null, bestScore: 0, dailyLimitHit: true, dailyTradeCount: todayTradesCount },
+      };
+    }
+  }
+
   const openSymbols = new Set(updatedOpenTrades.map(t => t.symbol));
   if (globalLockedSymbols) {
     for (const sym of globalLockedSymbols) openSymbols.add(sym);
   }
 
   const best = await findBestSignal(openSymbols, strategyId, strategyInterval, strategyLimit, strategy, settings, cooldownSymbols);
+  const diag = (best as any)?._diag as SignalDiagnostics | undefined;
+
   if (!best || best.decision.direction === 'none') {
+    // Build human-readable diagnostic summary
+    const d = diag ?? { checked: 0, none: 0, mtfRejected: 0, volFiltered: 0, btcFiltered: 0, cooldowns: 0, bestSymbol: null, bestScore: 0, dailyLimitHit: false, dailyTradeCount: todayTradesCount };
+    const filters: string[] = [];
+    if (d.none > 0) filters.push(`нет сигнала: ${d.none}`);
+    if (d.mtfRejected > 0) filters.push(`старший ТФ: ${d.mtfRejected}`);
+    if (d.volFiltered > 0) filters.push(`объёмный фильтр: ${d.volFiltered}`);
+    if (d.btcFiltered > 0) filters.push(`BTC фильтр: ${d.btcFiltered}`);
+    if (d.cooldowns > 0) filters.push(`кулдаун: ${d.cooldowns}`);
+    const diagMsg = `проверено ${d.checked} — ${filters.length > 0 ? filters.join(', ') : 'слабые сигналы'}`;
     const msg = monitorParts.length > 0
-      ? monitorParts.join(' | ') + ' | Сигналов не найдено'
-      : 'Сигналов не найдено, сканирую...';
-    return { action: 'idle', closedTrades, trailingUpdates, tpRepairs, message: msg, scannedCount: 30, bestScore: 0, newCandleHour: currentSlot };
+      ? monitorParts.join(' | ') + ' | ' + diagMsg
+      : diagMsg;
+    return { action: 'idle', closedTrades, trailingUpdates, tpRepairs, message: msg, scannedCount: d.checked, bestScore: 0, newCandleHour: currentSlot, diagnostics: d };
   }
 
   // ============================================================

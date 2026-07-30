@@ -295,6 +295,9 @@ export default function TradingTerminal() {
       cooldownMaps[s.id] = new Map();
     }
 
+    // Throttle idle diagnostic logs: max once per 3 minutes per strategy
+    const lastIdleLog = new Map<string, number>();
+
     const runStrategyCycle = async (strategyId: string) => {
       if (cancelled) return;
       try {
@@ -354,9 +357,21 @@ export default function TradingTerminal() {
           newTrades?: Array<{ symbol: string; direction: string; price: number; leverage: number; stopLoss: number; takeProfit: number; amount: number; strategyId: string; label: string }>;
         };
 
-        if (r.message && r.action !== 'idle') {
+        if (r.message) {
+          if (r.action === 'new-trade') {
+            addLog(`[${strategy.name}] ${r.message}`, 'trade');
+          } else if (r.action === 'monitor') {
+            addLog(`[${strategy.name}] ${r.message}`, 'info');
+          } else if (r.action === 'idle') {
+            // Log idle diagnostics, but throttled (every 3 min per strategy)
+            const now = Date.now();
+            const lastLog = lastIdleLog.get(strategyId) ?? 0;
+            if (now - lastLog > 180_000) {
+              lastIdleLog.set(strategyId, now);
+              addLog(`[${strategy.name}] ${r.message}`, 'info');
+            }
+          }
           console.log(`[AutoTrade][${strategyId}]`, r.message);
-          addLog(`[${strategy.name}] ${r.message}`, r.action === 'new-trade' ? 'trade' : 'info');
         }
 
         // Process closed trades
