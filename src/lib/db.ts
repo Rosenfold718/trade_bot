@@ -167,8 +167,8 @@ export async function initUserTradingData(userId: string): Promise<void> {
     try {
       const id = `${userId}-${strategyId}`;
       await tursoDb.execute(
-        `INSERT OR IGNORE INTO trader_state (id, user_id, strategy_id, balance, borrowed_funds, debt_to_repay, is_active)
-         VALUES (?, ?, ?, 100, 0, 0, 1)`,
+        `INSERT OR IGNORE INTO trader_state (id, user_id, strategy_id, balance, initial_balance, borrowed_funds, debt_to_repay, is_active)
+         VALUES (?, ?, ?, 100, 100, 0, 0, 1)`,
         [id, userId, strategyId]
       );
       // Verify the row exists and has correct user_id + strategy_id
@@ -179,8 +179,8 @@ export async function initUserTradingData(userId: string): Promise<void> {
       if (check.rows.length === 0) {
         // Row might exist with wrong values — force update
         await tursoDb.execute(
-          `INSERT OR REPLACE INTO trader_state (id, user_id, strategy_id, balance, borrowed_funds, debt_to_repay, is_active)
-           VALUES (?, ?, ?, 100, 0, 0, 1)`,
+          `INSERT OR REPLACE INTO trader_state (id, user_id, strategy_id, balance, initial_balance, borrowed_funds, debt_to_repay, is_active)
+           VALUES (?, ?, ?, 100, 100, 0, 0, 1)`,
           [id, userId, strategyId]
         );
       }
@@ -246,7 +246,7 @@ export async function getTraderState(userId: string, strategyId: string = 'momen
     balance: Number(row.balance),
     borrowed_funds: Number(row.borrowed_funds ?? 0),
     debt_to_repay: Number(row.debt_to_repay ?? 0),
-    initial_balance: Number(row.initial_balance ?? row.balance ?? 100),
+    initial_balance: Number(row.initial_balance ?? 100),
     is_active: Boolean(row.is_active),
   };
 }

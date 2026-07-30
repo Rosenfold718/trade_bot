@@ -81,8 +81,16 @@ export default function ControlPanel() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ strategyId: activeStrategy, initialBalance: val }),
       });
-      if (res.ok && traderState) {
-        setStrategyTraderState(activeStrategy, { ...traderState, initial_balance: val });
+      if (res.ok) {
+        const data = await res.json();
+        // Re-fetch state from server to get the recalculated balance
+        const initRes = await fetch(`/api/trader?strategyId=${activeStrategy}`);
+        if (initRes.ok) {
+          const initData = await initRes.json();
+          if (initData.state) {
+            setStrategyTraderState(activeStrategy, initData.state);
+          }
+        }
         setEditingDeposit(false);
       }
     } catch (err) {
