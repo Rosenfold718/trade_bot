@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic';
 import { useTerminalStore } from '@/lib/store';
 import { STRATEGIES, getStrategy } from '@/lib/strategies';
 import { cn } from '@/lib/utils';
-import { Menu, X, ChevronDown, BarChart3, RotateCcw, FileSpreadsheet, ShieldCheck, Loader2, TrendingUp, TrendingDown, Minus, Activity, Brain } from 'lucide-react';
+import { Menu, X, ChevronDown, BarChart3, RotateCcw, FileSpreadsheet, Settings, Loader2, TrendingUp, TrendingDown, Minus, Activity, Brain, BookOpen } from 'lucide-react';
 import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
   AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
@@ -20,6 +20,7 @@ import OrderBook from '@/components/order-book';
 import { DEFAULT_INDICATORS, type IndicatorConfig } from '@/components/chart';
 import type { CandleData, TraderState, Trade, IndicatorWeight } from '@/lib/types';
 import AdminPanel from '@/components/admin-panel';
+import ManualDialog from '@/components/manual-dialog';
 import { fetchSettings, invalidateSettingsCache } from '@/lib/settings-cache';
 
 const MomentumReport = dynamic(() => import('@/components/momentum-report'), {
@@ -116,6 +117,7 @@ export default function TradingTerminal() {
   const [reportStrategyId, setReportStrategyId] = useState<string | null>(null);
   const [showMobilePanel, setShowMobilePanel] = useState<string | null>(null);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [showManual, setShowManual] = useState(false);
 
   // Indicator state — derived from active strategy, with localStorage override
   const [indicators, setIndicators] = useState<Record<string, IndicatorConfig>>(() => {
@@ -616,16 +618,28 @@ export default function TradingTerminal() {
             <span className="text-[10px] font-medium tracking-wide hidden sm:inline">ОТЧЁТ</span>
           </button>
           <button
+            onClick={() => setShowManual(true)}
+            className={cn(
+              'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all duration-200',
+              'bg-sky-500/10 border-sky-500/20 text-sky-400/80',
+              'hover:bg-sky-500/20 hover:border-sky-500/30',
+            )}
+            title="Справка"
+          >
+            <BookOpen className="w-3.5 h-3.5" />
+            <span className="text-[10px] font-medium tracking-wide hidden sm:inline">СПРАВКА</span>
+          </button>
+          <button
             onClick={() => setShowAdminPanel(true)}
             className={cn(
               'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all duration-200',
               'bg-emerald-500/10 border-emerald-500/20 text-emerald-400/80',
               'hover:bg-emerald-500/20 hover:border-emerald-500/30',
             )}
-            title="Админ-панель"
+            title="Настройки"
           >
-            <ShieldCheck className="w-3.5 h-3.5" />
-            <span className="text-[10px] font-medium tracking-wide hidden sm:inline">АДМИН</span>
+            <Settings className="w-3.5 h-3.5" />
+            <span className="text-[10px] font-medium tracking-wide hidden sm:inline">НАСТРОЙКИ</span>
           </button>
         </div>
       </header>
@@ -831,6 +845,9 @@ export default function TradingTerminal() {
 
         {/* Strategy Report */}
         {showReport && <MomentumReport onClose={() => { setShowReport(false); setReportStrategyId(null); }} strategyId={reportStrategyId ?? activeStrategy} />}
+
+        {/* Manual Dialog */}
+        <ManualDialog open={showManual} onClose={() => setShowManual(false)} />
 
         {/* Admin Panel */}
         <AdminPanel open={showAdminPanel} onClose={() => setShowAdminPanel(false)} />
