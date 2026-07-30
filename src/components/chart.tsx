@@ -331,19 +331,21 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
     };
 
     for (const trade of (openTrades ?? []).filter(t => t.symbol === symbol && t.status === 'open')) {
-      if (trade.entry_price != null) addLine(trade.entry_price, 'rgba(255,255,255,0.5)', 2, 1, `ENTRY $${fmtPrice(trade.entry_price)}`);
+      if (trade.entry_price != null) addLine(trade.entry_price, 'rgba(255,255,255,0.3)', 2, 1, '');
       // TP line — NOT draggable via lightweight-charts (library's native drag is broken)
       // HTML drag handles overlay is used instead (section 5)
       if (trade.take_profit != null) {
-        const tpLine = addLine(trade.take_profit, '#22c55e', 0, 2, `TP $${fmtPrice(trade.take_profit)}`);
+        const tpLine = addLine(trade.take_profit, 'rgba(34,197,94,0.4)', 0, 1, '');
         if (tpLine) tpLinesMap.current.set(trade.id, { line: tpLine, price: trade.take_profit, tradeId: trade.id });
       }
-      if (trade.stop_loss != null) addLine(trade.stop_loss, '#ef4444', 0, 1, `SL $${fmtPrice(trade.stop_loss)}`);
+      if (trade.stop_loss != null) addLine(trade.stop_loss, 'rgba(239,68,68,0.4)', 0, 1, '');
     }
 
-    for (const trade of (recentTrades ?? []).filter(t => t.symbol === symbol && t.status === 'closed' && t.exit_price != null)) {
-      if (trade.entry_price != null) addLine(trade.entry_price, 'rgba(255,255,255,0.25)', 2, 1, `IN $${fmtPrice(trade.entry_price)}`);
-      addLine(trade.exit_price!, '#eab308', 1, 1, `EXIT $${fmtPrice(trade.exit_price!)}`);
+    // For closed trades: only show lines for the last 3 to reduce clutter
+    const closedForSymbol = (recentTrades ?? []).filter(t => t.symbol === symbol && t.status === 'closed' && t.exit_price != null).slice(-3);
+    for (const trade of closedForSymbol) {
+      if (trade.entry_price != null) addLine(trade.entry_price, 'rgba(255,255,255,0.12)', 2, 1, '');
+      addLine(trade.exit_price!, 'rgba(234,179,8,0.25)', 1, 1, '');
     }
 
     // ── Entry Arrow Markers ──
@@ -385,23 +387,21 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
         markers.push({
           time,
           position: trade.direction === 'long' ? 'belowBar' : 'aboveBar',
-          color: trade.direction === 'long' ? '#22c55e' : '#ef4444',
+          color: trade.direction === 'long' ? 'rgba(34,197,94,0.7)' : 'rgba(239,68,68,0.7)',
           shape: trade.direction === 'long' ? 'arrowUp' : 'arrowDown',
-          text: `${trade.direction === 'long' ? 'L' : 'S'} ${fmtPrice(trade.entry_price)}`,
         });
       }
     }
 
-    // Also show markers for recent (closed) trades on this symbol
-    for (const trade of (recentTrades ?? []).filter(t => t.symbol === symbol && t.status === 'closed')) {
+    // Also show markers for recent (closed) trades on this symbol — last 3 only
+    for (const trade of (recentTrades ?? []).filter(t => t.symbol === symbol && t.status === 'closed').slice(-3)) {
       const entryTime = findCandleTime(trade.opened_at, trade.direction);
       if (entryTime) {
         markers.push({
           time: entryTime,
           position: trade.direction === 'long' ? 'belowBar' : 'aboveBar',
-          color: trade.direction === 'long' ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.5)',
+          color: trade.direction === 'long' ? 'rgba(34,197,94,0.35)' : 'rgba(239,68,68,0.35)',
           shape: trade.direction === 'long' ? 'arrowUp' : 'arrowDown',
-          text: `${trade.direction === 'long' ? 'L' : 'S'}`,
         });
       }
     }

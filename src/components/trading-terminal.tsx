@@ -906,28 +906,28 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
 }) {
   const [closingTrade, setClosingTrade] = useState<Trade | null>(null);
   const [closingLoading, setClosingLoading] = useState(false);
-  const [expandedView, setExpandedView] = useState(false);
+  const allTrades = useMemo(
+    () => [...openTrades, ...recentTrades].slice(0, 30),
+    [openTrades, recentTrades],
+  );
 
-  // Calculate live PnL for a single trade
-  const calcPnl = (trade: Trade): number | null => {
-    if (trade.status !== 'open') return trade.pnl ?? null;
-    const livePrice = coins.find(c => c.symbol === trade.symbol)?.price;
-    if (!livePrice || livePrice <= 0) return null;
-    const isLong = trade.direction === 'long';
-    const priceChange = isLong
-      ? (livePrice - trade.entry_price) / trade.entry_price
-      : (trade.entry_price - livePrice) / trade.entry_price;
-    return trade.amount * priceChange * trade.leverage;
-  };
-
+  // Calculate total unrealized PnL for open trades
   const totalOpenPnl = useMemo(() => {
     let total = 0;
     for (const trade of openTrades) {
-      const pnl = calcPnl(trade);
-      if (pnl != null) total += pnl;
+      if (trade.status !== 'open') continue;
+      const livePrice = coins.find(c => c.symbol === trade.symbol)?.price;
+      if (!livePrice || livePrice <= 0) continue;
+      const isLong = trade.direction === 'long';
+      const priceChange = isLong
+        ? (livePrice - trade.entry_price) / trade.entry_price
+        : (trade.entry_price - livePrice) / trade.entry_price;
+      total += trade.amount * priceChange * trade.leverage;
     }
     return total;
   }, [openTrades, coins]);
+
+  // Total realized PnL now comes from DB (totalClosedPnl prop) — no more computing from recentTrades
 
   const handleCloseTrade = (trade: Trade) => {
     setClosingTrade(trade);
@@ -944,33 +944,84 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
     }
   };
 
+  // Calculate PnL preview for closing trade
   const closingPnl = useMemo(() => {
     if (!closingTrade) return null;
-    return calcPnl(closingTrade);
+    const livePrice = coins.find(c => c.symbol === closingTrade.symbol)?.price;
+    if (!livePrice || livePrice <= 0) return null;
+    const isLong = closingTrade.direction === 'long';
+    const priceChange = isLong
+      ? (livePrice - closingTrade.entry_price) / closingTrade.entry_price
+      : (closingTrade.entry_price - livePrice) / closingTrade.entry_price;
+    return closingTrade.amount * priceChange * closingTrade.leverage;
   }, [closingTrade, coins]);
 
-  // Group open trades by direction
-  const longTrades = openTrades.filter(t => t.direction === 'long');
-  const shortTrades = openTrades.filter(t => t.direction === 'short');
-  const closedTradesList = recentTrades.slice(0, 20);
+  if (allTrades.length === 0 && openTrades.length === 0) {
+    return (
+      <>
+        <AlertDialog open={!!closingTrade} onOpenChange={(open) => { if (!open) setClosingTrade(null); }}>
+          <AlertDialogContent className="bg-[#0d0d14] border-white/10 max-w-sm">
+            <AlertDialogHeader>
+              <AlertDialogTitle className="text-white text-base flex items-center gap-2">
+                <X className="w-4 h-4 text-red-400" />
+                Закрыть сделку?
+              </AlertDialogTitle>
+              <AlertDialogDescription className="text-white/50 text-sm space-y-2">
+                {closingTrade && (
+                  <div className="bg-white/[0.03] rounded-lg p-3 space-y-1.5 text-xs font-mono">
+                    <div className="flex justify-between">
+                      <span className="text-white/40">Монета</span>
+                      <span className="text-white font-semibold">{closingTrade.symbol.replace('USDT', '')}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-white/40">Направление</span>
+                      <span className={closingTrade.direction === 'long' ? 'text-green-400' : 'text-red-400'}>{closingTrade.direction === 'long' ? 'LONG ↑' : 'SHORT ↓'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-white/40">Цена входа</span>
+                      <span className="text-white">${fmtP(closingTrade.entry_price)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-white/40">Объём</span>
+                      <span className="text-cyan-400/80">${closingTrade.amount.toFixed(2)}</span>
+                    </div>
+                    {closingPnl !== null && (
+                      <div className="flex justify-between pt-1 border-t border-white/[0.06]">
+                        <span className="text-white/40">Ожидаемый PnL</span>
+                        <span className={cn('font-bold', closingPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
+                          {closingPnl >= 0 ? '+' : ''}{closingPnl.toFixed(2)}$
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <p className="text-white/30 text-xs pt-1">
+                  Позиция будет закрыта по текущей рыночной цене. Нереализованный PnL станет реализованным и изменит баланс.
+                </p>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel className="bg-white/[0.04] border-white/10 text-white/60 hover:bg-white/[0.08] hover:text-white/80">Отмена</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(e) => { e.preventDefault(); confirmCloseTrade(); }}
+                disabled={closingLoading}
+                className="bg-red-600 hover:bg-red-700 text-white border-0"
+              >
+                {closingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Закрыть позицию'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+        <div className="h-24 flex items-center justify-center">
+          <span className="text-xs text-white/20 font-mono">Нет сделок</span>
+        </div>
+      </>
+    );
+  }
 
-  const hasAnyTrades = openTrades.length > 0 || recentTrades.length > 0;
-
-  // Per-group PnL totals
-  const longPnl = useMemo(() => {
-    let t = 0; for (const tr of longTrades) { const p = calcPnl(tr); if (p != null) t += p; } return t;
-  }, [longTrades, coins]);
-  const shortPnl = useMemo(() => {
-    let t = 0; for (const tr of shortTrades) { const p = calcPnl(tr); if (p != null) t += p; } return t;
-  }, [shortTrades, coins]);
-
-  const [longCollapsed, setLongCollapsed] = useState(false);
-  const [shortCollapsed, setShortCollapsed] = useState(false);
-  const [closedCollapsed, setClosedCollapsed] = useState(true);
-  const [expandedTradeId, setExpandedTradeId] = useState<string | null>(null);
-
-  // Close Trade Confirmation Modal (rendered once)
-  const closeConfirmModal = (
+  return (
+    <>
+    {/* Close Trade Confirmation Modal */}
     <AlertDialog open={!!closingTrade} onOpenChange={(open) => { if (!open) setClosingTrade(null); }}>
       <AlertDialogContent className="bg-[#0d0d14] border-white/10 max-w-sm">
         <AlertDialogHeader>
@@ -1008,7 +1059,7 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
               </div>
             )}
             <p className="text-white/30 text-xs pt-1">
-              Позиция будет закрыта по текущей рыночной цене.
+              Позиция будет закрыта по текущей рыночной цене. Нереализованный PnL станет реализованным и изменит баланс.
             </p>
           </AlertDialogDescription>
         </AlertDialogHeader>
@@ -1019,389 +1070,126 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
             disabled={closingLoading}
             className="bg-red-600 hover:bg-red-700 text-white border-0"
           >
-            {closingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Закрыть'}
+            {closingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Закрыть позицию'}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-  );
 
-  if (!hasAnyTrades) {
-    return (
-      <>
-        {closeConfirmModal}
-        <div className="h-full flex items-center justify-center">
-          <span className="text-xs text-white/20 font-mono">Нет сделок</span>
-        </div>
-      </>
-    );
-  }
+    <div className="h-full flex flex-col">
+      <div className="flex-1 overflow-x-auto overflow-y-auto">
+        <table className="w-full text-xs min-w-[560px]">
+          <thead className="sticky top-0 bg-[#0d0d14] z-10">
+            <tr className="text-white/25 border-b border-white/[0.06]">
+              <th className="text-left font-medium py-2.5 px-3 md:px-4">Символ</th>
+              <th className="text-left font-medium py-2.5 px-2">Напр.</th>
+              <th className="text-right font-medium py-2.5 px-2 hidden md:table-cell">Вход</th>
+              <th className="text-right font-medium py-2.5 px-2 hidden lg:table-cell">Выход</th>
+              <th className="text-right font-medium py-2.5 px-2 hidden sm:table-cell">Объём</th>
+              <th className="text-right font-medium py-2.5 px-2 hidden lg:table-cell">Плечо</th>
+              <th className="text-right font-medium py-2.5 px-2">PnL</th>
+              <th className="text-center font-medium py-2.5 px-2">Открыта</th>
+              <th className="text-center font-medium py-2.5 px-2 hidden sm:table-cell">Статус</th>
+              <th className="text-center font-medium py-2.5 px-2">Действия</th>
+            </tr>
+          </thead>
+          <tbody>
+          {allTrades.map((trade) => {
+            const isLong = trade.direction === 'long';
+            const isOpen = trade.status === 'open';
 
-  // Collapsible direction group header
-  const DirectionGroupHeader = ({ direction, count, groupPnl, collapsed, onToggle }: {
-    direction: 'long' | 'short'; count: number; groupPnl: number; collapsed: boolean; onToggle: () => void;
-  }) => {
-    const isLong = direction === 'long';
-    return (
-      <button
-        onClick={onToggle}
-        className={cn(
-          'w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[11px] font-mono transition-all border',
-          isLong
-            ? 'bg-green-500/[0.04] border-green-500/[0.08] hover:bg-green-500/[0.08]'
-            : 'bg-red-500/[0.04] border-red-500/[0.08] hover:bg-red-500/[0.08]',
-        )}
-      >
-        {isLong ? (
-          <TrendingUp className="w-3 h-3 text-green-400/70 shrink-0" />
-        ) : (
-          <TrendingDown className="w-3 h-3 text-red-400/70 shrink-0" />
-        )}
-        <span className={cn('font-bold text-[11px]', isLong ? 'text-green-400/80' : 'text-red-400/80')}>
-          {isLong ? 'LONG' : 'SHORT'}
-        </span>
-        <span className={cn(
-          'ml-auto px-1.5 py-px rounded text-[10px] font-bold leading-none',
-          isLong ? 'bg-green-500/10 text-green-400/70' : 'bg-red-500/10 text-red-400/70',
-        )}>
-          {count}
-        </span>
-        <span className={cn(
-          'font-semibold text-[10px] tabular-nums',
-          groupPnl >= 0 ? 'text-green-400/70' : 'text-red-400/70',
-        )}>
-          {groupPnl >= 0 ? '+' : ''}{groupPnl.toFixed(2)}$
-        </span>
-        <ChevronDown className={cn(
-          'w-3 h-3 text-white/20 shrink-0 transition-transform duration-200',
-          collapsed && '-rotate-90',
-        )} />
-      </button>
-    );
-  };
+            // Calculate live PnL for open trades
+            let displayPnl = trade.pnl;
+            if (isOpen) {
+              const livePrice = coins.find(c => c.symbol === trade.symbol)?.price;
+              if (livePrice && livePrice > 0) {
+                const priceChange = isLong
+                  ? (livePrice - trade.entry_price) / trade.entry_price
+                  : (trade.entry_price - livePrice) / trade.entry_price;
+                displayPnl = trade.amount * priceChange * trade.leverage;
+              }
+            }
 
-  // Compact trade row
-  const CompactTradeRow = ({ trade }: { trade: Trade }) => {
-    const pnl = calcPnl(trade);
-    const isLong = trade.direction === 'long';
-    const isExpanded = expandedTradeId === trade.id;
-    return (
-      <div
-        className={cn(
-          'group border transition-colors',
-          isLong
-            ? 'border-green-500/[0.06] hover:border-green-500/15'
-            : 'border-red-500/[0.06] hover:border-red-500/15',
-          isExpanded
-            ? 'bg-white/[0.03]'
-            : 'bg-white/[0.01] hover:bg-white/[0.025]',
-        )}
-      >
-        <button
-          onClick={() => { onSelectTrade(trade); setExpandedTradeId(prev => prev === trade.id ? null : trade.id); }}
-          className={cn(
-            'w-full flex items-center gap-2 px-2.5 py-1 text-[10px] font-mono transition-all',
-            isExpanded && 'pb-0.5',
-          )}
-        >
-          <span className={cn('font-semibold text-[11px] truncate min-w-0', isLong ? 'text-green-400/80' : 'text-red-400/80')}>
-            {trade.symbol.replace('USDT', '')}
-          </span>
-          <span className="text-white/25 text-[9px] shrink-0">{trade.leverage ?? '—'}x</span>
-          <span className={cn(
-            'ml-auto font-semibold tabular-nums shrink-0',
-            pnl != null && pnl >= 0 ? 'text-green-400' : pnl != null ? 'text-red-400' : 'text-white/20',
-          )}>
-            {pnl != null ? `${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}$` : '...'}
-          </span>
-          <button
-            onClick={(e) => { e.stopPropagation(); handleCloseTrade(trade); }}
-            className={cn(
-              'shrink-0 w-4 h-4 rounded flex items-center justify-center text-[10px] transition-all',
-              'opacity-0 group-hover:opacity-100',
-              'text-white/20 hover:text-red-400 hover:bg-red-500/15',
-            )}
-          >
-            ×
-          </button>
-        </button>
-        {/* Expandable detail row (click on row to select, this shows on toggle) */}
-        {isExpanded && (
-          <div className="px-2.5 pb-1.5 space-y-0.5 text-[9px] font-mono text-white/30 border-t border-white/[0.04] pt-1">
-            <div className="flex justify-between">
-              <span>Вход</span>
-              <span className="text-white/50">
-                {typeof trade.entry_price === 'number'
-                  ? trade.entry_price < 1 ? trade.entry_price.toPrecision(4) : trade.entry_price.toFixed(2)
-                  : '—'}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span>Объём</span>
-              <span className="text-cyan-400/50">${typeof trade.amount === 'number' ? trade.amount.toFixed(2) : '—'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Плечо</span>
-              <span className="text-white/50">{trade.leverage ?? '—'}x</span>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  // Compact view: grouped LONG/SHORT with collapsible sections
-  if (!expandedView) {
-    return (
-      <>
-        {closeConfirmModal}
-        <div className="h-full flex flex-col">
-          {/* Summary bar */}
-          <div className="shrink-0 px-3 pt-2 pb-1.5 border-b border-white/[0.06]">
-            <div className="flex items-center justify-between text-[10px] font-mono">
-              <div className="flex items-center gap-2">
-                <span className="text-white/40 font-semibold">{openTrades.length}</span>
-                <span className="text-white/20">открытых</span>
-                <span className={cn('ml-1 font-semibold tabular-nums', totalOpenPnl >= 0 ? 'text-green-400/70' : 'text-red-400/70')}>
-                  {totalOpenPnl >= 0 ? '+' : ''}{totalOpenPnl.toFixed(2)}$
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-white/20 text-[9px]">Реал.</span>
-                <span className={cn('font-bold tabular-nums', (totalClosedPnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400')}>
-                  {(totalClosedPnl ?? 0) >= 0 ? '+' : ''}${(totalClosedPnl ?? 0).toFixed(2)}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Scrollable trade list */}
-          <div className="flex-1 min-h-0 overflow-y-auto px-2.5 py-2 space-y-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-white/20">
-            {/* LONG group */}
-            {longTrades.length > 0 && (
-              <div className="space-y-1">
-                <DirectionGroupHeader
-                  direction="long"
-                  count={longTrades.length}
-                  groupPnl={longPnl}
-                  collapsed={longCollapsed}
-                  onToggle={() => setLongCollapsed(v => !v)}
-                />
-                {!longCollapsed && (
-                  <div className="space-y-px max-h-48 overflow-y-auto rounded-md [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/[0.08] [&::-webkit-scrollbar-thumb]:rounded-full">
-                    {longTrades.map(trade => (
-                      <CompactTradeRow
-                        key={trade.id}
-                        trade={trade}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* SHORT group */}
-            {shortTrades.length > 0 && (
-              <div className="space-y-1">
-                <DirectionGroupHeader
-                  direction="short"
-                  count={shortTrades.length}
-                  groupPnl={shortPnl}
-                  collapsed={shortCollapsed}
-                  onToggle={() => setShortCollapsed(v => !v)}
-                />
-                {!shortCollapsed && (
-                  <div className="space-y-px max-h-48 overflow-y-auto rounded-md [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/[0.08] [&::-webkit-scrollbar-thumb]:rounded-full">
-                    {shortTrades.map(trade => (
-                      <CompactTradeRow
-                        key={trade.id}
-                        trade={trade}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Visual separator between open and closed */}
-            {closedTradesList.length > 0 && (
-              <div className="relative my-1">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-white/[0.06]" />
-                </div>
-                <div className="relative flex justify-center">
-                  <span className="bg-[#0a0a0f] px-2 text-[9px] text-white/15 font-mono">Закрытые</span>
-                </div>
-              </div>
-            )}
-
-            {/* Closed trades group */}
-            {closedTradesList.length > 0 && (
-              <div className="space-y-1">
-                <button
-                  onClick={() => setClosedCollapsed(v => !v)}
-                  className="w-full flex items-center gap-2 px-2.5 py-1 rounded-md text-[10px] font-mono bg-white/[0.02] border border-white/[0.06] hover:bg-white/[0.04] transition-all"
-                >
-                  <Minus className="w-3 h-3 text-white/20 shrink-0" />
-                  <span className="text-white/30 font-medium">Закрытые</span>
-                  <span className="ml-auto px-1.5 py-px rounded text-[10px] font-bold leading-none bg-white/5 text-white/30">
-                    {closedTradeCount ?? recentTrades.length}
+            return (
+              <tr
+                key={trade.id}
+                className="border-b border-white/[0.03] hover:bg-white/[0.04] transition-colors cursor-pointer"
+                onClick={() => onSelectTrade(trade)}
+              >
+                <td className="py-2.5 px-3 md:px-4 font-mono text-white/80 font-semibold">
+                  {trade.symbol.replace('USDT', '')}
+                </td>
+                <td className="py-2.5 px-2">
+                  <span className={cn('font-mono font-bold text-[11px]', isLong ? 'text-green-400' : 'text-red-400')}>
+                    {isLong ? 'LONG' : 'SHORT'}
                   </span>
-                  <ChevronDown className={cn(
-                    'w-3 h-3 text-white/15 shrink-0 transition-transform duration-200',
-                    closedCollapsed && '-rotate-90',
-                  )} />
-                </button>
-                {!closedCollapsed && (
-                  <div className="space-y-px max-h-36 overflow-y-auto rounded-md [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/[0.08] [&::-webkit-scrollbar-thumb]:rounded-full">
-                    {closedTradesList.map(trade => {
-                      const pnl = trade.pnl ?? 0;
-                      const isLong = trade.direction === 'long';
-                      return (
-                        <button
-                          key={trade.id}
-                          onClick={() => onSelectTrade(trade)}
-                          className="w-full flex items-center gap-2 px-2.5 py-1 text-[10px] font-mono bg-white/[0.01] hover:bg-white/[0.03] border border-white/[0.03] hover:border-white/[0.08] transition-all rounded-sm"
-                        >
-                          <span className={cn(
-                            'text-[8px] font-bold shrink-0',
-                            isLong ? 'text-green-400/30' : 'text-red-400/30',
-                          )}>
-                            {isLong ? 'L' : 'S'}
-                          </span>
-                          <span className="text-white/30 truncate min-w-0">
-                            {trade.symbol.replace('USDT', '')}
-                          </span>
-                          <span className={cn(
-                            'ml-auto font-semibold tabular-nums shrink-0 text-[9px]',
-                            pnl >= 0 ? 'text-green-400/40' : 'text-red-400/40',
-                          )}>
-                            {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}$
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Footer with expand toggle */}
-          <div className="shrink-0 border-t border-white/[0.06] px-3 py-1.5 flex items-center justify-between bg-[#0d0d14]">
-            <span className="text-[9px] text-white/15 font-mono">{openTrades.length} откр. · {closedTradeCount ?? recentTrades.length} закр.</span>
-            <button
-              onClick={() => setExpandedView(true)}
-              className="text-[9px] text-white/25 hover:text-white/50 transition-colors"
-            >
-              Таблица ↓
-            </button>
-          </div>
-        </div>
-      </>
-    );
-  }
-
-  // Expanded table view (full table)
-  return (
-    <>
-      {closeConfirmModal}
-      <div className="h-full flex flex-col">
-        <div className="flex-1 overflow-x-auto overflow-y-auto">
-          <table className="w-full text-xs min-w-[560px]">
-            <thead className="sticky top-0 bg-[#0d0d14] z-10">
-              <tr className="text-white/25 border-b border-white/[0.06]">
-                <th className="text-left font-medium py-2 px-3">Символ</th>
-                <th className="text-left font-medium py-2 px-2">Напр.</th>
-                <th className="text-right font-medium py-2 px-2 hidden md:table-cell">Вход</th>
-                <th className="text-right font-medium py-2 px-2">PnL</th>
-                <th className="text-right font-medium py-2 px-2 hidden sm:table-cell">Объём</th>
-                <th className="text-right font-medium py-2 px-2 hidden lg:table-cell">Плечо</th>
-                <th className="text-center font-medium py-2 px-2 hidden sm:table-cell">Статус</th>
-                <th className="text-center font-medium py-2 px-2">×</th>
+                </td>
+                <td className="py-2.5 px-2 text-right font-mono text-white/50">
+                  {typeof trade.entry_price === 'number'
+                    ? trade.entry_price < 1 ? trade.entry_price.toPrecision(4) : trade.entry_price.toFixed(2)
+                    : '—'}
+                </td>
+                <td className="py-2.5 px-2 text-right font-mono text-white/50">
+                  {trade.exit_price != null && typeof trade.exit_price === 'number'
+                    ? trade.exit_price < 1 ? trade.exit_price.toPrecision(4) : trade.exit_price.toFixed(2)
+                    : '—'}
+                </td>
+                <td className="py-2.5 px-2 text-right font-mono text-cyan-400/70 font-semibold">
+                  ${typeof trade.amount === 'number' ? trade.amount.toFixed(2) : '—'}
+                </td>
+                <td className="py-2.5 px-2 text-right font-mono text-white/40 hidden lg:table-cell">{trade.leverage ?? '—'}x</td>
+                <td className={cn('py-2.5 px-2 text-right font-mono font-bold', displayPnl == null ? 'text-white/25' : displayPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
+                  {displayPnl != null && typeof displayPnl === 'number'
+                    ? `${displayPnl >= 0 ? '+' : ''}$${displayPnl.toFixed(2)}`
+                    : '—'}
+                </td>
+                <td className="py-2.5 px-2 text-center font-mono text-white/20 text-[10px]">
+                  {new Date(trade.opened_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                </td>
+                <td className="py-2.5 px-2 text-center hidden sm:table-cell">
+                  <span className={cn('text-[10px] font-mono font-medium px-2 py-0.5 rounded-md', isOpen
+                    ? 'bg-yellow-500/10 text-yellow-400/80 border border-yellow-500/20'
+                    : 'bg-white/5 text-white/40 border border-white/10'
+                  )}>
+                    {isOpen ? 'ОТКР' : 'ЗАКР'}
+                  </span>
+                </td>
+                <td className="py-2.5 px-2 text-center">
+                  {isOpen ? (
+                    <button
+                      onClick={() => handleCloseTrade(trade)}
+                      className="px-2 py-1 rounded-md bg-white/[0.04] hover:bg-red-500/20 text-white/30 hover:text-red-400 text-[10px] font-medium transition-all duration-150 min-w-[44px] min-h-[28px] flex items-center justify-center gap-1 mx-auto border border-white/[0.06] hover:border-red-500/30"
+                      title="Закрыть сделку вручную"
+                    >
+                      <X className="w-3 h-3" />Закр.
+                    </button>
+                  ) : (
+                    <span className="text-white/10 text-[10px]">—</span>
+                  )}
+                </td>
               </tr>
-            </thead>
-            <tbody>
-            {[...openTrades, ...recentTrades.slice(0, 20)].map((trade) => {
-              const isLong = trade.direction === 'long';
-              const isOpen = trade.status === 'open';
-              const displayPnl = calcPnl(trade);
-
-              return (
-                <tr
-                  key={trade.id}
-                  className="border-b border-white/[0.03] hover:bg-white/[0.04] transition-colors cursor-pointer"
-                  onClick={() => onSelectTrade(trade)}
-                >
-                  <td className="py-2 px-3 font-mono text-white/80 font-semibold">
-                    {trade.symbol.replace('USDT', '')}
-                  </td>
-                  <td className="py-2 px-2">
-                    <span className={cn('font-mono font-bold text-[11px]', isLong ? 'text-green-400' : 'text-red-400')}>
-                      {isLong ? 'L' : 'S'}
-                    </span>
-                  </td>
-                  <td className="py-2 px-2 text-right font-mono text-white/50 hidden md:table-cell">
-                    {typeof trade.entry_price === 'number'
-                      ? trade.entry_price < 1 ? trade.entry_price.toPrecision(4) : trade.entry_price.toFixed(2)
-                      : '—'}
-                  </td>
-                  <td className={cn('py-2 px-2 text-right font-mono font-bold', displayPnl == null ? 'text-white/25' : displayPnl >= 0 ? 'text-green-400' : 'text-red-400')}>
-                    {displayPnl != null && typeof displayPnl === 'number'
-                      ? `${displayPnl >= 0 ? '+' : ''}$${displayPnl.toFixed(2)}`
-                      : '—'}
-                  </td>
-                  <td className="py-2 px-2 text-right font-mono text-cyan-400/70 hidden sm:table-cell">
-                    ${typeof trade.amount === 'number' ? trade.amount.toFixed(2) : '—'}
-                  </td>
-                  <td className="py-2 px-2 text-right font-mono text-white/40 hidden lg:table-cell">{trade.leverage ?? '—'}x</td>
-                  <td className="py-2 px-2 text-center hidden sm:table-cell">
-                    <span className={cn('text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-md', isOpen
-                      ? 'bg-yellow-500/10 text-yellow-400/80 border border-yellow-500/20'
-                      : 'bg-white/5 text-white/40 border border-white/10'
-                    )}>
-                      {isOpen ? 'ОТКР' : 'ЗАКР'}
-                    </span>
-                  </td>
-                  <td className="py-2 px-2 text-center">
-                    {isOpen ? (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleCloseTrade(trade); }}
-                        className="w-6 h-6 rounded bg-white/[0.04] hover:bg-red-500/20 text-white/20 hover:text-red-400 transition-all flex items-center justify-center"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    ) : (
-                      <span className="text-white/5 text-[10px]">—</span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-            </tbody>
-          </table>
-        </div>
-        {/* Footer */}
-        <div className="shrink-0 border-t border-white/[0.06] bg-[#0d0d14] px-3 py-1.5 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-[10px] font-mono">
-            <span className="text-white/25">Открыто: {openTrades.length}</span>
-            <span className={cn('font-medium', totalOpenPnl >= 0 ? 'text-green-400/60' : 'text-red-400/60')}>
-              {totalOpenPnl >= 0 ? '+' : ''}{totalOpenPnl.toFixed(2)}$
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className={cn('text-[10px] font-mono font-semibold', (totalClosedPnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400')}>
-              Реал.: {(totalClosedPnl ?? 0) >= 0 ? '+' : ''}${(totalClosedPnl ?? 0).toFixed(2)}
-            </span>
-            <button
-              onClick={() => setExpandedView(false)}
-              className="text-[9px] text-white/25 hover:text-white/50 transition-colors"
-            >
-              Компакт ↑
-            </button>
-          </div>
-        </div>
+            );
+          })}
+        </tbody>
+      </table>
       </div>
+      {/* Summary footer */}
+      <div className="shrink-0 border-t border-white/[0.06] bg-[#0d0d14] px-4 py-2 flex items-center justify-between">
+        <div className="flex items-center gap-2 md:gap-3 min-w-0">
+          {openTrades.length > 0 && (
+            <span className="text-[10px] text-white/25 font-mono">
+              Открыто: {openTrades.length}
+            </span>
+          )}
+          <span className={cn('text-[10px] font-mono font-medium', totalOpenPnl >= 0 ? 'text-green-400/60' : 'text-red-400/60')}>
+            Нереализ.: {totalOpenPnl >= 0 ? '+' : ''}${totalOpenPnl.toFixed(2)}
+          </span>
+        </div>
+        <span className={cn('text-[10px] font-mono font-semibold', (totalClosedPnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400')}>
+          Реализ.: {(totalClosedPnl ?? 0) >= 0 ? '+' : ''}${(totalClosedPnl ?? 0).toFixed(2)}{closedTradeCount !== undefined ? ` (${closedTradeCount})` : ''}
+        </span>
+      </div>
+    </div>
     </>
   );
 }
