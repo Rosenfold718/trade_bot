@@ -116,8 +116,14 @@ export async function POST(request: NextRequest) {
       if (leverage > maxAllowedLeverage) {
         return NextResponse.json({ error: `Максимальное плечо: ${maxAllowedLeverage}x` }, { status: 400 });
       }
-      if (amount > 25) {
-        return NextResponse.json({ error: 'Максимальная сумма сделки: $25' }, { status: 400 });
+
+      // Dynamic max trade amount: scales with user's balance (no fixed cap)
+      // The client-side position sizing already calculates proper amounts,
+      // so the backend just validates it doesn't exceed a reasonable % of balance.
+      const state = await getTraderState(userId, strategyId);
+      const dynamicMaxAmount = Math.max(8, state.balance * 0.10); // min $8, max 10% of balance
+      if (amount > dynamicMaxAmount) {
+        return NextResponse.json({ error: `Максимальная сумма сделки: $${dynamicMaxAmount.toFixed(0)} (10% от баланса $${state.balance.toFixed(0)})` }, { status: 400 });
       }
       if (stopLoss <= 0 || takeProfit <= 0) {
         return NextResponse.json({ error: 'SL и TP должны быть больше 0' }, { status: 400 });
@@ -132,7 +138,6 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Take-profit слишком далёкий (макс. 20%)' }, { status: 400 });
       }
 
-      const state = await getTraderState(userId, strategyId);
       if (state.balance < amount) {
         return NextResponse.json({ error: 'Insufficient balance' }, { status: 400 });
       }
