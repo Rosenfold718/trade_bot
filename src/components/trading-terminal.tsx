@@ -1270,14 +1270,15 @@ function BTCRegimeBar() {
 
   const loadDetailedAnalysis = useCallback(async () => {
     try {
-      const { refreshBTCCorrelation, getBTCRegime, getBTCRegimeSummary, getAllCorrelations } = await import('@/lib/btc-correlation');
+      const { refreshBTCCorrelation, forceRefreshBTCCorrelation, getBTCRegime, getBTCRegimeSummary, getAllCorrelations } = await import('@/lib/btc-correlation');
+      await forceRefreshBTCCorrelation();
       await refreshBTCCorrelation();
       const regimeData = getBTCRegime();
       const summary = getBTCRegimeSummary();
       const correlations = getAllCorrelations().sort((a, b) => Math.abs(b.correlation) - Math.abs(a.correlation));
 
-      // Fetch BTC candles for mini-chart data
-      const res = await fetch('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=60');
+      // Fetch BTC candles — 500 for proper analysis
+      const res = await fetch('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=500');
       const raw = await res.json();
       const btcCandles = raw.map((k: (string | number)[]) => ({
         time: Math.floor(Number(k[0]) / 1000),
@@ -1420,7 +1421,7 @@ function BTCRegimeBar() {
                   })()}
                 </svg>
               </div>
-              <div className="text-[10px] text-white/15 text-right mt-1">60 часовых свечей</div>
+              <div className="text-[10px] text-white/15 text-right mt-1">500 часовых свечей</div>
             </div>
 
             {/* Technical Indicators Grid */}

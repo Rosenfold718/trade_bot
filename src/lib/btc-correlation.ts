@@ -35,8 +35,8 @@ let _cache: {
   fetching: false,
 };
 
-const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
-const LOOKBACK_CANDLES = 200; // 200 hourly candles ≈ 8 days
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const LOOKBACK_CANDLES = 500; // 500 hourly candles ≈ 20 days
 const CORRELATION_THRESHOLD = 0.5; // |r| > 0.5 = correlated
 
 // ============================================================
@@ -129,7 +129,7 @@ function analyzeBTCRegime(candles: CandleData[]): BTCRegime {
   const currentPrice = closes[n - 1];
   const priceChangePct = ((currentPrice - closes[0]) / closes[0]) * 100;
 
-  // RSI-like momentum (simplified)
+  // RSI-like momentum (simplified) — use last 10 candles for recent momentum
   const recentCandles = closes.slice(-10);
   const changes = [];
   for (let i = 1; i < recentCandles.length; i++) {
@@ -140,20 +140,26 @@ function analyzeBTCRegime(candles: CandleData[]): BTCRegime {
   const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
   const momentumStrength = Math.min(1, rs / 3); // 0-1 scale
 
-  // Determine direction
+  // Recent 5-candle change (more responsive)
+  const recentChangePct = closes.length >= 6
+    ? ((closes[closes.length - 1] - closes[closes.length - 6]) / closes[closes.length - 6]) * 100
+    : priceChangePct;
+
+  // Determine direction — weight recent change 70%, overall 30%
+  const weightedChange = recentChangePct * 0.7 + priceChangePct * 0.3;
   let direction: 'up' | 'down' | 'neutral' = 'neutral';
   let strength = 0;
 
-  if (priceChangePct > 0.5 || (ema50AboveEma200 && momentumStrength > 0.4)) {
+  if (weightedChange > 0.3 || (ema50AboveEma200 && momentumStrength > 0.4)) {
     direction = 'up';
     strength = Math.min(1, Math.max(
-      priceChangePct / 3, // 3% = strong
+      Math.abs(weightedChange) / 2, // 2% weighted = strong
       momentumStrength
     ));
-  } else if (priceChangePct < -0.5 || (!ema50AboveEma200 && momentumStrength < 0.3)) {
+  } else if (weightedChange < -0.3 || (!ema50AboveEma200 && momentumStrength < 0.3)) {
     direction = 'down';
     strength = Math.min(1, Math.max(
-      Math.abs(priceChangePct) / 3,
+      Math.abs(weightedChange) / 2,
       1 - momentumStrength
     ));
   }
@@ -239,6 +245,11 @@ export async function refreshBTCCorrelation(): Promise<{
   }
 
   return { correlations: _cache.correlations, btcRegime: _cache.btcRegime };
+}
+
+// Force refresh — bypass cache on next call
+export async function forceRefreshBTCCorrelation(): Promise<void> {
+  _cache.updatedAt = 0;
 }
 
 // ============================================================

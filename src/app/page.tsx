@@ -7,8 +7,9 @@ import AuthScreen from '@/components/auth/auth-screen';
 import PaymentModal from '@/components/auth/payment-modal';
 import WarningModal from '@/components/warning-modal';
 import ActivityNotification from '@/components/activity-notification';
-import { Loader2, LogOut, Clock, Shield, Users } from 'lucide-react';
+import { Loader2, LogOut, Clock, Shield, Users, Settings, BookOpen } from 'lucide-react';
 import AdminPaymentsPanel from '@/components/auth/admin-payments-panel';
+import ManualDialog from '@/components/manual-dialog';
 
 const TradingTerminal = dynamic(() => import('@/components/trading-terminal'), {
   ssr: false,
@@ -60,6 +61,7 @@ export default function Home() {
   const [subDays, setSubDays] = useState(0);
   const [checkingSub, setCheckingSub] = useState(false);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [showManual, setShowManual] = useState(false);
   const [pendingLabel, setPendingLabel] = useState<string | null>(null);
 
   const userId = (session?.user as any)?.id;
@@ -167,8 +169,9 @@ export default function Home() {
   // ── Terminal ──
   return (
     <div className="h-[calc(100dvh-28px)] w-full flex flex-col bg-[#0a0a0f]">
-      <SubscriptionBar daysRemaining={subDays} username={username} pendingLabel={pendingLabel} onLogout={handleLogout} onAdminPayments={isAdmin ? () => setShowAdminPanel(p => !p) : undefined} />
+      <SubscriptionBar daysRemaining={subDays} username={username} pendingLabel={pendingLabel} onLogout={handleLogout} onAdminPayments={isAdmin ? () => setShowAdminPanel(p => !p) : undefined} onManual={() => setShowManual(true)} />
       <AdminPaymentsPanel open={showAdminPanel} onClose={() => setShowAdminPanel(false)} />
+      <ManualDialog open={showManual} onClose={() => setShowManual(false)} />
       <div className="flex-1 min-h-0 overflow-hidden">
         <TerminalErrorBoundary>
           <TradingTerminal />
@@ -178,8 +181,8 @@ export default function Home() {
   );
 }
 
-function SubscriptionBar({ daysRemaining, username, pendingLabel, onLogout, onAdminPayments }: {
-  daysRemaining: number; username?: string; pendingLabel?: string | null; onLogout: () => void; onAdminPayments?: () => void;
+function SubscriptionBar({ daysRemaining, username, pendingLabel, onLogout, onAdminPayments, onManual }: {
+  daysRemaining: number; username?: string; pendingLabel?: string | null; onLogout: () => void; onAdminPayments?: () => void; onManual?: () => void;
 }) {
   const isLow = daysRemaining <= 7 && daysRemaining > 0;
   const isExpired = daysRemaining <= 0;
@@ -192,8 +195,14 @@ function SubscriptionBar({ daysRemaining, username, pendingLabel, onLogout, onAd
       <div className="flex items-center gap-2 sm:gap-3 min-w-0">
         {onAdminPayments && (
           <button onClick={onAdminPayments} className="flex items-center gap-1 text-amber-400/60 hover:text-amber-400 transition-colors shrink-0">
-            <Users className="w-3 h-3" />
-            <span className="hidden sm:inline">Админ</span>
+            <Settings className="w-3 h-3" />
+            <span className="hidden sm:inline">Настройки</span>
+          </button>
+        )}
+        {onManual && (
+          <button onClick={onManual} className="flex items-center gap-1 text-emerald-400/50 hover:text-emerald-400 transition-colors shrink-0">
+            <BookOpen className="w-3 h-3" />
+            <span className="hidden sm:inline">Справка</span>
           </button>
         )}
         <div className="flex items-center gap-1.5 min-w-0">

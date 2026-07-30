@@ -50,7 +50,18 @@ export default function ControlPanel() {
         body: JSON.stringify({ strategyId: activeStrategy, balance: amount }),
       });
 
-      // 2. Re-fetch state from server to guarantee sync
+      // 2. Clear sessionStorage daily trade counters for this strategy
+      if (typeof window !== 'undefined') {
+        const today = new Date().toISOString().slice(0, 10);
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const key = sessionStorage.key(i);
+          if (key && key.startsWith(`dailyTrades_${activeStrategy}`)) keysToRemove.push(key);
+        }
+        keysToRemove.forEach(k => sessionStorage.removeItem(k));
+      }
+
+      // 3. Re-fetch state from server to guarantee sync
       const initRes = await fetch(`/api/init?strategyId=${activeStrategy}`);
       if (initRes.ok) {
         const initData = await initRes.json();
@@ -185,7 +196,7 @@ export default function ControlPanel() {
           {autoTrading && (
             <div className="flex items-center justify-between">
               <p className="text-[10px] text-green-400/50 font-mono animate-pulse">
-                3 стратегии активны...
+                {STRATEGIES.filter(s => (s as any).enabled !== false).length} стратегий активны...
               </p>
             </div>
           )}
