@@ -1300,9 +1300,10 @@ export function analyzeOrderBook(
   };
 }
 
-// Fetch Klines from Binance (with 30s cache to prevent rate limiting)
+// Fetch Klines from Binance (30s cache + in-flight dedup)
 const klinesCache = new Map<string, { data: CandleData[]; ts: number }>();
-const KLINES_TTL_MS = 30_000; // 30s cache for klines
+const klinesInFlight = new Map<string, Promise<CandleData[]>>();
+const KLINES_TTL_MS = 30_000;
 
 function klinesKey(symbol: string, interval: string, limit: number) {
   return `${symbol}:${interval}:${limit}`;
@@ -1314,22 +1315,30 @@ export async function fetchKlines(symbol: string, interval: string = '1h', limit
   if (cached && Date.now() - cached.ts < KLINES_TTL_MS) {
     return cached.data;
   }
-
-  const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to fetch klines for ${symbol}: ${res.statusText}`);
-  const data = await res.json();
-  const klines: CandleData[] = data.map((k: (string | number)[]) => ({
-    time: Math.floor(Number(k[0]) / 1000),
-    open: parseFloat(String(k[1])),
-    high: parseFloat(String(k[2])),
-    low: parseFloat(String(k[3])),
-    close: parseFloat(String(k[4])),
-    volume: parseFloat(String(k[5])),
-  }));
-
-  klinesCache.set(key, { data: klines, ts: Date.now() });
-  return klines;
+  const pending = klinesInFlight.get(key);
+  if (pending) return pending;
+  const fetchPromise = (async () => {
+    try {
+      const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Failed to fetch klines for ${symbol}: ${res.statusText}`);
+      const data = await res.json();
+      const klines: CandleData[] = data.map((k: (string | number)[]) => ({
+        time: Math.floor(Number(k[0]) / 1000),
+        open: parseFloat(String(k[1])),
+        high: parseFloat(String(k[2])),
+        low: parseFloat(String(k[3])),
+        close: parseFloat(String(k[4])),
+        volume: parseFloat(String(k[5])),
+      }));
+      klinesCache.set(key, { data: klines, ts: Date.now() });
+      return klines;
+    } finally {
+      klinesInFlight.delete(key);
+    }
+  })();
+  klinesInFlight.set(key, fetchPromise);
+  return fetchPromise;
 }
 
 // ============================================================
