@@ -1,5 +1,6 @@
 import type { CandleData, IndicatorSignal, TradingDecision } from './types';
 import { getStrategy, type StrategyConfig } from './strategies';
+import { calcVolumeFlow as calcVolumeFlowRegime } from './volume-regime';
 
 // ============================================================
 // Indicator Calculations
@@ -575,6 +576,15 @@ export function analyzeIndicators(
     signals.push({ name: 'VWAP', signal: -1, strength: Math.min(Math.abs(vwapResult.signal) * 10, 1) });
   } else {
     signals.push({ name: 'VWAP', signal: 0, strength: 0 });
+  }
+
+  // Volume Flow Direction (tape reading — net buying vs selling pressure over last 5 candles)
+  // This detects when money is actively flowing in one direction regardless of price.
+  const volFlow = calcVolumeFlowRegime(candles, 5);
+  if (volFlow.strength > 0.3) {
+    signals.push({ name: 'VolFlow', signal: volFlow.direction === 'up' ? 1 : -1, strength: volFlow.strength });
+  } else {
+    signals.push({ name: 'VolFlow', signal: 0, strength: 0 });
   }
 
   return signals;

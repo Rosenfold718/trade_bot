@@ -4,6 +4,7 @@ import { makeStrategyDecision } from './trading-engine';
 import { type StrategyConfig, getStrategy } from './strategies';
 import { fetchSettings, getEffectiveStrategy, getSys } from './settings-cache';
 import { refreshBTCCorrelation, checkBTCCorrelationAlignment, getBTCRegime } from './btc-correlation';
+import { classifyRegime, getBTCVolumeRegime, combinedVolumeFilter, volumeRegimeFilter, type VolumeRegimeResult } from './volume-regime';
 
 // ============================================================
 // Client-side Binance data fetching (CORS works from browser)
@@ -138,6 +139,19 @@ export async function findBestSignal(
     console.warn('[findBestSignal] BTC correlation refresh failed:', err);
   }
 
+  // ── BTC Volume Regime (breakout detection) ──
+  let btcVolRegime: VolumeRegimeResult | null = null;
+  try {
+    btcVolRegime = await getBTCVolumeRegime();
+    if (btcVolRegime.regime !== 'normal') {
+      console.log(`[findBestSignal][${strategyId}] ⚠️ BTC Volume Regime: ${btcVolRegime.regime} (vol×${btcVolRegime.volumeRatio.toFixed(1)}, ${btcVolRegime.reason})`);
+    }
+  } catch {
+    /* non-critical */
+  }
+
+  let volumeFiltered = 0;
+
   // System setting: volume boost multiplier (default 1.2)
   const volBoost = sysSettings
     ? Number(getSys(sysSettings, 'system.volumeBoost', 1.2))
@@ -185,6 +199,38 @@ export async function findBestSignal(
         }
       }
 
+      // ── VOLUME REGIME FILTER (S/R breakout + volume spike detection) ──
+      // This prevents counter-breakout trades — e.g. don't SHORT when
+      // the market is having a volume-driven pump through resistance.
+      try {
+        const localRegime = classifyRegime(candles);
+        if (localRegime.regime !== 'normal') {
+          const tradeDir = decision.direction as 'long' | 'short';
+          const volFilter = btcVolRegime
+            ? combinedVolumeFilter(localRegime, btcVolRegime, tradeDir)
+            : volumeRegimeFilter(localRegime, tradeDir);
+
+          if (volFilter.blocked) {
+            volumeFiltered++;
+            console.log(`[findBestSignal] Volume filter: BLOCK ${sym} ${decision.direction} — ${volFilter.reason}`);
+            continue;
+          }
+
+          // Apply multipliers even if not blocked
+          if (volFilter.scoreMultiplier !== 1.0) {
+            decision.score *= volFilter.scoreMultiplier;
+          }
+
+          // Store position size multiplier on the decision for later use
+          if (volFilter.positionSizeMultiplier !== 1.0) {
+            (decision as any)._volPositionMult = volFilter.positionSizeMultiplier;
+            (decision as any)._volReason = volFilter.reason;
+          }
+        }
+      } catch {
+        /* volume regime failed — allow trade without filter */
+      }
+
       // ── BTC Correlation Filter ──
       if (btcAlignmentChecked) {
         const btcCheck = checkBTCCorrelationAlignment(sym, decision.direction as 'long' | 'short');
@@ -205,7 +251,7 @@ export async function findBestSignal(
     } catch { continue; }
   }
 
-  console.log(`[findBestSignal][${strategyId}] Interval:${effectiveInterval} Checked ${checkSymbols.length}, none=${noneCount}, mtf_rejected=${mtfRejected}, btc_filtered=${btcFiltered}, best=${best?.symbol ?? 'null'} score=${bestScore.toFixed(2)}`);
+  console.log(`[findBestSignal][${strategyId}] Interval:${effectiveInterval} Checked ${checkSymbols.length}, none=${noneCount}, mtf_rejected=${mtfRejected}, vol_filtered=${volumeFiltered}, btc_filtered=${btcFiltered}, best=${best?.symbol ?? 'null'} score=${bestScore.toFixed(2)}`);
 
   return best;
 }
@@ -639,6 +685,18 @@ export async function runAutoTradeCycle(
   // Don't exceed free balance
   amount = Math.min(amount, freeBalance * 0.5); // never risk more than 50% of free on one trade
 
+  // ── VOLUME REGIME POSITION SIZE ADJUSTMENT ──
+  // If volume regime says volatile/reduced, scale down the trade
+  const volPositionMult = (best.decision as any)._volPositionMult;
+  let volReason = (best.decision as any)._volReason || '';
+  if (volPositionMult && volPositionMult < 1.0) {
+    amount *= volPositionMult;
+    volReason = ` | ${volReason}`;
+  } else if (volPositionMult && volPositionMult > 1.0) {
+    amount = Math.min(amount * volPositionMult, freeBalance * 0.5); // still cap at 50% of free
+    volReason = ` | ${volReason}`;
+  }
+
   // ── DAILY TRADE COUNTER increment ──
   if ('maxDailyTrades' in strategy && (strategy as any).maxDailyTrades > 0 && typeof window !== 'undefined') {
     const storageKey = `dailyTrades_${strategyId}_${new Date().toISOString().slice(0, 10)}`;
@@ -651,7 +709,7 @@ export async function runAutoTradeCycle(
   ];
 
   const coinName = best.symbol.replace('USDT', '');
-  const signalMsg = `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${coinName} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x | $${amount.toFixed(2)} (свободно $${freeBalance.toFixed(1)}) | TP ${strategy.riskRewardRatio}R`;
+  const signalMsg = `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${coinName} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x | $${amount.toFixed(2)} (свободно $${freeBalance.toFixed(1)}) | TP ${strategy.riskRewardRatio}R${volReason}`;
   return {
     action: 'new-trade', closedTrades, trailingUpdates, tpRepairs, newTrades,
     message: monitorParts.length > 0 ? monitorParts.join(' | ') + ' | ' + signalMsg : signalMsg,
