@@ -49,7 +49,7 @@ export const STRATEGIES: StrategyConfig[] = [
   {
     id: 'momentum',
     name: 'Импульс Pro',
-    description: 'Следование за сильным трендом. Требует ≥6 индикаторов, score > 0.50. Стоп 2× ATR, TP 1:4. Строгий отбор — мало сделок, но каждая с высоким R:R.',
+    description: 'Следование за сильным трендом. Требует ≥6 индикаторов, score > 0.58. Стоп 2× ATR, TP 1:4. Строгий отбор — мало сделок, но каждая с высоким R:R.',
     color: 'text-amber-400',
     bgColor: 'bg-amber-500/10',
     borderColor: 'border-amber-500/30',
@@ -67,7 +67,7 @@ export const STRATEGIES: StrategyConfig[] = [
     riskRewardRatio: 4,
     tradeSizePercent: 0.06,
     maxOpenTrades: 5,         // ↓ с 10 до 5 — меньше одновременных позиций
-    scoreThreshold: 0.50,
+    scoreThreshold: 0.58,
     adxMin: 20,
     mtfEnabled: true,
     timeFilterEnabled: false,
@@ -76,14 +76,14 @@ export const STRATEGIES: StrategyConfig[] = [
     defaultInterval: '1h',
     candleLimit: 1440,
     monitorInterval: '1h',
-    maxHoldMinutes: 720, // 12 часов
+    maxHoldMinutes: 840, // 14 часов
     enabled: true,
     cycleIntervalMs: 5 * 60 * 1000,  // 5 минут (1h ТФ — нет смысла чаще)
     cooldownCandles: 4,             // 4 часа cooldown после SL на символе
     entryStalenessMaxPct: 0.003,    // 0.3% — строгий для 1h
     drawdownPausePct: 10,           // пауза при 10% просадке
     drawdownLookback: 5,            // за последние 5 сделок
-    maxDailyTrades: 6,              // макс 6 сделок в день
+    maxDailyTrades: 4,              // макс 4 сделки в день (бэктест: MD4 лучше MD6)
   },
 
   // ──────────────────────────────────────────────────────────────
