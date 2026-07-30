@@ -30,6 +30,15 @@ export interface StrategyConfig {
   candleLimit: number;        // лимит свечей для запроса
   monitorInterval: string;     // таймфрейм для мониторинга SL/TP ('1m', '5m', '1h')
   maxHoldMinutes: number;     // максимальное время удержания сделки в минутах
+
+  // Risk management additions
+  enabled: boolean;           // стратегия активна (можно отключить без удаления)
+  cycleIntervalMs: number;    // интервал авто-цикла в мс (привязан к ТФ)
+  cooldownCandles: number;    // кол-во свечей cooldown после SL на символе
+  entryStalenessMaxPct: number; // макс. допустимое отклонение цены при входе
+  drawdownPausePct: number;   // % просадки за последние N сделок — пауза
+  drawdownLookback: number;   // кол-во последних сделок для расчёта просадки
+  maxDailyTrades: number;     // макс сделок в день (0 = без лимита)
 }
 
 export const STRATEGIES: StrategyConfig[] = [
@@ -57,7 +66,7 @@ export const STRATEGIES: StrategyConfig[] = [
     maxLeverage: 3,
     riskRewardRatio: 3,
     tradeSizePercent: 0.06,
-    maxOpenTrades: 10,
+    maxOpenTrades: 5,         // ↓ с 10 до 5 — меньше одновременных позиций
     scoreThreshold: 0.35,
     adxMin: 25,
     mtfEnabled: true,
@@ -68,6 +77,13 @@ export const STRATEGIES: StrategyConfig[] = [
     candleLimit: 1440,
     monitorInterval: '1h',
     maxHoldMinutes: 720, // 12 часов
+    enabled: true,
+    cycleIntervalMs: 5 * 60 * 1000,  // 5 минут (1h ТФ — нет смысла чаще)
+    cooldownCandles: 4,             // 4 часа cooldown после SL на символе
+    entryStalenessMaxPct: 0.003,    // 0.3% — строгий для 1h
+    drawdownPausePct: 10,           // пауза при 10% просадке
+    drawdownLookback: 5,            // за последние 5 сделок
+    maxDailyTrades: 6,              // макс 6 сделок в день
   },
 
   // ──────────────────────────────────────────────────────────────
@@ -93,10 +109,10 @@ export const STRATEGIES: StrategyConfig[] = [
       swings: { visible: false },
     },
     maxLeverage: 2,
-    riskRewardRatio: 1.5,
+    riskRewardRatio: 2,            // ↑ с 1.5 до 2 — улучшен R:R
     tradeSizePercent: 0.03,
-    maxOpenTrades: 10,
-    scoreThreshold: 0.15,
+    maxOpenTrades: 3,              // ↓ с 10 до 3
+    scoreThreshold: 0.40,          // ↑↑ с 0.15 до 0.40 — сильно ужесточён порог
     adxMin: null,
     mtfEnabled: false,
     timeFilterEnabled: false,
@@ -106,6 +122,13 @@ export const STRATEGIES: StrategyConfig[] = [
     candleLimit: 500,
     monitorInterval: '5m',
     maxHoldMinutes: 60, // 1 час максимальное удержание
+    enabled: false,                 // 🔴 ОТКЛЮЧЕН — убыточен при малом балансе
+    cycleIntervalMs: 60 * 1000,    // 1 минута (5m ТФ)
+    cooldownCandles: 6,            // 30 минут cooldown после SL
+    entryStalenessMaxPct: 0.002,   // 0.2% — строгий для скальпинга
+    drawdownPausePct: 8,           // пауза при 8% просадке
+    drawdownLookback: 5,
+    maxDailyTrades: 8,
   },
 
   // ──────────────────────────────────────────────────────────────
@@ -133,7 +156,7 @@ export const STRATEGIES: StrategyConfig[] = [
     maxLeverage: 2,
     riskRewardRatio: 5,
     tradeSizePercent: 0.04,
-    maxOpenTrades: 10,
+    maxOpenTrades: 3,              // ↓ с 10 до 3
     scoreThreshold: 0.30,
     adxMin: 30,
     mtfEnabled: true,
@@ -144,6 +167,13 @@ export const STRATEGIES: StrategyConfig[] = [
     candleLimit: 500,
     monitorInterval: '4h',
     maxHoldMinutes: 10080, // 7 дней максимальное удержание
+    enabled: true,
+    cycleIntervalMs: 30 * 60 * 1000, // 30 минут (4h ТФ — редко проверяем)
+    cooldownCandles: 2,               // 8 часов cooldown после SL
+    entryStalenessMaxPct: 0.005,      // 0.5% — допустимо для широких позиций
+    drawdownPausePct: 12,             // пауза при 12% просадке
+    drawdownLookback: 5,
+    maxDailyTrades: 2,                // макс 2 сделки в день
   },
 ];
 

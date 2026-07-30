@@ -280,207 +280,212 @@ export default function TradingTerminal() {
     return () => clearInterval(interval);
   }, [setTraderState, setOpenTrades, setRecentTrades, setStrategyTotalClosedPnl, setStrategyClosedTradeCount, activeStrategy]);
 
-  // Auto-trading loop — runs for ALL strategies in parallel
-  // NOTE: autoTrading and addLog are the ONLY reactive deps — all state is read fresh via refs/callbacks
+  // Auto-trading loop — runs each strategy at its own interval
+  // Momentum: 5min, Scalper: 1min (disabled), Position Alpha: 30min
+  // Each strategy has its own cooldown map and timer.
   useEffect(() => {
     if (!autoTrading) return;
     let cancelled = false;
 
-    const runCycle = async () => {
+    // Persistent cooldown maps (survive across cycles)
+    const cooldownMaps: Record<string, Map<string, number>> = {};
+    for (const s of STRATEGIES) {
+      cooldownMaps[s.id] = new Map();
+    }
+
+    const runStrategyCycle = async (strategyId: string) => {
       if (cancelled) return;
       try {
         const { runAutoTradeCycle } = await import('@/lib/client-trader');
+        const strategy = getStrategy(strategyId);
+        if (!strategy) return;
 
-        // Load settings once per cycle for all strategies (non-blocking fallback on failure)
+        // ── ENABLED CHECK: skip disabled strategies entirely ──
+        if ('enabled' in strategy && !(strategy as any).enabled) return;
+
         let sysSettings: Record<string, string> = {};
         try {
           sysSettings = await fetchSettings();
-        } catch (err) {
-          console.warn('[AutoTrade] Settings fetch failed, using defaults:', err);
-        }
+        } catch { /* use defaults */ }
 
-        // Read fresh state for each strategy (avoids stale closure)
         const currentStates = useTerminalStore.getState().strategyStates;
+        const ss = currentStates[strategyId];
+        if (!ss) return;
 
-        // ── Cross-strategy symbol lock ──
-        // Collect ALL open symbols across ALL strategies so no two strategies
-        // open the same symbol in the same cycle (prevents 3-4 identical losing trades)
+        const sOpenTrades = ss.openTrades ?? [];
+        const sTraderState = ss.traderState;
+        const balance = sTraderState?.balance ?? 100;
+        const recentTrades = ss.recentTrades ?? [];
+
+        // Calculate 24h PnL
+        const now = Date.now();
+        const dayMs = 24 * 60 * 60 * 1000;
+        const recentPnl24h = recentTrades
+          .filter(t => t.closed_at && (now - new Date(t.closed_at).getTime()) < dayMs)
+          .reduce((sum, t) => sum + (t.pnl ?? 0), 0);
+
+        // Cross-strategy symbol lock
         const globalLockedSymbols = new Set<string>();
         for (const s of STRATEGIES) {
-          const ss = currentStates[s.id];
-          for (const t of (ss?.openTrades ?? [])) globalLockedSymbols.add(t.symbol);
+          const sState = currentStates[s.id];
+          for (const t of (sState?.openTrades ?? [])) globalLockedSymbols.add(t.symbol);
         }
 
-        // Run cycles SEQUENTIALLY (not parallel) so each strategy sees symbols
-        // opened by the previous strategy in this same cycle
-        const results: Array<{ strategyId: string; result: any }> = [];
-        for (const s of STRATEGIES) {
-          if (cancelled) break;
-          const ss = currentStates[s.id];
-          const sOpenTrades = ss?.openTrades ?? [];
-          const sTraderState = ss?.traderState;
-          const balance = sTraderState?.balance ?? 100;
+        const cooldownSymbols = cooldownMaps[strategyId];
+        const drawdownLookback = (strategy as any).drawdownLookback || 5;
+        const recentForDrawdown = recentTrades.slice(0, drawdownLookback);
 
-          // Calculate actual PnL from trades closed in the last 24h (enables daily loss limit)
-          const now = Date.now();
-          const dayMs = 24 * 60 * 60 * 1000;
-          const recentPnl24h = (ss?.recentTrades ?? [])
-            .filter(t => t.closed_at && (now - new Date(t.closed_at).getTime()) < dayMs)
-            .reduce((sum, t) => sum + (t.pnl ?? 0), 0);
-
-          try {
-            const result = await runAutoTradeCycle(sOpenTrades, s.id, timeframe.interval, balance, 0, recentPnl24h, sysSettings, globalLockedSymbols);
-            // If this strategy opened a new trade, lock that symbol for subsequent strategies
-            if (result.newTrades && result.newTrades.length > 0) {
-              for (const nt of result.newTrades) globalLockedSymbols.add(nt.symbol);
-            }
-            results.push({ strategyId: s.id, result });
-          } catch (err) {
-            console.error(`[AutoTrade][${s.id}] Error:`, err);
-            results.push({ strategyId: s.id, result: { message: `Error: ${err instanceof Error ? err.message : 'unknown'}`, action: 'idle' as const, closedTrades: [], trailingUpdates: [], tpRepairs: [] } });
-          }
-        }
+        const result = await runAutoTradeCycle(
+          sOpenTrades, strategyId, timeframe.interval, balance, 0,
+          recentPnl24h, sysSettings, globalLockedSymbols,
+          cooldownSymbols, recentForDrawdown,
+        );
 
         if (cancelled) return;
 
-        for (const { strategyId, result } of results) {
-          const r = result as {
-            action: string;
-            message: string;
-            closedTrades: Array<{ tradeId: string; symbol: string; direction: string; pnl: number; reason: string; exitPrice: number }>;
-            trailingUpdates: Array<{ tradeId: string; newStopLoss: number; reason: string }>;
-            tpRepairs: Array<{ tradeId: string; newTakeProfit: number; reason: string }>;
-            newTrades?: Array<{ symbol: string; direction: string; price: number; leverage: number; stopLoss: number; takeProfit: number; amount: number; strategyId: string; label: string }>;
-          };
+        const r = result as {
+          action: string;
+          message: string;
+          closedTrades: Array<{ tradeId: string; symbol: string; direction: string; pnl: number; reason: string; exitPrice: number }>;
+          trailingUpdates: Array<{ tradeId: string; newStopLoss: number; reason: string }>;
+          tpRepairs: Array<{ tradeId: string; newTakeProfit: number; reason: string }>;
+          newTrades?: Array<{ symbol: string; direction: string; price: number; leverage: number; stopLoss: number; takeProfit: number; amount: number; strategyId: string; label: string }>;
+        };
 
+        if (r.message && r.action !== 'idle') {
           console.log(`[AutoTrade][${strategyId}]`, r.message);
-          addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] ${r.message}`, r.action === 'new-trade' ? 'trade' : 'info');
+          addLog(`[${strategy.name}] ${r.message}`, r.action === 'new-trade' ? 'trade' : 'info');
+        }
 
-          // Process closed trades — aggregate into one log entry
-          if (r.closedTrades.length > 0) {
-            const totalPnl = r.closedTrades.reduce((sum, ct) => sum + ct.pnl, 0);
-            const winners = r.closedTrades.filter(ct => ct.pnl >= 0).length;
-            const losers = r.closedTrades.filter(ct => ct.pnl < 0).length;
-            const parts: string[] = [];
-            if (winners > 0) parts.push(`${winners} прибыльн.`);
-            if (losers > 0) parts.push(`${losers} убыточн.`);
-            addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Закрыто ${r.closedTrades.length} сделок (${parts.join(', ')}): PnL ${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`, totalPnl >= 0 ? 'trade' : 'error');
-            for (const ct of r.closedTrades) {
-              try {
-                const closeRes = await fetch('/api/trader', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ action: 'close-trade', tradeId: ct.tradeId, exitPrice: ct.exitPrice, strategyId }),
-                });
-                const closeData = await closeRes.json();
-                if (closeData.success && closeData.debtRepaid && closeData.debtRepaid > 0) {
-                  addLog(`💰 ${closeData.debtRepaid.toFixed(2)}$ из прибыли направлено на погашение долга`, 'trade');
-                }
-              } catch { /* silent */ }
-            }
-          }
-
-          // Apply trailing stop updates
-          for (const tu of r.trailingUpdates ?? []) {
+        // Process closed trades
+        if (r.closedTrades.length > 0) {
+          const totalPnl = r.closedTrades.reduce((sum, ct) => sum + ct.pnl, 0);
+          const winners = r.closedTrades.filter(ct => ct.pnl >= 0).length;
+          const losers = r.closedTrades.filter(ct => ct.pnl < 0).length;
+          const parts: string[] = [];
+          if (winners > 0) parts.push(`${winners} прибыльн.`);
+          if (losers > 0) parts.push(`${losers} убыточн.`);
+          addLog(`[${strategy.name}] Закрыто ${r.closedTrades.length} (${parts.join(', ')}): ${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`, totalPnl >= 0 ? 'trade' : 'error');
+          for (const ct of r.closedTrades) {
             try {
-              await fetch('/api/trader', {
+              const closeRes = await fetch('/api/trader', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'update-sl', tradeId: tu.tradeId, newStopLoss: tu.newStopLoss, strategyId }),
+                body: JSON.stringify({ action: 'close-trade', tradeId: ct.tradeId, exitPrice: ct.exitPrice, strategyId }),
               });
-              addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Trailing SL: ${tu.reason}`, 'info');
+              const closeData = await closeRes.json();
+              if (closeData.success && closeData.debtRepaid && closeData.debtRepaid > 0) {
+                addLog(`💰 ${closeData.debtRepaid.toFixed(2)}$ из прибыли на погашение долга`, 'trade');
+              }
             } catch { /* silent */ }
           }
+        }
 
-          // Apply TP repairs
-          for (const tpr of r.tpRepairs ?? []) {
-            try {
-              await fetch('/api/trader', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'update-tp', tradeId: tpr.tradeId, newTakeProfit: tpr.newTakeProfit, strategyId }),
-              });
-              addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] TP ремонт: ${tpr.reason}`, 'info');
-            } catch { /* silent */ }
-          }
-
-          // Open new trades (may be multiple: secure + runner)
-          // ── Entry price staleness check ──
-          // Re-fetch the live price before opening. If price has moved more than
-          // 0.5% from the signal price, SKIP the trade — the signal is stale and
-          // entering now means chasing price / buying the top / selling the bottom.
-          for (const nt of (r.newTrades ?? [])) {
-            try {
-              let livePrice = nt.price;
-              try {
-                const priceRes = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${nt.symbol}`);
-                if (priceRes.ok) {
-                  const priceData = await priceRes.json();
-                  livePrice = parseFloat(priceData.price);
-                }
-              } catch { /* fallback to signal price */ }
-
-              const priceDrift = Math.abs(livePrice - nt.price) / nt.price;
-              if (priceDrift > 0.005) {
-                addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Пропуск ${nt.symbol.replace('USDT', '')}: цена ушла ${priceDrift > 0 ? '+' : '-'}${(priceDrift * 100).toFixed(2)}% от сигнала — вход отменён`, 'info');
-                continue; // skip this trade, signal is stale
-              }
-
-              // Recalculate SL/TP relative to live price (preserve the % distance from signal)
-              const slDistPct = nt.price > 0 ? Math.abs(nt.price - nt.stopLoss) / nt.price : 0;
-              const tpDistPct = nt.price > 0 ? Math.abs(nt.takeProfit - nt.price) / nt.price : 0;
-              const isLong = nt.direction === 'long';
-              const adjustedSL = isLong ? livePrice * (1 - slDistPct) : livePrice * (1 + slDistPct);
-              const adjustedTP = isLong ? livePrice * (1 + tpDistPct) : livePrice * (1 - tpDistPct);
-
-              const openRes = await fetch('/api/trader', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  action: 'open-trade',
-                  symbol: nt.symbol, entryPrice: livePrice, amount: nt.amount,
-                  leverage: nt.leverage, direction: nt.direction,
-                  stopLoss: adjustedSL, takeProfit: adjustedTP,
-                  strategyId,
-                }),
-              });
-              const openData = await openRes.json();
-              if (openData.success) {
-                addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Открыта ${nt.direction.toUpperCase()} ${nt.symbol.replace('USDT', '')} @ $${livePrice.toFixed(2)} | ${nt.leverage}x | $${nt.amount.toFixed(2)}`, 'trade');
-              } else {
-                addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Ошибка открытия: ${openData.error || 'unknown'}`, 'error');
-              }
-            } catch (err) {
-              addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Ошибка сети: ${err instanceof Error ? err.message : 'unknown'}`, 'error');
-            }
-          }
-
-          // Refresh this strategy's state
+        // Apply trailing stop updates
+        for (const tu of r.trailingUpdates ?? []) {
           try {
-            const res = await fetch(`/api/trader?strategyId=${strategyId}`);
-            const data = await res.json();
-            if (data.state) setStrategyTraderState(strategyId, data.state as TraderState);
-            if (data.openTrades) setStrategyOpenTrades(strategyId, data.openTrades as Trade[]);
-            if (data.recentTrades) setStrategyRecentTrades(strategyId, data.recentTrades as Trade[]);
-            if (data.totalClosedPnl !== undefined) setStrategyTotalClosedPnl(strategyId, data.totalClosedPnl);
-            if (data.closedTradeCount !== undefined) setStrategyClosedTradeCount(strategyId, data.closedTradeCount);
+            await fetch('/api/trader', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'update-sl', tradeId: tu.tradeId, newStopLoss: tu.newStopLoss, strategyId }),
+            });
+            addLog(`[${strategy.name}] Trailing: ${tu.reason}`, 'info');
           } catch { /* silent */ }
         }
+
+        // Apply TP repairs
+        for (const tpr of r.tpRepairs ?? []) {
+          try {
+            await fetch('/api/trader', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'update-tp', tradeId: tpr.tradeId, newTakeProfit: tpr.newTakeProfit, strategyId }),
+            });
+            addLog(`[${strategy.name}] TP ремонт: ${tpr.reason}`, 'info');
+          } catch { /* silent */ }
+        }
+
+        // Open new trades with per-strategy staleness check
+        const stalenessMaxPct = (strategy as any).entryStalenessMaxPct ?? 0.005;
+        for (const nt of (r.newTrades ?? [])) {
+          try {
+            let livePrice = nt.price;
+            try {
+              const priceRes = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${nt.symbol}`);
+              if (priceRes.ok) {
+                const priceData = await priceRes.json();
+                livePrice = parseFloat(priceData.price);
+              }
+            } catch { /* fallback */ }
+
+            const priceDrift = Math.abs(livePrice - nt.price) / nt.price;
+            if (priceDrift > stalenessMaxPct) {
+              addLog(`[${strategy.name}] Пропуск ${nt.symbol.replace('USDT', '')}: цена ушла ${(priceDrift * 100).toFixed(2)}% (лимит ${(stalenessMaxPct * 100).toFixed(1)}%)`, 'info');
+              continue;
+            }
+
+            const slDistPct = nt.price > 0 ? Math.abs(nt.price - nt.stopLoss) / nt.price : 0;
+            const tpDistPct = nt.price > 0 ? Math.abs(nt.takeProfit - nt.price) / nt.price : 0;
+            const isLong = nt.direction === 'long';
+            const adjustedSL = isLong ? livePrice * (1 - slDistPct) : livePrice * (1 + slDistPct);
+            const adjustedTP = isLong ? livePrice * (1 + tpDistPct) : livePrice * (1 - tpDistPct);
+
+            const openRes = await fetch('/api/trader', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'open-trade', symbol: nt.symbol, entryPrice: livePrice, amount: nt.amount,
+                leverage: nt.leverage, direction: nt.direction, stopLoss: adjustedSL, takeProfit: adjustedTP, strategyId,
+              }),
+            });
+            const openData = await openRes.json();
+            if (openData.success) {
+              addLog(`[${strategy.name}] Открыта ${nt.direction.toUpperCase()} ${nt.symbol.replace('USDT', '')} @ $${livePrice.toFixed(2)} | ${nt.leverage}x | $${nt.amount.toFixed(2)}`, 'trade');
+            } else {
+              addLog(`[${strategy.name}] Ошибка: ${openData.error || 'unknown'}`, 'error');
+            }
+          } catch (err) {
+            addLog(`[${strategy.name}] Ошибка сети: ${err instanceof Error ? err.message : 'unknown'}`, 'error');
+          }
+        }
+
+        // Refresh strategy state
+        try {
+          const res = await fetch(`/api/trader?strategyId=${strategyId}`);
+          const data = await res.json();
+          if (data.state) setStrategyTraderState(strategyId, data.state as TraderState);
+          if (data.openTrades) setStrategyOpenTrades(strategyId, data.openTrades as Trade[]);
+          if (data.recentTrades) setStrategyRecentTrades(strategyId, data.recentTrades as Trade[]);
+          if (data.totalClosedPnl !== undefined) setStrategyTotalClosedPnl(strategyId, data.totalClosedPnl);
+          if (data.closedTradeCount !== undefined) setStrategyClosedTradeCount(strategyId, data.closedTradeCount);
+        } catch { /* silent */ }
       } catch (err) {
-        console.error('[AutoTrade] Cycle error:', err);
-        addLog(`Ошибка цикла: ${err instanceof Error ? err.message : 'unknown'}`, 'error');
+        console.error(`[AutoTrade][${strategyId}] Cycle error:`, err);
+        addLog(`[${getStrategy(strategyId)?.name ?? strategyId}] Ошибка цикла: ${err instanceof Error ? err.message : 'unknown'}`, 'error');
       }
     };
 
-    addLog('Авто-трейдинг запущен (3 стратегии)', 'trade');
-    runCycle();
-    const interval = setInterval(runCycle, 30000);
+    const enabledStrategies = STRATEGIES.filter(s => (s as any).enabled !== false);
+    addLog(`Авто-трейдинг запущен (${enabledStrategies.map(s => s.name).join(', ')})`, 'trade');
+
+    // Initial run for all enabled strategies
+    for (const s of enabledStrategies) {
+      runStrategyCycle(s.id);
+    }
+
+    // Per-strategy intervals
+    const intervals: ReturnType<typeof setInterval>[] = [];
+    for (const s of STRATEGIES) {
+      const cycleMs = (s as any).cycleIntervalMs || 30000;
+      if ((s as any).enabled === false) continue; // don't set timer for disabled
+      const interval = setInterval(() => runStrategyCycle(s.id), cycleMs);
+      intervals.push(interval);
+      console.log(`[AutoTrade] ${s.name}: cycle every ${Math.round(cycleMs / 1000)}s`);
+    }
+
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      for (const interval of intervals) clearInterval(interval);
       addLog('Авто-трейдинг остановлен', 'info');
     };
-  }, [autoTrading, addLog]);
+  }, [autoTrading, addLog, setStrategyTraderState, setStrategyOpenTrades, setStrategyRecentTrades, setStrategyTotalClosedPnl, setStrategyClosedTradeCount, timeframe]);
 
   // Manual close trade handler
   const manualCloseTrade = useCallback(async (trade: Trade) => {

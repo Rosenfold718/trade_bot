@@ -122,5 +122,13 @@ export function getEffectiveStrategy(
     candleLimit: num('candleLimit', base.candleLimit),
     monitorInterval: str('monitorInterval', base.monitorInterval),
     maxHoldMinutes: num('maxHoldMinutes', base.maxHoldMinutes),
+    // New risk management fields
+    enabled: bool('enabled', base.enabled),
+    cycleIntervalMs: num('cycleIntervalMs', base.cycleIntervalMs),
+    cooldownCandles: num('cooldownCandles', base.cooldownCandles),
+    entryStalenessMaxPct: num('entryStalenessMaxPct', base.entryStalenessMaxPct),
+    drawdownPausePct: num('drawdownPausePct', base.drawdownPausePct),
+    drawdownLookback: num('drawdownLookback', base.drawdownLookback),
+    maxDailyTrades: num('maxDailyTrades', base.maxDailyTrades),
   };
 }

@@ -70,6 +70,7 @@ export async function findBestSignal(
   limit: number = 1440,
   strategyOverride?: StrategyConfig,
   sysSettings?: Record<string, string>,
+  cooldownSymbols?: Map<string, number>,  // symbol → timestamp when cooldown expires
 ): Promise<{ decision: TradingDecision; price: number; symbol: string } | null> {
   const strategy = strategyOverride ?? getStrategy(strategyId);
   if (!strategy) return null;
@@ -78,10 +79,29 @@ export async function findBestSignal(
   const effectiveLimit = limit;
 
   const symbols = TOP_50_SYMBOLS;
-  const available = symbols.filter(s => !openTradeSymbols.has(s));
+  const now = Date.now();
+  const available = symbols.filter(s => {
+    if (openTradeSymbols.has(s)) return false;
+    // ── COOLDOWN FILTER: skip symbols recently stopped out ──
+    if (cooldownSymbols) {
+      const cooldownUntil = cooldownSymbols.get(s);
+      if (cooldownUntil && now < cooldownUntil) return false;
+    }
+    return true;
+  });
 
   // System setting: how many symbols to scan (or per-strategy override)
   const scanLimit = strategyId === 'scalper' ? 30 : 20;
+
+  // ── DAILY TRADE LIMIT ──
+  if (strategy.maxDailyTrades > 0 && typeof window !== 'undefined') {
+    const storageKey = `dailyTrades_${strategyId}_${new Date().toISOString().slice(0, 10)}`;
+    const todayTrades = parseInt(sessionStorage.getItem(storageKey) || '0', 10);
+    if (todayTrades >= strategy.maxDailyTrades) {
+      console.log(`[findBestSignal][${strategyId}] Daily limit reached: ${todayTrades}/${strategy.maxDailyTrades}`);
+      return null;
+    }
+  }
   // Sort by volume rank (top symbols first), then shuffle within tiers
   const topSymbols = available.slice(0, 10); // Top 10 by volume - highest priority
   const midSymbols = available.slice(10, 25); // Next 15
@@ -156,13 +176,19 @@ export async function findBestSignal(
         } catch { /* MTF fetch failed — allow trade without MTF filter */ }
       }
 
+      // ── COOLDOWN CHECK (redundant safety, also filtered above) ──
+      if (cooldownSymbols) {
+        const cooldownUntil = cooldownSymbols.get(sym);
+        if (cooldownUntil && now < cooldownUntil) {
+          console.log(`[findBestSignal][${strategyId}] Cooldown active for ${sym} (expires in ${Math.round((cooldownUntil - now) / 60000)}min)`);
+          continue;
+        }
+      }
+
       // ── BTC Correlation Filter ──
-      // If BTC is trending strongly, filter/adjust signals based on
-      // whether the coin is correlated with BTC.
       if (btcAlignmentChecked) {
         const btcCheck = checkBTCCorrelationAlignment(sym, decision.direction as 'long' | 'short');
         if (btcCheck.aligned === 'conflicting' && btcCheck.boost < 0.85) {
-          // Strong BTC trend conflicting with this signal — skip
           btcFiltered++;
           console.log(`[findBestSignal] BTC filter: SKIP ${sym} ${decision.direction} — ${btcCheck.reason}`);
           continue;
@@ -464,6 +490,8 @@ export async function runAutoTradeCycle(
   recentPnl24h: number = 0,
   sysSettings?: Record<string, string>,
   globalLockedSymbols?: Set<string>,
+  cooldownSymbols?: Map<string, number>,  // symbol → timestamp when cooldown expires
+  recentTradesForDrawdown?: Trade[],  // last N closed trades for drawdown check
 ): Promise<{
     action: 'monitor' | 'new-trade' | 'idle';
     closedTrades: MonitorResult['closedTrades'];
@@ -478,6 +506,11 @@ export async function runAutoTradeCycle(
   // ── Load settings once per cycle if not provided ──
   const settings = sysSettings ?? await fetchSettings();
   const strategy = getEffectiveStrategy(settings, strategyId);
+
+  // ── ENABLED CHECK: skip disabled strategies ──
+  if ('enabled' in strategy && !strategy.enabled) {
+    return { action: 'idle', closedTrades: [], trailingUpdates: [], tpRepairs: [], message: 'Стратегия отключена', scannedCount: 0, bestScore: 0, newCandleHour: 0 };
+  }
 
   const maxTrades = strategy.maxOpenTrades;
   const tradeSizePct = strategy.tradeSizePercent;
@@ -500,9 +533,43 @@ export async function runAutoTradeCycle(
     };
   }
 
+  // ── DRAWDOWN CIRCUIT BREAKER ──
+  // If the last N trades lost more than X% of balance — pause opening new trades
+  if ('drawdownPausePct' in strategy && 'drawdownLookback' in strategy && recentTradesForDrawdown && recentTradesForDrawdown.length > 0) {
+    const lookback = Math.min(recentTradesForDrawdown.length, (strategy as any).drawdownLookback || 5);
+    const recentClosed = recentTradesForDrawdown.slice(0, lookback);
+    const drawdownPnl = recentClosed.reduce((sum, t) => sum + (t.pnl ?? 0), 0);
+    const drawdownPct = balance > 0 ? (drawdownPnl / balance) * 100 : 0;
+    const maxDrawdownPct = (strategy as any).drawdownPausePct || 10;
+
+    if (drawdownPnl < 0 && Math.abs(drawdownPct) >= maxDrawdownPct) {
+      return {
+        action: 'idle', closedTrades: [], trailingUpdates: [], tpRepairs: [],
+        message: `🔴 Просадка ${Math.abs(drawdownPct).toFixed(1)}% за ${lookback} сделок (лимит ${maxDrawdownPct}%). Пауза.`,
+        scannedCount: 0, bestScore: 0, newCandleHour: currentSlot,
+      };
+    }
+  }
+
   // Step 1: Monitor open trades (pass system settings for caps + trailing)
   const { closedTrades, trailingUpdates, tpRepairs } = await monitorTradesClient(openTrades, lastCandleSlot, monitorInterval, maxHoldMinutes, settings);
   const updatedOpenTrades = openTrades.filter(t => !closedTrades.some(c => c.tradeId === t.id));
+
+  // ── UPDATE COOLDOWNS from closed trades ──
+  // For each SL hit, add the symbol to cooldown
+  const intervalMsMap: Record<string, number> = { '1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000, '4h': 14400000, '1d': 86400000 };
+  const candleMs = intervalMsMap[strategyInterval] || 3600000;
+  const cooldownCandles = ('cooldownCandles' in strategy) ? (strategy as any).cooldownCandles : 4;
+
+  for (const ct of closedTrades) {
+    if (ct.reason.includes('SL') || ct.reason.includes('Тайм')) {
+      if (cooldownSymbols) {
+        const cooldownMs = candleMs * cooldownCandles;
+        cooldownSymbols.set(ct.symbol, Date.now() + cooldownMs);
+        console.log(`[runAutoTradeCycle][${strategyId}] Cooldown set for ${ct.symbol}: ${cooldownCandles} candles (${Math.round(cooldownMs / 60000)}min)`);
+      }
+    }
+  }
 
   // Collect monitoring messages
   const monitorParts: string[] = [];
@@ -510,13 +577,7 @@ export async function runAutoTradeCycle(
   if (trailingUpdates.length > 0) monitorParts.push(`Trailing SL: ${trailingUpdates.length}`);
   if (tpRepairs.length > 0) monitorParts.push(`TP ремонт: ${tpRepairs.length}`);
 
-  // CRITICAL FIX: Always proceed to find signals, even if monitoring found changes.
-  // Previously, monitoring results blocked signal finding — now both run.
-
   // Each signal opens exactly ONE trade — no secure/runner split.
-  // Splitting caused multiple overlapping positions on the same symbol,
-  // cluttering the chart and fragmenting capital into tiny sub-positions.
-  // A single well-sized trade with a proper 1:R target is safer and clearer.
   if (updatedOpenTrades.length + 1 > maxTrades) {
     const msg = monitorParts.length > 0
       ? monitorParts.join(' | ') + ` | Лимит: ${updatedOpenTrades.length}/${maxTrades}`
@@ -524,21 +585,23 @@ export async function runAutoTradeCycle(
     return { action: 'monitor', closedTrades, trailingUpdates, tpRepairs, message: msg, scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
   }
 
-  if (balance < 1) {
+  // ── FREE BALANCE (not total) ──
+  const lockedInOpen = updatedOpenTrades.reduce((sum, t) => sum + t.amount, 0);
+  const freeBalance = Math.max(0, balance - lockedInOpen);
+
+  if (freeBalance < 1) {
     const msg = monitorParts.length > 0
-      ? monitorParts.join(' | ') + ' | Баланс исчерпан (<$1)'
-      : 'Баланс исчерпан (<$1)';
+      ? monitorParts.join(' | ') + ` | Свободный баланс <$1 (всего $${balance.toFixed(1)}, заморожено $${lockedInOpen.toFixed(1)})`
+      : `Свободный баланс <$1 (всего $${balance.toFixed(1)}, заморожено $${lockedInOpen.toFixed(1)})`;
     return { action: 'monitor', closedTrades, trailingUpdates, tpRepairs, message: msg, scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
   }
 
   const openSymbols = new Set(updatedOpenTrades.map(t => t.symbol));
-  // Merge with globally locked symbols (opened by OTHER strategies this cycle)
-  // This prevents 3 strategies from opening the same symbol simultaneously
   if (globalLockedSymbols) {
     for (const sym of globalLockedSymbols) openSymbols.add(sym);
   }
 
-  const best = await findBestSignal(openSymbols, strategyId, strategyInterval, strategyLimit, strategy, settings);
+  const best = await findBestSignal(openSymbols, strategyId, strategyInterval, strategyLimit, strategy, settings, cooldownSymbols);
   if (!best || best.decision.direction === 'none') {
     const msg = monitorParts.length > 0
       ? monitorParts.join(' | ') + ' | Сигналов не найдено'
@@ -547,46 +610,48 @@ export async function runAutoTradeCycle(
   }
 
   // ============================================================
-  // Trade sizing — SINGLE trade per signal (no secure/runner split)
-  // System setting: max TP distance (default 15% — allows 1:3 R:R with 5% SL)
+  // Trade sizing — based on FREE balance (not total)
   // ============================================================
   const isLong = best.decision.direction === 'long';
 
   const maxTPDistancePct = Number(getSys(settings, 'system.maxTPDistance', 15)) / 100;
   const maxTPDistance = best.price * maxTPDistancePct;
 
-  // Use the strategy's native takeProfit (already computed at strategy.riskRewardRatio)
-  // and cap it to the system max TP distance for safety.
   const takeProfit = isLong
     ? Math.min(best.decision.takeProfit, best.price + maxTPDistance)
     : Math.max(best.decision.takeProfit, best.price - maxTPDistance);
 
-  // Single trade with dynamic position sizing based on balance.
-  // Risk management: scale position by balance tier with proper % allocation.
-  // - $10–$200: fixed $1.5–$5 range (small account, safe start)
-  // - $200–$1000: 3–6% of balance per trade (proportional growth)
-  // - $1000–$5000: 2–4% of balance (controlled exposure)
-  // - $5000+: 1.5–3% of balance (institutional-grade sizing)
+  // Position sizing based on FREE balance (not total)
   let amount: number;
-  if (balance < 200) {
-    amount = Math.max(1.5, Math.min(balance * 0.08, 8));
-  } else if (balance < 1000) {
-    amount = Math.max(5, Math.min(balance * 0.05, 50));
-  } else if (balance < 5000) {
-    amount = Math.max(20, Math.min(balance * 0.03, 150));
+  if (freeBalance < 200) {
+    amount = Math.max(1.5, Math.min(freeBalance * 0.08, 8));
+  } else if (freeBalance < 1000) {
+    amount = Math.max(5, Math.min(freeBalance * 0.05, 50));
+  } else if (freeBalance < 5000) {
+    amount = Math.max(20, Math.min(freeBalance * 0.03, 150));
   } else {
-    amount = Math.max(50, Math.min(balance * 0.02, 500));
+    amount = Math.max(50, Math.min(freeBalance * 0.02, 500));
   }
   // Cap with strategy's tradeSizePercent as absolute max (safety)
-  const strategyMax = balance * tradeSizePct;
+  const strategyMax = freeBalance * tradeSizePct;
   amount = Math.min(amount, strategyMax);
+
+  // Don't exceed free balance
+  amount = Math.min(amount, freeBalance * 0.5); // never risk more than 50% of free on one trade
+
+  // ── DAILY TRADE COUNTER increment ──
+  if ('maxDailyTrades' in strategy && (strategy as any).maxDailyTrades > 0 && typeof window !== 'undefined') {
+    const storageKey = `dailyTrades_${strategyId}_${new Date().toISOString().slice(0, 10)}`;
+    const todayTrades = parseInt(sessionStorage.getItem(storageKey) || '0', 10);
+    sessionStorage.setItem(storageKey, String(todayTrades + 1));
+  }
 
   const newTrades: NewTradeInfo[] = [
     { symbol: best.symbol, direction: best.decision.direction, price: best.price, leverage: best.decision.leverage, stopLoss: best.decision.stopLoss, takeProfit, amount, strategyId, label: 'main' },
   ];
 
   const coinName = best.symbol.replace('USDT', '');
-  const signalMsg = `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${coinName} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x | $${amount.toFixed(2)} | TP ${strategy.riskRewardRatio}R`;
+  const signalMsg = `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${coinName} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x | $${amount.toFixed(2)} (свободно $${freeBalance.toFixed(1)}) | TP ${strategy.riskRewardRatio}R`;
   return {
     action: 'new-trade', closedTrades, trailingUpdates, tpRepairs, newTrades,
     message: monitorParts.length > 0 ? monitorParts.join(' | ') + ' | ' + signalMsg : signalMsg,
