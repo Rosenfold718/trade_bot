@@ -104,9 +104,10 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'open-trade') {
-      const { symbol: sym, entryPrice, amount, leverage, direction, stopLoss, takeProfit } = rest as {
+      const { symbol: sym, entryPrice, amount, leverage, direction, stopLoss, takeProfit, pattern: patternData } = rest as {
         symbol: string; entryPrice: number; amount: number; leverage: number;
         direction: 'long' | 'short'; stopLoss: number; takeProfit: number;
+        pattern?: { name?: string; direction?: string; reliability?: number; strength?: number; zone_high?: number; zone_low?: number; start_time?: number; end_time?: number } | null;
       };
 
       if (amount <= 0) return NextResponse.json({ error: 'Invalid amount' }, { status: 400 });
@@ -142,7 +143,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Insufficient balance' }, { status: 400 });
       }
 
-      await openTrade(userId, sym, entryPrice, amount, leverage, direction, stopLoss, takeProfit, strategyId);
+      await openTrade(userId, sym, entryPrice, amount, leverage, direction, stopLoss, takeProfit, strategyId, undefined, patternData ?? undefined);
       await updateBalance(userId, state.balance - amount, strategyId);
 
       return NextResponse.json({ success: true, message: `Opened ${direction} on ${sym}` });

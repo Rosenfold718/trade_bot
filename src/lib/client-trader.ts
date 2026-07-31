@@ -770,6 +770,10 @@ export type NewTradeInfo = {
   symbol: string; direction: string; price: number; leverage: number;
   stopLoss: number; takeProfit: number; amount: number; strategyId: string;
   label: 'main';
+  pattern?: {
+    name?: string; direction?: string; reliability?: number; strength?: number;
+    zone_high?: number; zone_low?: number; start_time?: number; end_time?: number;
+  } | null;
 };
 
 export async function runAutoTradeCycle(
@@ -1004,8 +1008,19 @@ export async function runAutoTradeCycle(
     sessionStorage.setItem(storageKey, String(todayTrades + 1));
   }
 
+  const patternData = best.decision.pattern ? {
+    name: best.decision.pattern.name,
+    direction: best.decision.pattern.direction,
+    reliability: best.decision.pattern.reliability,
+    strength: best.decision.pattern.strength,
+    zone_high: best.decision.pattern.zone_high,
+    zone_low: best.decision.pattern.zone_low,
+    start_time: best.decision.pattern.start_time,
+    end_time: best.decision.pattern.end_time,
+  } : null;
+
   const newTrades: NewTradeInfo[] = [
-    { symbol: best.symbol, direction: best.decision.direction, price: best.price, leverage: best.decision.leverage, stopLoss: best.decision.stopLoss, takeProfit, amount, strategyId, label: 'main' },
+    { symbol: best.symbol, direction: best.decision.direction, price: best.price, leverage: best.decision.leverage, stopLoss: best.decision.stopLoss, takeProfit, amount, strategyId, label: 'main', pattern: patternData },
   ];
 
   const coinName = best.symbol.replace('USDT', '');

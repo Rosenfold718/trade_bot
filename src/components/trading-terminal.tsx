@@ -119,36 +119,22 @@ export default function TradingTerminal() {
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [showManual, setShowManual] = useState(false);
 
-  // Indicator state — derived from active strategy, with localStorage override
+  // Indicator state — all OFF by default (user can toggle manually)
+  // Clear old cached indicators on first load to apply new defaults
   const [indicators, setIndicators] = useState<Record<string, IndicatorConfig>>(() => {
     const base = mergeStrategyIndicators('momentum');
     if (typeof window !== 'undefined') {
       try {
-        const saved = localStorage.getItem('chart-indicators');
-        if (saved) return { ...base, ...JSON.parse(saved) };
+        // Clear stale cached indicator visibility (migration: all indicators now default OFF)
+        localStorage.removeItem('chart-indicators');
       } catch { /* ignore */ }
     }
     return base;
   });
 
-  // When strategy changes, reset indicators to strategy defaults (keep localStorage overrides)
+  // When strategy changes, reset indicators to strategy defaults (all OFF)
   useEffect(() => {
     const base = mergeStrategyIndicators(activeStrategy);
-    if (typeof window !== 'undefined') {
-      try {
-        const saved = localStorage.getItem('chart-indicators');
-        if (saved) {
-          const overrides: Record<string, Partial<IndicatorConfig>> = JSON.parse(saved);
-          // Only apply overrides for indicators that exist in the new strategy's config
-          for (const key of Object.keys(overrides)) {
-            if (base[key]) {
-              base[key] = { ...base[key], ...overrides[key] };
-            }
-          }
-          return setIndicators(base);
-        }
-      } catch { /* ignore */ }
-    }
     setIndicators(base);
   }, [activeStrategy]);
 
@@ -156,9 +142,7 @@ export default function TradingTerminal() {
     setIndicators(prev => ({ ...prev, [id]: { ...prev[id], visible: !prev[id].visible } }));
   }, []);
 
-  useEffect(() => {
-    try { localStorage.setItem('chart-indicators', JSON.stringify(indicators)); } catch { /* ignore */ }
-  }, [indicators]);
+  // No longer persist indicators to localStorage — always start OFF
 
   const initDone = useRef(false);
   const [initFailed, setInitFailed] = useState(false);
@@ -266,21 +250,31 @@ export default function TradingTerminal() {
     fetchCandles(selectedSymbol, timeframe);
   }, [selectedSymbol, timeframe, fetchCandles]);
 
+  // Shared fetch function for strategy state
+  const fetchStrategyState = useCallback(async (strategyId: string) => {
+    try {
+      const res = await fetch(`/api/trader?strategyId=${strategyId}`);
+      const data = await res.json();
+      if (data.state) setStrategyTraderState(strategyId, data.state as TraderState);
+      if (data.openTrades) setStrategyOpenTrades(strategyId, data.openTrades as Trade[]);
+      if (data.recentTrades) setStrategyRecentTrades(strategyId, data.recentTrades as Trade[]);
+      if (data.totalClosedPnl !== undefined) setStrategyTotalClosedPnl(strategyId, data.totalClosedPnl as number);
+      if (data.closedTradeCount !== undefined) setStrategyClosedTradeCount(strategyId, data.closedTradeCount as number);
+    } catch { /* silent */ }
+  }, [setStrategyTraderState, setStrategyOpenTrades, setStrategyRecentTrades, setStrategyTotalClosedPnl, setStrategyClosedTradeCount]);
+
+  // Immediate fetch when strategy changes
+  useEffect(() => {
+    fetchStrategyState(activeStrategy);
+  }, [activeStrategy, fetchStrategyState]);
+
   // Poll active strategy state
   useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/trader?strategyId=${activeStrategy}`);
-        const data = await res.json();
-        if (data.state) setTraderState(data.state as TraderState);
-        if (data.openTrades) setOpenTrades(data.openTrades as Trade[]);
-        if (data.recentTrades) setRecentTrades(data.recentTrades as Trade[]);
-        if (data.totalClosedPnl !== undefined) setStrategyTotalClosedPnl(activeStrategy, data.totalClosedPnl as number);
-        if (data.closedTradeCount !== undefined) setStrategyClosedTradeCount(activeStrategy, data.closedTradeCount as number);
-      } catch { /* silent */ }
+    const interval = setInterval(() => {
+      fetchStrategyState(activeStrategy);
     }, 15000);
     return () => clearInterval(interval);
-  }, [setTraderState, setOpenTrades, setRecentTrades, setStrategyTotalClosedPnl, setStrategyClosedTradeCount, activeStrategy]);
+  }, [activeStrategy, fetchStrategyState]);
 
   // Auto-trading loop — runs each strategy at its own interval
   // Momentum: 5min, Scalper: 1min (disabled), Position Alpha: 30min
@@ -355,7 +349,7 @@ export default function TradingTerminal() {
           trailingUpdates: Array<{ tradeId: string; newStopLoss: number; reason: string }>;
           tpRepairs: Array<{ tradeId: string; newTakeProfit: number; reason: string }>;
           partialCloses?: Array<{ tradeId: string; symbol: string; closedAmount: number; pnl: number; reason: string; exitPrice: number; newRemainingAmount: number; newPartialState: string; newStopLoss?: number }>;
-          newTrades?: Array<{ symbol: string; direction: string; price: number; leverage: number; stopLoss: number; takeProfit: number; amount: number; strategyId: string; label: string }>;
+          newTrades?: Array<{ symbol: string; direction: string; price: number; leverage: number; stopLoss: number; takeProfit: number; amount: number; strategyId: string; label: string; pattern?: { name?: string; direction?: string; reliability?: number; strength?: number; zone_high?: number; zone_low?: number; start_time?: number; end_time?: number } | null }>;
         };
 
         if (r.message) {
@@ -470,6 +464,7 @@ export default function TradingTerminal() {
               body: JSON.stringify({
                 action: 'open-trade', symbol: nt.symbol, entryPrice: livePrice, amount: nt.amount,
                 leverage: nt.leverage, direction: nt.direction, stopLoss: adjustedSL, takeProfit: adjustedTP, strategyId,
+                ...(nt.pattern ? { pattern: nt.pattern } : {}),
               }),
             });
             const openData = await openRes.json();

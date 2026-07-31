@@ -12,14 +12,14 @@ export interface IndicatorConfig {
 }
 
 export const DEFAULT_INDICATORS: Record<string, IndicatorConfig> = {
-  sma7:  { id: 'sma7',  label: 'SMA 7',  color: '#f59e0b', lineWidth: 1, visible: true },
-  sma25: { id: 'sma25', label: 'SMA 25', color: '#3b82f6', lineWidth: 1, visible: true },
+  sma7:  { id: 'sma7',  label: 'SMA 7',  color: '#f59e0b', lineWidth: 1, visible: false },
+  sma25: { id: 'sma25', label: 'SMA 25', color: '#3b82f6', lineWidth: 1, visible: false },
   sma99: { id: 'sma99', label: 'SMA 99', color: '#a855f7', lineWidth: 1, visible: false },
-  ema12: { id: 'ema12', label: 'EMA 12', color: '#06b6d4', lineWidth: 1, visible: true },
+  ema12: { id: 'ema12', label: 'EMA 12', color: '#06b6d4', lineWidth: 1, visible: false },
   ema26: { id: 'ema26', label: 'EMA 26', color: '#ec4899', lineWidth: 1, visible: false },
-  bb:    { id: 'bb',    label: 'BB 20',   color: 'rgba(148,163,184,0.5)', lineWidth: 1, visible: true },
-  sr:     { id: 'sr',     label: 'S/R уровни', color: '#eab308', lineWidth: 1, visible: true },
-  swings: { id: 'swings', label: 'Экстремумы', color: '#06b6d4', lineWidth: 1, visible: true },
+  bb:    { id: 'bb',    label: 'BB 20',   color: 'rgba(148,163,184,0.5)', lineWidth: 1, visible: false },
+  sr:     { id: 'sr',     label: 'S/R уровни', color: '#eab308', lineWidth: 1, visible: false },
+  swings: { id: 'swings', label: 'Экстремумы', color: '#06b6d4', lineWidth: 1, visible: false },
 };
 
 interface TradingChartProps {
