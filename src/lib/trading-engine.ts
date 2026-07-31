@@ -847,11 +847,97 @@ function makeMomentumDecision(
 }
 
 // ============================================================
-// Strategy 2: Scalp Hunter
-// Fast scalping: many quick trades on micro-movements
-// Uses StochRSI(5,5), BB(10,1.5), volume spikes, VWAP, RSI(7), 3-candle momentum
-// Entry: ≥3 of 6 indicators agree, score ≥ 0.15
-// SL: 0.8× ATR, TP: 1:1.5 R:R
+// Volume Delta & CVD (Bondar-style tape reading)
+// ============================================================
+
+/**
+ * Estimate buy/sell volume from candle data.
+ * Uses (close-open)/(high-low) ratio to split total volume.
+ * Returns { buyVol, sellVol, delta } for the last candle.
+ */
+function calcCandleDelta(candle: CandleData): { buyVol: number; sellVol: number; delta: number } {
+  const range = candle.high - candle.low;
+  if (range === 0 || candle.volume === 0) return { buyVol: 0, sellVol: 0, delta: 0 };
+  const position = (candle.close - candle.open) / range; // -1 to +1
+  const buyRatio = (position + 1) / 2; // 0 to 1
+  const buyVol = candle.volume * buyRatio;
+  const sellVol = candle.volume * (1 - buyRatio);
+  return { buyVol, sellVol, delta: buyVol - sellVol };
+}
+
+/**
+ * Cumulative Volume Delta over N candles.
+ * Returns { cvd, cvdSlope } — slope = change over last 5 candles.
+ * Positive CVD = net buying pressure, Negative = net selling.
+ */
+function calcCVD(candles: CandleData[], period: number = 50): { cvd: number; cvdSlope: number; cvdNorm: number } {
+  if (candles.length < 10) return { cvd: 0, cvdSlope: 0, cvdNorm: 0 };
+  const sliced = candles.slice(-period);
+  let cvd = 0;
+  const deltas: number[] = [];
+  for (const c of sliced) {
+    const d = calcCandleDelta(c);
+    cvd += d.delta;
+    deltas.push(d.delta);
+  }
+  // Slope = sum of last 5 deltas / sum of last 5 volumes (normalised)
+  const last5 = deltas.slice(-5);
+  const last5Vol = candles.slice(-5).reduce((s, c) => s + c.volume, 0);
+  const cvdSlope = last5Vol > 0 ? last5.reduce((s, d) => s + d, 0) / last5Vol : 0;
+  // Normalise CVD by average volume
+  const avgVol = sliced.reduce((s, c) => s + c.volume, 0) / sliced.length;
+  const cvdNorm = avgVol > 0 ? cvd / (avgVol * sliced.length) : 0;
+  return { cvd, cvdSlope, cvdNorm };
+}
+
+/**
+ * Absorption detection — high volume but small body.
+ * Big player absorbing supply/demand = potential reversal.
+ * Returns { absorbed: boolean, direction: 'long'|'short'|'none' }.
+ */
+function detectAbsorption(candles: CandleData[]): { absorbed: boolean; direction: 'long' | 'short' | 'none'; strength: number } {
+  if (candles.length < 20) return { absorbed: false, direction: 'none', strength: 0 };
+  const last = candles[candles.length - 1];
+  const prev = candles[candles.length - 2];
+  const avgVol = candles.slice(-20, -1).reduce((s, c) => s + c.volume, 0) / 19;
+  if (avgVol === 0) return { absorbed: false, direction: 'none', strength: 0 };
+  const volRatio = last.volume / avgVol;
+  const range = last.high - last.low;
+  const body = Math.abs(last.close - last.open);
+  const bodyRatio = range > 0 ? body / range : 0;
+  // Absorption: volume > 2x average BUT body < 30% of range
+  // Context: price was moving in one direction, then a big-body-absorbing candle appears
+  if (volRatio > 2 && bodyRatio < 0.3) {
+    const priceUp = last.close > prev.close;
+    // Price moved up but couldn't make a body = selling absorbed → long (buyers won)
+    // Price moved down but couldn't make a body = buying absorbed → short (sellers won)
+    // Actually: absorption means the OPPONENT absorbed → direction of the NEXT move
+    // If green candle with small body + high vol at support = buyers absorbing sells → long
+    // If red candle with small body + high vol at resistance = sellers absorbing buys → short
+    const direction: 'long' | 'short' = last.close > last.open ? 'long' : 'short';
+    return { absorbed: true, direction, strength: Math.min(volRatio / 5, 1) };
+  }
+  return { absorbed: false, direction: 'none', strength: 0 };
+}
+
+/**
+ * Volume imbalance — ratio of last candle buy vs sell volume.
+ * > 2.0 = strong buying, < 0.5 = strong selling.
+ */
+function calcVolumeImbalance(candles: CandleData[]): number {
+  if (candles.length < 2) return 1;
+  const last = candles[candles.length - 1];
+  const d = calcCandleDelta(last);
+  if (d.sellVol === 0) return d.buyVol > 0 ? 5 : 1;
+  if (d.buyVol === 0) return d.sellVol > 0 ? 0.2 : 1;
+  return d.buyVol / d.sellVol; // >1 = buying pressure, <1 = selling
+}
+
+// ============================================================
+// Strategy 2: Scalp Hunter (Volume-based, Bondar style)
+// Tape reading: volume delta, CVD, absorption, imbalance
+// Entry: volume delta confirms direction, CVD agrees, VWAP filter
+// SL: 1.5× ATR (floored 0.8%), TP: 1:1.5 R:R with partial closes
 // ============================================================
 
 function makeScalpHunterDecision(
@@ -861,127 +947,127 @@ function makeScalpHunterDecision(
   _idleMinutes: number = 0,
   weights: Record<string, number> = {},
 ): TradingDecision {
-  if (candles.length < 25) return noDecision(symbol, candles);
+  if (candles.length < 30) return noDecision(symbol, candles);
 
   const closes = candles.map(c => c.close);
   const price = closes[closes.length - 1];
   const atr = calcATR(candles, 14);
   const indicators: IndicatorSignal[] = [];
 
-  // Indicator 1: StochRSI(5, 5) — very fast
-  const stochRSI = calcStochRSI(closes, 5, 5);
-  const stochLong = stochRSI < 0.25;
-  const stochShort = stochRSI > 0.75;
-  const stochStrength = stochLong
-    ? (0.25 - stochRSI) / 0.25
-    : stochShort
-      ? (stochRSI - 0.75) / 0.25
-      : 0;
+  // ── 1. Volume Delta (PRIMARY — Bondar's core) ──
+  const lastCandle = candles[candles.length - 1];
+  const delta = calcCandleDelta(lastCandle);
+  const avgVol20 = candles.slice(-21, -1).reduce((s, c) => s + c.volume, 0) / 20;
+  const deltaNorm = avgVol20 > 0 ? delta.delta / avgVol20 : 0;
+  // Signal: delta must be significant (>10% of avg volume) and in one direction
+  const deltaLong = deltaNorm > 0.15;
+  const deltaShort = deltaNorm < -0.15;
+  const deltaStrength = Math.min(Math.abs(deltaNorm) / 0.5, 1);
   indicators.push({
-    name: 'StochRSI',
-    signal: stochLong ? 1 : stochShort ? -1 : 0,
-    strength: stochStrength,
+    name: 'VolDelta',
+    signal: deltaLong ? 1 : deltaShort ? -1 : 0,
+    strength: deltaStrength,
   });
 
-  // Indicator 2: Bollinger Bands(10, 1.5) — tighter bands
-  const bb = calcBollingerBands(closes, 10, 1.5);
-  const bbLong = price <= bb.lower;
-  const bbShort = price >= bb.upper;
-  const bbStrength = bbLong
-    ? Math.min((bb.middle - bb.lower) > 0 ? (bb.middle - price) / (bb.middle - bb.lower) : 0, 1)
-    : bbShort
-      ? Math.min((bb.upper - bb.middle) > 0 ? (price - bb.middle) / (bb.upper - bb.middle) : 0, 1)
-      : 0;
+  // ── 2. CVD (Cumulative Volume Delta — trend confirmation) ──
+  const cvd = calcCVD(candles, 50);
+  const cvdLong = cvd.cvdSlope > 0.1;
+  const cvdShort = cvd.cvdSlope < -0.1;
+  const cvdStrength = Math.min(Math.abs(cvd.cvdSlope) / 0.3, 1);
   indicators.push({
-    name: 'Bollinger',
-    signal: bbLong ? 1 : bbShort ? -1 : 0,
-    strength: bbStrength,
+    name: 'CVD',
+    signal: cvdLong ? 1 : cvdShort ? -1 : 0,
+    strength: cvdStrength,
   });
 
-  // Indicator 3: Volume spike — last 5 candles avg vs last 20
-  let volSpike = false;
-  let volStrength = 0;
-  if (candles.length >= 20) {
-    const recent5Vol = candles.slice(-5).reduce((s, c) => s + c.volume, 0) / 5;
-    const last20Vol = candles.slice(-20).reduce((s, c) => s + c.volume, 0) / 20;
-    const volRatio = last20Vol > 0 ? recent5Vol / last20Vol : 0;
-    volSpike = volRatio > 1.3;
-    volStrength = volSpike ? Math.min((volRatio - 1.3) / 2, 1) : 0;
-  }
+  // ── 3. Volume Imbalance (buy vs sell ratio on last candle) ──
+  const imbalance = calcVolumeImbalance(candles);
+  const imbLong = imbalance > 1.8;
+  const imbShort = imbalance < 0.55;
+  const imbStrength = imbLong
+    ? Math.min((imbalance - 1.8) / 3, 1)
+    : imbShort
+      ? Math.min((0.55 - imbalance) / 0.4, 1)
+      : 0;
   indicators.push({
-    name: 'Volume',
-    signal: volSpike ? 1 : 0, // direction-neutral boost, counted as agreement
-    strength: volStrength,
+    name: 'Imbalance',
+    signal: imbLong ? 1 : imbShort ? -1 : 0,
+    strength: imbStrength,
   });
 
-  // Indicator 4: VWAP deviation — >0.3% above VWAP = short, below = long
-  const vwapResult = calcVWAP(candles, 20);
-  const vwapLong = vwapResult.signal < -0.2;   // price below VWAP by >0.2%
-  const vwapShort = vwapResult.signal > 0.2;    // price above VWAP by >0.2%
-  const vwapStrength = vwapLong
-    ? Math.min(Math.abs(vwapResult.signal) / 1, 1)
-    : vwapShort
-      ? Math.min(Math.abs(vwapResult.signal) / 1, 1)
-      : 0;
+  // ── 4. VWAP (session trend filter — wider window for 5m) ──
+  const vwapResult = calcVWAP(candles, 50);
+  const vwapLong = vwapResult.signal < -0.15;   // price below VWAP → long (mean reversion to VWAP)
+  const vwapShort = vwapResult.signal > 0.15;   // price above VWAP → short
+  const vwapStrength = Math.min(Math.abs(vwapResult.signal) / 0.5, 1);
   indicators.push({
     name: 'VWAP',
     signal: vwapLong ? 1 : vwapShort ? -1 : 0,
     strength: vwapStrength,
   });
 
-  // Indicator 5: RSI(7) — very fast, aggressive thresholds
+  // ── 5. RSI(7) — extreme for precise timing ──
   const rsi = calcRSI(closes, 7);
-  const rsiLong = rsi < 30;
-  const rsiShort = rsi > 70;
-  const rsiStrength = rsiLong ? (30 - rsi) / 30 : rsiShort ? (rsi - 70) / 30 : 0;
+  const rsiLong = rsi < 25;
+  const rsiShort = rsi > 75;
+  const rsiStrength = rsiLong ? (25 - rsi) / 25 : rsiShort ? (rsi - 75) / 25 : 0;
   indicators.push({
     name: 'RSI',
     signal: rsiLong ? 1 : rsiShort ? -1 : 0,
     strength: rsiStrength,
   });
 
-  // Indicator 6: Price momentum — last 3 candles all up = long, all down = short
-  let momentumLong = false;
-  let momentumShort = false;
-  let momentumStrength = 0;
-  if (closes.length >= 3) {
-    const last3 = closes.slice(-3);
-    const allUp = last3[1] > last3[0] && last3[2] > last3[1];
-    const allDown = last3[1] < last3[0] && last3[2] < last3[1];
-    momentumLong = allUp;
-    momentumShort = allDown;
-    const moveSize = Math.abs(last3[2] - last3[0]) / last3[0];
-    momentumStrength = Math.min(moveSize * 50, 1);
+  // ── 6. Absorption (large player activity — reversal signal) ──
+  const absResult = detectAbsorption(candles);
+  if (absResult.absorbed) {
+    indicators.push({
+      name: 'Absorption',
+      signal: absResult.direction === 'long' ? 1 : -1,
+      strength: absResult.strength,
+    });
+  } else {
+    // Fallback: 3-candle momentum (volume-confirmed)
+    const last3 = candles.slice(-3);
+    const volConfirm = last3.every((c, i) => {
+      if (i === 0) return true;
+      return c.volume > avgVol20 * 0.8; // at least 80% of average
+    });
+    const allUp = last3[1].close > last3[0].close && last3[2].close > last3[1].close;
+    const allDown = last3[1].close < last3[0].close && last3[2].close < last3[1].close;
+    const momLong = allUp && volConfirm;
+    const momShort = allDown && volConfirm;
+    const moveSize = Math.abs(last3[2].close - last3[0].close) / last3[0].close;
+    indicators.push({
+      name: 'MomVol',
+      signal: momLong ? 1 : momShort ? -1 : 0,
+      strength: Math.min(moveSize * 30, 1),
+    });
   }
-  indicators.push({
-    name: 'Momentum',
-    signal: momentumLong ? 1 : momentumShort ? -1 : 0,
-    strength: momentumStrength,
-  });
 
-  // Count confluence: require ≥2 of 6 indicators to agree (relaxed for scalping frequency)
-  let longCount = 0;
-  let shortCount = 0;
-  let longScore = 0;
-  let shortScore = 0;
-
+  // ── Confluence: require ≥3 of 7 indicators to agree ──
+  let longCount = 0, shortCount = 0, longScore = 0, shortScore = 0;
   for (const ind of indicators) {
     const w = weights[ind.name] ?? 1;
     if (ind.signal > 0) { longCount++; longScore += ind.strength * w; }
     else if (ind.signal < 0) { shortCount++; shortScore += ind.strength * w; }
   }
 
-  if (longCount < 2 && shortCount < 2) {
+  // HARD REQUIREMENT: VolDelta MUST agree (Bondar's rule — trade WITH the tape)
+  const deltaSignal = indicators.find(i => i.name === 'VolDelta')?.signal ?? 0;
+  if (longCount >= 3 && deltaSignal <= 0) longCount = 0;
+  if (shortCount >= 3 && deltaSignal >= 0) shortCount = 0;
+
+  if (longCount < 3 && shortCount < 3) {
     return { symbol, direction: 'none', score: Math.max(longScore, shortScore), leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
   }
 
   let direction: 'long' | 'short' | 'none' = 'none';
   let score = 0;
 
-  if (longCount >= 2 && longScore >= strategy.scoreThreshold && longScore >= shortScore) {
+  if (longCount >= 3 && longScore >= strategy.scoreThreshold && longScore >= shortScore) {
     direction = 'long';
     score = longScore;
-  } else if (shortCount >= 2 && shortScore >= strategy.scoreThreshold && shortScore > longScore) {
+  } else if (shortCount >= 3 && shortScore >= strategy.scoreThreshold && shortScore > longScore) {
     direction = 'short';
     score = shortScore;
   }
@@ -990,9 +1076,7 @@ function makeScalpHunterDecision(
     return { symbol, direction: 'none', score: Math.max(longScore, shortScore), leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
   }
 
-  // ── SPIKE GUARD (Scalper version — relaxed thresholds for 5m TF) ──
-  // Scalping can tolerate more volatility, but still block extreme spikes.
-  // Use spikeGuard with scalper-specific thresholds (wider for 5m timeframe).
+  // ── SPIKE GUARD (relaxed for scalping) ──
   {
     const ema20Arr = ema(closes, 20);
     const ema20 = ema20Arr[ema20Arr.length - 1] || price;
@@ -1005,14 +1089,13 @@ function makeScalpHunterDecision(
       cciMax: 300,
     });
     if (guard.blocked) {
-      console.log(`[Scalper] ${symbol} ${direction.toUpperCase()} blocked: ${guard.reason}`);
       return { symbol, direction: 'none', score: Math.max(longScore, shortScore), leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
     }
   }
 
   const leverage = Math.min(strategy.maxLeverage, Math.max(1, Math.round(score * 2)));
-  // Narrow stop: 1.2× ATR for scalping, FLOORED at 0.5% (prevents noise stop-outs on 5m), capped at 3% max
-  const stopLossPercent = Math.max(0.005, Math.min(1.2 * atr / price, 0.03));
+  // Stop: 1.5× ATR, floored at 0.8%, capped at 4%
+  const stopLossPercent = Math.max(0.008, Math.min(1.5 * atr / price, 0.04));
   const takeProfitPercent = Math.min(stopLossPercent * strategy.riskRewardRatio, 0.06);
 
   const stopLoss = direction === 'long'

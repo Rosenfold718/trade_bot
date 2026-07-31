@@ -93,7 +93,7 @@ export const STRATEGIES: StrategyConfig[] = [
   {
     id: 'scalper',
     name: 'Scalp Hunter',
-    description: 'Скальпинг: быстрые сделки на микро-движениях. StochRSI, Bollinger squeeze, volume spikes, VWAP deviation. Стоп 1.2× ATR (мин 0.5%), TP 1:1.5. Удержание: минуты–часы.',
+    description: 'Объёмный скальпинг (Bondar-style): Volume Delta, CVD, Imbalance, Absorption, VWAP. Торгует С лентой объёмов. SL 1.5×ATR (мин 0.8%), TP 1:1.5 + partial. 5м таймфрейм.',
     color: 'text-violet-400',
     bgColor: 'bg-violet-500/10',
     borderColor: 'border-violet-500/30',
@@ -108,11 +108,11 @@ export const STRATEGIES: StrategyConfig[] = [
       sr: { visible: false },
       swings: { visible: false },
     },
-    maxLeverage: 2,
-    riskRewardRatio: 2,            // ↑ с 1.5 до 2 — улучшен R:R
-    tradeSizePercent: 0.03,
-    maxOpenTrades: 3,              // ↓ с 10 до 3
-    scoreThreshold: 0.40,          // ↑↑ с 0.15 до 0.40 — сильно ужесточён порог
+    maxLeverage: 3,
+    riskRewardRatio: 1.5,
+    tradeSizePercent: 0.04,
+    maxOpenTrades: 4,
+    scoreThreshold: 0.35,
     adxMin: null,
     mtfEnabled: false,
     timeFilterEnabled: false,
@@ -121,14 +121,14 @@ export const STRATEGIES: StrategyConfig[] = [
     defaultInterval: '5m',
     candleLimit: 500,
     monitorInterval: '5m',
-    maxHoldMinutes: 60, // 1 час максимальное удержание
-    enabled: false,                 // 🔴 ОТКЛЮЧЕН — убыточен при малом балансе
+    maxHoldMinutes: 45, // 45 минут макс удержание (быстрый скальпинг)
+    enabled: true,
     cycleIntervalMs: 60 * 1000,    // 1 минута (5m ТФ)
     cooldownCandles: 6,            // 30 минут cooldown после SL
     entryStalenessMaxPct: 0.002,   // 0.2% — строгий для скальпинга
-    drawdownPausePct: 8,           // пауза при 8% просадке
+    drawdownPausePct: 8,
     drawdownLookback: 5,
-    maxDailyTrades: 8,
+    maxDailyTrades: 10,
   },
 
   // ──────────────────────────────────────────────────────────────
