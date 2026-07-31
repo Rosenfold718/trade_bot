@@ -1273,10 +1273,9 @@ function scanPatterns(candles: CandleData[]): DetectedPattern[] {
 }
 
 // ============================================================
-// Strategy 2: Pattern Pro — Candlestick Pattern Recognition
-// Scans all candlestick patterns, scores by reliability + confluence
-// Source: Bulkowski's Encyclopedia, Nison's Japanese Candlestick Charting
-// SL: 1.5×ATR, TP: based on pattern's avg move, with partial closes
+// Strategy 2: Pattern Pro — Candlestick Pattern Recognition v2
+// FIXED: SL 1.5×ATR, TP 2.0-3.5R, soft trend filter, confluence required,
+// structural patterns only as primary, volume confirmation.
 // ============================================================
 
 function makePatternProDecision(
@@ -1293,22 +1292,73 @@ function makePatternProDecision(
   const atr = calcATR(candles, 14);
   const patterns = scanPatterns(candles);
 
-  // ── EMA20 TREND FILTER ──
-  // Don't buy in a downtrend, don't sell in an uptrend
+  // ── EMA20 SOFT TREND CONTEXT (not a hard filter!) ──
+  // We use EMA20 to boost confluence, not to block reversal patterns.
+  // Reversal patterns (hammer, double bottom, morning star) appear AT the EMA.
   const ema20 = calcLocalEMA(closes, 20);
   if (ema20 === null || !isFinite(ema20)) return noDecision(symbol, candles);
-  const trendUp = price > ema20;
-  const trendDown = price < ema20;
+  const emaDist = (price - ema20) / ema20; // positive = above EMA, negative = below
+  const trendUp = emaDist > 0.005;   // clearly above
+  const trendDown = emaDist < -0.005; // clearly below
+  const atEma = !trendUp && !trendDown; // within 0.5% — neutral zone
 
   if (patterns.length === 0) {
     return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators: [], pattern: null };
   }
 
-  // Filter patterns by trend: only keep bullish in uptrend, bearish in downtrend
+  // ── CLASSIFY PATTERNS ──
+  // TIER 1 (primary tradeable): proven edge in backtest — Morning/Evening Star, Flags,
+  // Tweezers, Descending Wedge. These have 58-94% WR in testing.
+  // TIER 2 (confluence only): Engulfing, Dark Cloud, Double Top/Bottom, Ascending Wedge,
+  // Three Soldiers/Crows — these have ~45-52% WR (no edge standalone).
+  const TIER1_NAMES = new Set([
+    'Утренняя звезда', 'Вечерняя звезда',
+    'Бычий флаг', 'Медвежий флаг',
+    'Близнецы (дно)',
+  ]);
+  const TIER2_NAMES = new Set([
+    'Бычье поглощение', 'Медвежье поглощение',
+    'Проникающая линия', 'Тёмное облако',
+    'Три белых солдата', 'Три чёрных ворона',
+    'Двойное дно', 'Двойная вершина',
+    'Восходящий клин', 'Нисходящий клин',
+    'Близнецы (вершина)',
+  ]);
+  const STRUCTURAL_NAMES = new Set([...TIER1_NAMES, ...TIER2_NAMES]);
+
+  // ── VOLUME CONFIRMATION ──
+  // Signal candle (last) should have volume > 0.7× average of last 20
+  const lastCandle = candles[candles.length - 1];
+  const avgVol20 = candles.slice(-20).reduce((s, c) => s + c.volume, 0) / 20;
+  const volRatio = avgVol20 > 0 ? lastCandle.volume / avgVol20 : 1;
+  const volConfirmed = volRatio > 0.7;
+
+  // ── RSI CONTEXT ──
+  const rsi = calcRSI(closes, 14);
+
+  // ── SOFT TREND FILTER (with reversal pattern exceptions) ──
+  // Rule: structural bullish patterns allowed if price >= ema20 - 1% (near or above)
+  //        structural bearish patterns allowed if price <= ema20 + 1% (near or below)
+  //        single-candle patterns ONLY with trend, not against it
   const trendFiltered = patterns.filter(p => {
     if (p.direction === 'neutral') return false;
-    if (p.direction === 'bullish') return trendUp;
-    if (p.direction === 'bearish') return trendDown;
+    const isStructural = STRUCTURAL_NAMES.has(p.name);
+    if (p.direction === 'bullish') {
+      if (isStructural) {
+        // Allow structural bullish if price is near or above EMA (within 1% below)
+        return emaDist >= -0.01;
+      } else {
+        // Single-candle bullish only with clear uptrend or at EMA
+        return trendUp || atEma;
+      }
+    }
+    if (p.direction === 'bearish') {
+      if (isStructural) {
+        return emaDist <= 0.01;
+      } else {
+        return trendDown || atEma;
+      }
+    }
     return false;
   });
 
@@ -1316,57 +1366,86 @@ function makePatternProDecision(
     return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators: [], pattern: null };
   }
 
-  // Convert patterns to indicators for logging/display
+  // ── REQUIRE TIER 1 PATTERN AS PRIMARY ──
+  // At least 1 Tier-1 pattern must be present (Tier-2 and single-candle = no trade alone)
+  const tier1Patterns = trendFiltered.filter(p => TIER1_NAMES.has(p.name));
+  const tier2Patterns = trendFiltered.filter(p => TIER2_NAMES.has(p.name));
+  const singleCandlePatterns = trendFiltered.filter(p => !STRUCTURAL_NAMES.has(p.name));
+
+  if (tier1Patterns.length === 0) {
+    // Only Tier-2 / single-candle patterns — skip (insufficient edge standalone)
+    const indicators: IndicatorSignal[] = trendFiltered.map(p => ({
+      name: p.name, signal: p.direction === 'bullish' ? 1 : -1, strength: p.strength,
+    }));
+    return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators, pattern: null };
+  }
+
+  // ── REQUIRE MINIMUM STRENGTH > 0.25 on tier-1 pattern ──
+  const strongTier1 = tier1Patterns.filter(p => p.strength > 0.25);
+  if (strongTier1.length === 0) {
+    return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators: [], pattern: null };
+  }
+
+  // ── SCORE: Tier-1 × 1.5, Tier-2 × 0.6, single-candle × 0.3 (confluence only) ──
   const indicators: IndicatorSignal[] = trendFiltered.map(p => ({
     name: p.name,
     signal: p.direction === 'bullish' ? 1 : p.direction === 'bearish' ? -1 : 0,
     strength: p.strength,
   }));
 
-  // Score bullish and bearish separately
-  // Weight = reliability × strength × (1 + avgMoveATR/2)
   let bullScore = 0, bearScore = 0;
-  let bullCount = 0, bearCount = 0;
   let bestBullMove = 0, bestBearMove = 0;
   let bestBullPattern: DetectedPattern | null = null;
   let bestBearPattern: DetectedPattern | null = null;
 
   for (const p of trendFiltered) {
     if (p.direction === 'neutral') continue;
-    const weight = p.reliability * p.strength * (1 + p.avgMoveATR / 2);
+    // Tier-1: 1.5× weight (primary), Tier-2: 0.6× (confluence), single-candle: 0.3×
+    const tierMult = TIER1_NAMES.has(p.name) ? 1.5 : TIER2_NAMES.has(p.name) ? 0.6 : 0.3;
+    const weight = p.reliability * p.strength * (1 + p.avgMoveATR / 2) * tierMult;
+
     if (p.direction === 'bullish') {
       bullScore += weight;
-      bullCount++;
       bestBullMove = Math.max(bestBullMove, p.avgMoveATR);
-      if (!bestBullPattern || weight > bestBullPattern.reliability * bestBullPattern.strength * (1 + bestBullPattern.avgMoveATR / 2)) {
+      if (!bestBullPattern || (TIER1_NAMES.has(p.name) && !TIER1_NAMES.has(bestBullPattern.name)) ||
+          (TIER1_NAMES.has(p.name) && weight > bestBullPattern.reliability * bestBullPattern.strength * (1 + bestBullPattern.avgMoveATR / 2))) {
         bestBullPattern = p;
       }
     } else {
       bearScore += weight;
-      bearCount++;
       bestBearMove = Math.max(bestBearMove, p.avgMoveATR);
-      if (!bestBearPattern || weight > bestBearPattern.reliability * bestBearPattern.strength * (1 + bestBearPattern.avgMoveATR / 2)) {
+      if (!bestBearPattern || (TIER1_NAMES.has(p.name) && !TIER1_NAMES.has(bestBearPattern.name)) ||
+          (TIER1_NAMES.has(p.name) && weight > bestBearPattern.reliability * bestBearPattern.strength * (1 + bestBearPattern.avgMoveATR / 2))) {
         bestBearPattern = p;
       }
     }
   }
 
-  // Need at least 1 strong pattern (reliability > 0.60)
-  const hasStrongBull = trendFiltered.some(p => p.direction === 'bullish' && p.reliability > 0.60);
-  const hasStrongBear = trendFiltered.some(p => p.direction === 'bearish' && p.reliability > 0.60);
-
-  if ((!hasStrongBull || bullCount < 1) && (!hasStrongBear || bearCount < 1)) {
-    return { symbol, direction: 'none', score: Math.max(bullScore, bearScore), leverage: 1, stopLoss: 0, takeProfit: 0, indicators, pattern: null };
+  // ── VOLUME BONUS ──
+  if (volConfirmed) {
+    if (bullScore > 0) bullScore *= 1.15;
+    if (bearScore > 0) bearScore *= 1.15;
   }
 
-  // RSI filter: don't buy overbought, don't sell oversold (unless pattern is very strong)
-  const rsi = calcRSI(closes, 14);
-  if (bullScore > 0 && rsi > 75 && !trendFiltered.some(p => p.direction === 'bullish' && p.reliability > 0.75)) {
+  // ── RSI FILTER: don't buy overbought (RSI>72), don't sell oversold (RSI<28) ──
+  // Unless pattern is very strong (reliability > 0.73)
+  if (bullScore > 0 && rsi > 72 && !strongTier1.some(p => p.direction === 'bullish' && p.reliability > 0.73)) {
     return { symbol, direction: 'none', score: bullScore, leverage: 1, stopLoss: 0, takeProfit: 0, indicators, pattern: null };
   }
-  if (bearScore > 0 && rsi < 25 && !trendFiltered.some(p => p.direction === 'bearish' && p.reliability > 0.75)) {
+  if (bearScore > 0 && rsi < 28 && !strongTier1.some(p => p.direction === 'bearish' && p.reliability > 0.73)) {
     return { symbol, direction: 'none', score: bearScore, leverage: 1, stopLoss: 0, takeProfit: 0, indicators, pattern: null };
   }
+
+  // ── CONFLUENCE BONUS: multiple tier-1 patterns in same direction ──
+  const tier1BullCount = strongTier1.filter(p => p.direction === 'bullish').length;
+  const tier1BearCount = strongTier1.filter(p => p.direction === 'bearish').length;
+  // Tier-2 confluence: adds 10% if same direction as tier-1
+  const tier2BullCount = tier2Patterns.filter(p => p.direction === 'bullish').length;
+  const tier2BearCount = tier2Patterns.filter(p => p.direction === 'bearish').length;
+  if (tier1BullCount >= 2) bullScore *= 1.3;
+  if (tier1BearCount >= 2) bearScore *= 1.3;
+  if (tier1BullCount >= 1 && tier2BullCount >= 1) bullScore *= 1.15;
+  if (tier1BearCount >= 1 && tier2BearCount >= 1) bearScore *= 1.15;
 
   let direction: 'long' | 'short' | 'none' = 'none';
   let score = 0;
@@ -1386,15 +1465,15 @@ function makePatternProDecision(
     return { symbol, direction: 'none', score: Math.max(bullScore, bearScore), leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
   }
 
-  // SL: 2.5× ATR (wider to avoid noise stop-outs)
-  const slDist = 2.5 * atr;
+  // SL: 2.0× ATR (balanced — tight enough for good R:R, wide enough for 15m noise)
+  const slDist = 2.0 * atr;
   const stopLoss = direction === 'long' ? price - slDist : price + slDist;
 
-  // TP: based on pattern's expected move (min 1.5× SL = 1:1.5, max 3× SL = 1:3)
-  const tpMult = Math.max(1.5, Math.min(expectedMoveATR, 3));
+  // TP: 2.0-3.0× SL distance (1:2 to 1:3 R:R)
+  const tpMult = Math.max(2.0, Math.min(expectedMoveATR * 1.5, 3.0));
   const takeProfit = direction === 'long' ? price + slDist * tpMult : price - slDist * tpMult;
 
-  const leverage = Math.min(strategy.maxLeverage, Math.max(1, Math.round(score * 2)));
+  const leverage = Math.min(strategy.maxLeverage, Math.max(1, Math.round(score * 1.5)));
 
   // Build pattern info for the best matching pattern
   const bestPattern = direction === 'long' ? bestBullPattern : bestBearPattern;

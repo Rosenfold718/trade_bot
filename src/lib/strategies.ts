@@ -93,7 +93,7 @@ export const STRATEGIES: StrategyConfig[] = [
   {
     id: 'scalper',
     name: 'Pattern Pro',
-    description: 'Свечные фигуры: Молот, Поглощение, Утренняя/Вечерняя звезда, Двойное дно/вершина, Клин, Флаг. Bulkowski статистика. SL 1.5×ATR, TP по фигуре.',
+    description: 'Свечные фигуры v2: Утренняя/Вечерняя звезда, Бычий/Медвежий флаг, Близнецы (дно). SL 2.0×ATR, TP 2.0-3.0R, partial TP, trailing. Tier-1/2 фильтр паттернов.',
     color: 'text-violet-400',
     bgColor: 'bg-violet-500/10',
     borderColor: 'border-violet-500/30',

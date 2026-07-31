@@ -921,7 +921,11 @@ export async function runAutoTradeCycle(
 
   // ── SCAN FREQUENCY: only scan for new signals every N hours (CORE+TRAIL) ──
   // Monitoring (SL/TP/trailing) still runs every cycle — only NEW trade search is throttled.
-  const scanFreqHours = Number(getSys(settings, 'system.scanFreqHours', 2));
+  // IMPORTANT: Skip throttle for short-TF strategies (≤1h) — patterns on 15m/5m
+  // form and disappear within a single candle, so scanning every 2h misses them entirely.
+  const shortTfMs: Record<string, number> = { '1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000 };
+  const isShortTF = (shortTfMs[strategyInterval] ?? Infinity) <= 3600000;
+  const scanFreqHours = isShortTF ? 1 : Number(getSys(settings, 'system.scanFreqHours', 2));
   const currentUtcHour = new Date().getUTCHours();
   if (scanFreqHours > 1 && currentUtcHour % scanFreqHours !== 0) {
     const remainHours = scanFreqHours - (currentUtcHour % scanFreqHours);
