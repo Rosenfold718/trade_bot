@@ -126,6 +126,10 @@ const MIGRATION_SQLS = [
   "ALTER TABLE system_settings ADD COLUMN user_id TEXT DEFAULT '__global__'",
   // Phase 4: add initial_balance column (for custom deposit amounts)
   "ALTER TABLE trader_state ADD COLUMN initial_balance REAL DEFAULT 100",
+  // Phase 5: partial TP + entry quality (v2 smart trading)
+  "ALTER TABLE trades ADD COLUMN remaining_amount REAL",
+  "ALTER TABLE trades ADD COLUMN entry_quality REAL DEFAULT 0",
+  "ALTER TABLE trades ADD COLUMN partial_state TEXT DEFAULT 'full'",
 ];
 
 export async function initDB(): Promise<void> {
@@ -289,6 +293,7 @@ export async function openTrade(
   stopLoss: number,
   takeProfit: number,
   strategyId: string = 'momentum',
+  entryQuality?: number,
 ): Promise<void> {
   // ── Direction-aware SL/TP validation & auto-correction ──
   const slCap = entryPrice * 0.05;  // max 5% distance
@@ -336,9 +341,9 @@ export async function openTrade(
 
   const id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   await tursoDb.execute(
-    `INSERT INTO trades (id, user_id, symbol, strategy_id, entry_price, amount, leverage, direction, status, stop_loss, take_profit, opened_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, datetime('now'))`,
-    [id, userId, symbol, strategyId, entryPrice, amount, leverage, direction, stopLoss, takeProfit]
+    `INSERT INTO trades (id, user_id, symbol, strategy_id, entry_price, amount, leverage, direction, status, stop_loss, take_profit, opened_at, remaining_amount, entry_quality, partial_state)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, datetime('now'), ?, ?, 'full')`,
+    [id, userId, symbol, strategyId, entryPrice, amount, leverage, direction, stopLoss, takeProfit, amount, entryQuality ?? 0]
   );
 }
 
@@ -347,6 +352,7 @@ export async function getOpenTrades(userId: string, strategyId?: string): Promis
   leverage: number; direction: string; pnl: number | null; status: string;
   opened_at: string; closed_at: string | null;
   stop_loss: number | null; take_profit: number | null;
+  remaining_amount: number | null; entry_quality: number | null; partial_state: string | null;
 }>> {
   const sql = strategyId
     ? 'SELECT * FROM trades WHERE status = ? AND user_id = ? AND strategy_id = ?'
@@ -368,6 +374,9 @@ export async function getOpenTrades(userId: string, strategyId?: string): Promis
     closed_at: null,
     stop_loss: row.stop_loss !== null ? Number(row.stop_loss) : null,
     take_profit: row.take_profit !== null ? Number(row.take_profit) : null,
+    remaining_amount: row.remaining_amount !== null ? Number(row.remaining_amount) : Number(row.amount),
+    entry_quality: row.entry_quality !== null ? Number(row.entry_quality) : 0,
+    partial_state: (row.partial_state as string) ?? 'full',
   }));
 }
 
@@ -379,6 +388,35 @@ export async function closeTrade(
   await tursoDb.execute(
     "UPDATE trades SET exit_price = ?, pnl = ?, status = 'closed', closed_at = datetime('now') WHERE id = ?",
     [exitPrice, pnl, tradeId]
+  );
+}
+
+// Partial close: reduce remaining_amount, update partial_state, optionally move SL
+// Returns the PnL for the closed portion
+export async function partialCloseTrade(
+  tradeId: string,
+  newRemainingAmount: number,
+  newPartialState: string,
+  newStopLoss?: number,
+): Promise<void> {
+  const updates: string[] = ['remaining_amount = ?', 'partial_state = ?'];
+  const params: any[] = [newRemainingAmount, newPartialState];
+  if (newStopLoss !== undefined) {
+    updates.push('stop_loss = ?');
+    params.push(newStopLoss);
+  }
+  params.push(tradeId);
+  await tursoDb.execute(
+    `UPDATE trades SET ${updates.join(', ')} WHERE id = ? AND status = 'open'`,
+    params
+  );
+}
+
+// Update remaining_amount only (for balance self-heal compatibility)
+export async function updateRemainingAmount(tradeId: string, newRemainingAmount: number): Promise<void> {
+  await tursoDb.execute(
+    'UPDATE trades SET remaining_amount = ? WHERE id = ? AND status = \'open\'',
+    [newRemainingAmount, tradeId]
   );
 }
 

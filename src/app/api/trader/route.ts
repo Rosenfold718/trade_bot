@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, getTotalClosedPnl, getClosedTradeCount, openTrade, closeTrade, updateStopLoss, updateTakeProfit, updateBalance, initUserTradingData, getClosedTrades } from '@/lib/db';
+import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, getTotalClosedPnl, getClosedTradeCount, openTrade, closeTrade, updateStopLoss, updateTakeProfit, updateBalance, initUserTradingData, getClosedTrades, partialCloseTrade } from '@/lib/db';
 import { fetchKlines, makeStrategyDecision, fetchTopSymbols } from '@/lib/trading-engine';
 import { getAuthUserId } from '@/lib/auth-helpers';
 import { getStrategy } from '@/lib/strategies';
@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
     try {
       const allClosed = await getClosedTrades(userId, strategyId);
       const closedPnlSum = allClosed.reduce((s, t) => s + (t.pnl ?? 0), 0);
-      const openAmountSum = openTrades.reduce((s, t) => s + t.amount, 0);
+      const openAmountSum = openTrades.reduce((s, t) => s + (t.remaining_amount ?? t.amount), 0);
       const initialDeposit = state.initial_balance ?? 100;
       const correctBalance = Math.max(0, initialDeposit + closedPnlSum - openAmountSum);
       if (Math.abs(state.balance - correctBalance) > 0.01) {
@@ -167,6 +167,23 @@ export async function POST(request: NextRequest) {
       await updateBalance(userId, newBalance, strategyId);
 
       return NextResponse.json({ success: true, pnl, newBalance });
+    }
+
+    if (action === 'partial-close-trade') {
+      const { tradeId, closeAmount, pnl, newRemainingAmount, newPartialState, newStopLoss } = rest as {
+        tradeId: string; closeAmount: number; pnl: number; newRemainingAmount: number;
+        newPartialState: string; newStopLoss?: number;
+      };
+
+      // 1. Update trade in DB (remaining_amount + partial_state + optional SL)
+      await partialCloseTrade(tradeId, newRemainingAmount, newPartialState, newStopLoss);
+
+      // 2. Credit the partial PnL + closed amount back to balance
+      const state = await getTraderState(userId, strategyId);
+      const newBalance = state.balance + closeAmount + pnl;
+      await updateBalance(userId, newBalance, strategyId);
+
+      return NextResponse.json({ success: true, pnl, closedAmount, newBalance });
     }
 
     if (action === 'update-sl') {

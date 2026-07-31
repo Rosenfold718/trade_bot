@@ -68,6 +68,10 @@ export interface Trade {
   take_profit: number | null;
   opened_at: string;
   closed_at: string | null;
+  // v2: partial TP + entry quality
+  remaining_amount?: number;
+  entry_quality?: number;
+  partial_state?: 'full' | 'tp1_hit' | 'tp2_hit';
 }
 
 export interface IndicatorWeight {

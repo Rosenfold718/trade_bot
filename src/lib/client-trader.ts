@@ -473,9 +473,16 @@ function calcEMA50(data: number[], period: number): number {
 // ============================================================
 
 export interface MonitorResult {
-  closedTrades: Array<{ tradeId: string; symbol: string; direction: string; pnl: number; reason: string; exitPrice: number }>;
+  closedTrades: Array<{ tradeId: string; symbol: string; direction: string; pnl: number; reason: string; exitPrice: number }>; // full closes
   trailingUpdates: Array<{ tradeId: string; newStopLoss: number; reason: string }>;
   tpRepairs: Array<{ tradeId: string; newTakeProfit: number; reason: string }>;
+  // v2: partial TP closes (TP1, TP2) — trade stays open with reduced amount
+  partialCloses: Array<{
+    tradeId: string; symbol: string;
+    closedAmount: number; pnl: number; reason: string; exitPrice: number;
+    newRemainingAmount: number; newPartialState: string;
+    newStopLoss?: number;
+  }>;
 }
 
 interface CandleOHLC {
@@ -534,6 +541,7 @@ export async function monitorTradesClient(
   const closedTrades: MonitorResult['closedTrades'] = [];
   const trailingUpdates: MonitorResult['trailingUpdates'] = [];
   const tpRepairs: MonitorResult['tpRepairs'] = [];
+  const partialCloses: MonitorResult['partialCloses'] = [];
   const currentSlot = getCurrentCandleSlot(monitorInterval);
 
   // System settings for auto-repair caps (defaults: SL 5%, TP 10%)
@@ -545,8 +553,13 @@ export async function monitorTradesClient(
   const trailing2x = sysSettings ? getSys(sysSettings, 'system.trailing2x', true) : true;
   const trailing3x = sysSettings ? getSys(sysSettings, 'system.trailing3x', true) : true;
 
+  // v2: Partial TP enabled (default: on)
+  const partialTPEnabled = sysSettings ? getSys(sysSettings, 'system.partialTP', true) : true;
+  // v2: Smart Abort enabled (default: on)
+  const smartAbortEnabled = sysSettings ? getSys(sysSettings, 'system.smartAbort', true) : true;
+
   if (currentSlot <= lastCandleSlot) {
-    return { closedTrades: [], trailingUpdates: [], tpRepairs: [] };
+    return { closedTrades, trailingUpdates, tpRepairs, partialCloses };
   }
 
   for (const trade of openTrades) {
@@ -556,16 +569,14 @@ export async function monitorTradesClient(
       let reason = '';
       let exitPrice = 0;
 
-      // The "check price" is the CLOSE of the current in-progress candle
-      // — this is the best approximation of the real-time price at
-      // the moment of the check (the candle hasn't closed yet).
       const livePrice = current.close;
+      const isLong = trade.direction === 'long';
+      const effectiveAmount = trade.remaining_amount ?? trade.amount;
 
       // ── AUTO-REPAIR: Fix inverted or excessive SL/TP ──
       let repairedTP = false;
       let repairedSL = false;
       if (trade.stop_loss && trade.take_profit && trade.entry_price) {
-        const isLong = trade.direction === 'long';
         const slBad = isLong ? trade.stop_loss >= trade.entry_price : trade.stop_loss <= trade.entry_price;
         const tpBad = isLong ? trade.take_profit <= trade.entry_price : trade.take_profit >= trade.entry_price;
         if (slBad || tpBad) {
@@ -578,114 +589,144 @@ export async function monitorTradesClient(
           if (tpBad) {
             const fixedTP = isLong ? trade.entry_price * (1 + tpCapPct) : trade.entry_price * (1 - tpCapPct);
             tpRepairs.push({ tradeId: trade.id, newTakeProfit: fixedTP, reason: 'Auto-repair: inverted TP' });
+            repairedTP = true;
           }
         }
-        // Cap excessive distances (using system settings)
         if (!repairedSL && trade.stop_loss) {
           const slDist = Math.abs(trade.stop_loss - trade.entry_price) / trade.entry_price;
           if (slDist > slCapPct) {
             const cappedSL = isLong ? trade.entry_price * (1 - slCapPct) : trade.entry_price * (1 + slCapPct);
-            trailingUpdates.push({ tradeId: trade.id, newStopLoss: cappedSL, reason: `Auto-repair: excessive SL capped at ${slCapPct * 100}%` });
+            trailingUpdates.push({ tradeId: trade.id, newStopLoss: cappedSL, reason: `Auto-repair: excessive SL` });
           }
         }
         if (!repairedTP && trade.take_profit) {
           const tpDist = Math.abs(trade.take_profit - trade.entry_price) / trade.entry_price;
           if (tpDist > tpCapPct) {
             const cappedTP = isLong ? trade.entry_price * (1 + tpCapPct) : trade.entry_price * (1 - tpCapPct);
-            tpRepairs.push({ tradeId: trade.id, newTakeProfit: cappedTP, reason: `Auto-repair: excessive TP capped at ${tpCapPct * 100}%` });
+            tpRepairs.push({ tradeId: trade.id, newTakeProfit: cappedTP, reason: `Auto-repair: excessive TP` });
           }
         }
       }
 
-      // TIME-BASED EXIT: close losing trades after maxHoldMinutes
+      // The SL distance (proxy for 1R, ~ATR × mult)
+      const initialSlDistance = trade.stop_loss && trade.entry_price
+        ? Math.abs(trade.entry_price - trade.stop_loss) : 0;
+      const favorableMove = isLong ? livePrice - trade.entry_price : trade.entry_price - livePrice;
+      const partialState = trade.partial_state ?? 'full';
+
+      // ════════════════════════════════════════════════════════════
+      // v2: PARTIAL TP — TP1 (1R, close 50%) and TP2 (1.5R, close 50% of remaining)
+      // Only if trade hasn't been partially closed yet (or at the next level)
+      // ════════════════════════════════════════════════════════════
+      if (partialTPEnabled && initialSlDistance > 0 && trade.entry_price) {
+        const tp1Price = isLong ? trade.entry_price + initialSlDistance : trade.entry_price - initialSlDistance;
+        const tp2Price = isLong ? trade.entry_price + initialSlDistance * 1.5 : trade.entry_price - initialSlDistance * 1.5;
+        // Check on both completed and current candle high/low
+        const priceReachedTP1 = isLong
+          ? (completed.high >= tp1Price || current.high >= tp1Price)
+          : (completed.low <= tp1Price || current.low <= tp1Price);
+        const priceReachedTP2 = isLong
+          ? (completed.high >= tp2Price || current.high >= tp2Price)
+          : (completed.low <= tp2Price || current.low <= tp2Price);
+
+        // TP1: close 50% of remaining, move SL to breakeven
+        if (partialState === 'full' && priceReachedTP1) {
+          const closeAmt = effectiveAmount * 0.5;
+          const newRemaining = effectiveAmount - closeAmt;
+          const priceChange = isLong ? (tp1Price - trade.entry_price) / trade.entry_price : (trade.entry_price - tp1Price) / trade.entry_price;
+          const pnl = closeAmt * priceChange * trade.leverage - closeAmt * 0.001 - (closeAmt / trade.leverage) * 0.001;
+          const beSL = isLong ? trade.entry_price * 1.001 : trade.entry_price * 0.999;
+          partialCloses.push({
+            tradeId: trade.id, symbol: trade.symbol,
+            closedAmount: closeAmt, pnl, reason: 'TP1 (1R)', exitPrice: tp1Price,
+            newRemainingAmount: newRemaining, newPartialState: 'tp1_hit', newStopLoss: beSL,
+          });
+          // Skip further checks this cycle — will continue next cycle with updated state
+          continue;
+        }
+
+        // TP2: close 50% of remaining (= 25% of original), trailing for the rest
+        if (partialState === 'tp1_hit' && priceReachedTP2) {
+          const closeAmt = effectiveAmount * 0.5;
+          const newRemaining = effectiveAmount - closeAmt;
+          const priceChange = isLong ? (tp2Price - trade.entry_price) / trade.entry_price : (trade.entry_price - tp2Price) / trade.entry_price;
+          const pnl = closeAmt * priceChange * trade.leverage - closeAmt * 0.001 - (closeAmt / trade.leverage) * 0.001;
+          partialCloses.push({
+            tradeId: trade.id, symbol: trade.symbol,
+            closedAmount: closeAmt, pnl, reason: 'TP2 (1.5R)', exitPrice: tp2Price,
+            newRemainingAmount: newRemaining, newPartialState: 'tp2_hit',
+          });
+          continue;
+        }
+      }
+
+      // ════════════════════════════════════════════════════════════
+      // v2: SMART ABORT — progressive early exit (replaces flat 8h time exit)
+      // 2h: no momentum → abort with tiny loss
+      // 4h: not at breakeven → abort
+      // Only for trades that haven't hit TP1 yet (partialState === 'full')
+      // ════════════════════════════════════════════════════════════
       const openMs = Date.now() - new Date(trade.opened_at).getTime();
       const openMinutes = openMs / 60000;
-      if (openMinutes > maxHoldMinutes) {
-        const unrealizedPnl = trade.direction === 'long'
-          ? (livePrice - trade.entry_price) / trade.entry_price
-          : (trade.entry_price - livePrice) / trade.entry_price;
-        if (unrealizedPnl < 0) {
+
+      if (smartAbortEnabled && partialState === 'full' && initialSlDistance > 0) {
+        // 2h check: no momentum (favorable move < 0.5× SL distance)
+        if (openMinutes >= 120 && openMinutes < 180 && favorableMove < initialSlDistance * 0.5) {
           shouldClose = true;
-          const hours = Math.round(openMinutes / 60);
-          reason = `Тайм-эксит (${hours}ч)`;
+          reason = `SmartAbort 2ч (${(favorableMove / initialSlDistance).toFixed(1)}R)`;
+          exitPrice = livePrice;
+        }
+        // 4h check: not at breakeven (favorable move < 1× SL distance)
+        else if (openMinutes >= 240 && openMinutes < 360 && favorableMove < initialSlDistance) {
+          shouldClose = true;
+          reason = `SmartAbort 4ч (${(favorableMove / initialSlDistance).toFixed(1)}R)`;
           exitPrice = livePrice;
         }
       }
 
-      // ── TP/SL CHECK using candle HIGH/LOW ──
-      // Previously only the CLOSE of the last completed candle was checked.
-      // This missed any wick that pierced the TP/SL during the candle.
-      // Now we check BOTH the completed and current candle's HIGH/LOW.
-      // For LONG: TP triggers if HIGH >= TP, SL triggers if LOW <= SL
-      // For SHORT: TP triggers if LOW <= TP, SL triggers if HIGH >= SL
-      // We also check the current candle's CLOSE as a fallback.
+      // Fallback: 8h time exit for losing trades (only if no partial TP hit and no smart abort)
+      if (!shouldClose && openMinutes > maxHoldMinutes && favorableMove < 0) {
+        shouldClose = true;
+        const hours = Math.round(openMinutes / 60);
+        reason = `Тайм-эксит (${hours}ч)`;
+        exitPrice = livePrice;
+      }
 
+      // ════════════════════════════════════════════════════════════
+      // MAIN TP/SL CHECK using candle HIGH/LOW
+      // ════════════════════════════════════════════════════════════
       if (!shouldClose) {
-        const isLong = trade.direction === 'long';
-
-        // Check TP on COMPLETED candle (HIGH/LOW + CLOSE)
+        // Check main TP on completed + current candle
         if (isLong && trade.take_profit) {
-          if (completed.high >= trade.take_profit) {
-            shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
-          } else if (completed.close >= trade.take_profit) {
+          if (completed.high >= trade.take_profit || current.high >= trade.take_profit
+            || completed.close >= trade.take_profit) {
             shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
           }
         } else if (!isLong && trade.take_profit) {
-          if (completed.low <= trade.take_profit) {
-            shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
-          } else if (completed.close <= trade.take_profit) {
+          if (completed.low <= trade.take_profit || current.low <= trade.take_profit
+            || completed.close <= trade.take_profit) {
             shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
           }
         }
 
-        // Check TP on CURRENT (in-progress) candle
-        if (!shouldClose) {
-          if (isLong && trade.take_profit) {
-            if (current.high >= trade.take_profit) {
-              shouldClose = true; reason = 'TP hit (live)'; exitPrice = trade.take_profit;
-            }
-          } else if (!isLong && trade.take_profit) {
-            if (current.low <= trade.take_profit) {
-              shouldClose = true; reason = 'TP hit (live)'; exitPrice = trade.take_profit;
-            }
-          }
-        }
-
-        // Check SL on COMPLETED candle (HIGH/LOW + CLOSE)
+        // Check SL on completed + current candle
         if (!shouldClose && isLong && trade.stop_loss) {
-          if (completed.low <= trade.stop_loss) {
-            shouldClose = true; reason = 'SL hit'; exitPrice = trade.stop_loss;
-          } else if (completed.close <= trade.stop_loss) {
+          if (completed.low <= trade.stop_loss || current.low <= trade.stop_loss
+            || completed.close <= trade.stop_loss) {
             shouldClose = true; reason = 'SL hit'; exitPrice = trade.stop_loss;
           }
         } else if (!shouldClose && !isLong && trade.stop_loss) {
-          if (completed.high >= trade.stop_loss) {
+          if (completed.high >= trade.stop_loss || current.high >= trade.stop_loss
+            || completed.close >= trade.stop_loss) {
             shouldClose = true; reason = 'SL hit'; exitPrice = trade.stop_loss;
-          } else if (completed.close >= trade.stop_loss) {
-            shouldClose = true; reason = 'SL hit'; exitPrice = trade.stop_loss;
-          }
-        }
-
-        // Check SL on CURRENT (in-progress) candle
-        if (!shouldClose) {
-          if (isLong && trade.stop_loss) {
-            if (current.low <= trade.stop_loss) {
-              shouldClose = true; reason = 'SL hit (live)'; exitPrice = trade.stop_loss;
-            }
-          } else if (!isLong && trade.stop_loss) {
-            if (current.high >= trade.stop_loss) {
-              shouldClose = true; reason = 'SL hit (live)'; exitPrice = trade.stop_loss;
-            }
           }
         }
       }
 
-      // Trailing stop: 3 levels (each togglable via system settings)
-      if (!shouldClose && trade.stop_loss && trade.entry_price) {
-        const initialSlDistance = Math.abs(trade.entry_price - trade.stop_loss);
-        const isLong = trade.direction === 'long';
-        const favorableMove = isLong ? livePrice - trade.entry_price : trade.entry_price - livePrice;
-
+      // ════════════════════════════════════════════════════════════
+      // TRAILING STOP: 3 levels
+      // ════════════════════════════════════════════════════════════
+      if (!shouldClose && trade.stop_loss && trade.entry_price && initialSlDistance > 0) {
         if (trailing3x && favorableMove >= initialSlDistance * 3) {
           const trailedSL = isLong ? trade.entry_price + initialSlDistance * 2 : trade.entry_price - initialSlDistance * 2;
           if ((isLong && trailedSL > (trade.stop_loss ?? 0)) || (!isLong && trailedSL < (trade.stop_loss ?? Infinity))) {
@@ -704,20 +745,21 @@ export async function monitorTradesClient(
         }
       }
 
+      // ════════════════════════════════════════════════════════════
+      // CLOSE: calculate PnL using remaining_amount (not original amount)
+      // ════════════════════════════════════════════════════════════
       if (shouldClose) {
-        // Use the specific exitPrice if set (TP/SL hit = exact level),
-        // otherwise use the live price as best approximation.
         const effectiveExitPrice = exitPrice > 0 ? exitPrice : livePrice;
-        const priceChange = trade.direction === 'long'
+        const priceChange = isLong
           ? (effectiveExitPrice - trade.entry_price) / trade.entry_price
           : (trade.entry_price - effectiveExitPrice) / trade.entry_price;
-        const pnl = trade.amount * priceChange * trade.leverage - trade.amount * 0.001 - (trade.amount / trade.leverage) * 0.001;
+        const pnl = effectiveAmount * priceChange * trade.leverage - effectiveAmount * 0.001 - (effectiveAmount / trade.leverage) * 0.001;
         closedTrades.push({ tradeId: trade.id, symbol: trade.symbol, direction: trade.direction, pnl, reason, exitPrice: effectiveExitPrice });
       }
     } catch { continue; }
   }
 
-  return { closedTrades, trailingUpdates, tpRepairs };
+  return { closedTrades, trailingUpdates, tpRepairs, partialCloses };
 }
 
 // ============================================================
@@ -759,7 +801,7 @@ export async function runAutoTradeCycle(
 
   // ── ENABLED CHECK: skip disabled strategies ──
   if ('enabled' in strategy && !strategy.enabled) {
-    return { action: 'idle', closedTrades: [], trailingUpdates: [], tpRepairs: [], message: 'Стратегия отключена', scannedCount: 0, bestScore: 0, newCandleHour: 0 };
+    return { action: 'idle', closedTrades: [], trailingUpdates: [], tpRepairs: [], partialCloses: [], message: 'Стратегия отключена', scannedCount: 0, bestScore: 0, newCandleHour: 0 };
   }
 
   const maxTrades = strategy.maxOpenTrades;
@@ -779,7 +821,7 @@ export async function runAutoTradeCycle(
     return {
       action: 'idle', closedTrades: [], trailingUpdates: [], tpRepairs: [],
       message: `Дневной лимит: -$${Math.abs(recentPnl24h).toFixed(2)} (>${dailyLossLimitPct * 100}%). Пауза до завтра.`,
-      scannedCount: 0, bestScore: 0, newCandleHour: currentSlot,
+      scannedCount: 0, bestScore: 0, newCandleHour: currentSlot, partialCloses: [],
     };
   }
 
@@ -796,14 +838,30 @@ export async function runAutoTradeCycle(
       return {
         action: 'idle', closedTrades: [], trailingUpdates: [], tpRepairs: [],
         message: `🔴 Просадка ${Math.abs(drawdownPct).toFixed(1)}% за ${lookback} сделок (лимит ${maxDrawdownPct}%). Пауза.`,
-        scannedCount: 0, bestScore: 0, newCandleHour: currentSlot,
+        scannedCount: 0, bestScore: 0, newCandleHour: currentSlot, partialCloses: [],
       };
     }
   }
 
   // Step 1: Monitor open trades (pass system settings for caps + trailing)
-  const { closedTrades, trailingUpdates, tpRepairs } = await monitorTradesClient(openTrades, lastCandleSlot, monitorInterval, maxHoldMinutes, settings);
+  const { closedTrades, trailingUpdates, tpRepairs, partialCloses } = await monitorTradesClient(openTrades, lastCandleSlot, monitorInterval, maxHoldMinutes, settings);
   const updatedOpenTrades = openTrades.filter(t => !closedTrades.some(c => c.tradeId === t.id));
+
+  // ── v2: Handle PARTIAL CLOSES (TP1, TP2) ──
+  // These return PnL and reduce the trade's remaining amount.
+  // The caller (frontend) must process these to update balance + DB.
+  // We add them to the monitor message but don't filter them from openTrades here.
+  const partialParts: string[] = [];
+  if (partialCloses.length > 0) {
+    for (const pc of partialCloses) {
+      partialParts.push(`${pc.symbol.replace('USDT', '')} ${pc.reason} +$${pc.pnl.toFixed(2)}`);
+    }
+    // Remove partially-closed trades from "new trade" consideration this cycle
+    const partialTradeIds = new Set(partialCloses.map(pc => pc.tradeId));
+    const effectiveOpenTrades = updatedOpenTrades.filter(t => !partialTradeIds.has(t.id));
+  } else {
+    const effectiveOpenTrades = updatedOpenTrades;
+  }
 
   // ── UPDATE COOLDOWNS from closed trades ──
   // For each SL hit, add the symbol to cooldown
@@ -824,26 +882,27 @@ export async function runAutoTradeCycle(
   // Collect monitoring messages
   const monitorParts: string[] = [];
   if (closedTrades.length > 0) monitorParts.push(`Закрыто ${closedTrades.length}: ${closedTrades.map(c => `${c.symbol.replace('USDT', '')} (${c.reason})`).join(', ')}`);
+  if (partialParts.length > 0) monitorParts.push(`Частичный TP: ${partialParts.join(', ')}`);
   if (trailingUpdates.length > 0) monitorParts.push(`Trailing SL: ${trailingUpdates.length}`);
   if (tpRepairs.length > 0) monitorParts.push(`TP ремонт: ${tpRepairs.length}`);
 
   // Each signal opens exactly ONE trade — no secure/runner split.
-  if (updatedOpenTrades.length + 1 > maxTrades) {
+  if (effectiveOpenTrades.length + 1 > maxTrades) {
     const msg = monitorParts.length > 0
-      ? monitorParts.join(' | ') + ` | Лимит: ${updatedOpenTrades.length}/${maxTrades}`
-      : `Лимит: ${updatedOpenTrades.length}/${maxTrades}, жду...`;
-    return { action: 'monitor', closedTrades, trailingUpdates, tpRepairs, message: msg, scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
+      ? monitorParts.join(' | ') + ` | Лимит: ${effectiveOpenTrades.length}/${maxTrades}`
+      : `Лимит: ${effectiveOpenTrades.length}/${maxTrades}, жду...`;
+    return { action: 'monitor', closedTrades, trailingUpdates, tpRepairs, partialCloses, message: msg, scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
   }
 
   // ── FREE BALANCE (not total) ──
-  const lockedInOpen = updatedOpenTrades.reduce((sum, t) => sum + t.amount, 0);
+  const lockedInOpen = effectiveOpenTrades.reduce((sum, t) => sum + (t.remaining_amount ?? t.amount), 0);
   const freeBalance = Math.max(0, balance - lockedInOpen);
 
   if (freeBalance < 1) {
     const msg = monitorParts.length > 0
       ? monitorParts.join(' | ') + ` | Свободный баланс <$1 (всего $${balance.toFixed(1)}, заморожено $${lockedInOpen.toFixed(1)})`
       : `Свободный баланс <$1 (всего $${balance.toFixed(1)}, заморожено $${lockedInOpen.toFixed(1)})`;
-    return { action: 'monitor', closedTrades, trailingUpdates, tpRepairs, message: msg, scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
+    return { action: 'monitor', closedTrades, trailingUpdates, tpRepairs, partialCloses, message: msg, scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
   }
 
   // ── DAILY TRADE LIMIT (check before scanning) ──
@@ -853,7 +912,7 @@ export async function runAutoTradeCycle(
     todayTradesCount = parseInt(sessionStorage.getItem(storageKey) || '0', 10);
     if (todayTradesCount >= strategy.maxDailyTrades) {
       return {
-        action: 'idle', closedTrades, trailingUpdates, tpRepairs,
+        action: 'idle', closedTrades, trailingUpdates, tpRepairs, partialCloses: [],
         message: `Дневной лимит сделок: ${todayTradesCount}/${strategy.maxDailyTrades}. До завтра.`,
         scannedCount: 0, bestScore: 0, newCandleHour: currentSlot,
         diagnostics: { checked: 0, none: 0, mtfRejected: 0, volFiltered: 0, btcFiltered: 0, cooldowns: 0, entryRejected: 0, bestSymbol: null, bestScore: 0, dailyLimitHit: true, dailyTradeCount: todayTradesCount },
@@ -870,10 +929,10 @@ export async function runAutoTradeCycle(
     const msg = monitorParts.length > 0
       ? monitorParts.join(' | ') + ` | Скан через ${remainHours}ч`
       : `Скан через ${remainHours}ч (каждые ${scanFreqHours}ч)...`;
-    return { action: 'idle', closedTrades, trailingUpdates, tpRepairs, message: msg, scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
+    return { action: 'idle', closedTrades, trailingUpdates, tpRepairs, partialCloses: [], message: msg, scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
   }
 
-  const openSymbols = new Set(updatedOpenTrades.map(t => t.symbol));
+  const openSymbols = new Set(effectiveOpenTrades.map(t => t.symbol));
   if (globalLockedSymbols) {
     for (const sym of globalLockedSymbols) openSymbols.add(sym);
   }
@@ -895,7 +954,7 @@ export async function runAutoTradeCycle(
     const msg = monitorParts.length > 0
       ? monitorParts.join(' | ') + ' | ' + diagMsg
       : diagMsg;
-    return { action: 'idle', closedTrades, trailingUpdates, tpRepairs, message: msg, scannedCount: d.checked, bestScore: 0, newCandleHour: currentSlot, diagnostics: d };
+    return { action: 'idle', closedTrades, trailingUpdates, tpRepairs, partialCloses: [], message: msg, scannedCount: d.checked, bestScore: 0, newCandleHour: currentSlot, diagnostics: d };
   }
 
   // ============================================================
@@ -955,7 +1014,7 @@ export async function runAutoTradeCycle(
   const entryReason = (best.decision as any)._entryReason ? ` | вход: ${(best.decision as any)._entryReason}` : '';
   const signalMsg = `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${coinName} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x | $${amount.toFixed(2)} (свободно $${freeBalance.toFixed(1)}) | TP ${strategy.riskRewardRatio}R${volReason}${entryReason}`;
   return {
-    action: 'new-trade', closedTrades, trailingUpdates, tpRepairs, newTrades,
+    action: 'new-trade', closedTrades, trailingUpdates, tpRepairs, partialCloses, newTrades,
     message: monitorParts.length > 0 ? monitorParts.join(' | ') + ' | ' + signalMsg : signalMsg,
     scannedCount: 30, bestScore: Math.abs(best.decision.score), newCandleHour: currentSlot,
   };
