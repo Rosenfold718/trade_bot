@@ -331,10 +331,21 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
     };
 
     for (const trade of (openTrades ?? []).filter(t => t.symbol === symbol && t.status === 'open')) {
+      const isLong = trade.direction === 'long';
+      const slDist = trade.entry_price != null && trade.stop_loss != null
+        ? Math.abs(trade.entry_price - trade.stop_loss) : 0;
+      const partialState = (trade as any).partial_state ?? 'full';
+
       if (trade.entry_price != null) addLine(trade.entry_price, 'rgba(255,255,255,0.3)', 2, 1, '');
-      // TP line — NOT draggable via lightweight-charts (library's native drag is broken)
-      // HTML drag handles overlay is used instead (section 5)
-      if (trade.take_profit != null) {
+
+      // TP1 (1R) and TP2 (1.5R) — calculated from SL distance
+      if (slDist > 0 && trade.entry_price != null) {
+        const tp1 = isLong ? trade.entry_price + slDist : trade.entry_price - slDist;
+        const tp2 = isLong ? trade.entry_price + slDist * 1.5 : trade.entry_price - slDist * 1.5;
+        addLine(tp1, partialState !== 'full' ? 'rgba(34,197,94,0.2)' : 'rgba(34,197,94,0.5)', partialState !== 'full' ? 2 : 0, 1, 'TP1 (1R)');
+        addLine(tp2, partialState === 'tp2_hit' ? 'rgba(52,211,153,0.2)' : 'rgba(52,211,153,0.5)', partialState === 'tp2_hit' ? 2 : 0, 1, 'TP2 (1.5R)');
+      } else if (trade.take_profit != null) {
+        // Fallback: if no SL distance, show the original TP from DB
         const tpLine = addLine(trade.take_profit, 'rgba(34,197,94,0.4)', 0, 1, '');
         if (tpLine) tpLinesMap.current.set(trade.id, { line: tpLine, price: trade.take_profit, tradeId: trade.id });
       }
@@ -358,31 +369,24 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
       text?: string;
     }> = [];
 
-    // Helper: find the candle time closest to the trade's opened_at timestamp
-    const findCandleTime = (tradeOpenedAt: string, direction: 'long' | 'short'): number | null => {
+    // Helper: find the candle whose OPEN time is the trade's opened_at timestamp
+    // (candle at time T covers the interval [T, T+interval))
+    const findCandleTime = (tradeOpenedAt: string): number | null => {
       const tradeTime = Math.floor(new Date(tradeOpenedAt).getTime() / 1000);
       if (data.length === 0) return null;
 
-      // Find the closest candle to the trade open time
-      let bestIdx = 0;
-      let bestDist = Infinity;
-      for (let i = 0; i < data.length; i++) {
-        const dist = Math.abs(data[i].time - tradeTime);
-        if (dist < bestDist) {
-          bestDist = dist;
-          bestIdx = i;
+      // The trade opened during candle at time T means tradeTime is in [data[i].time, data[i].time + interval)
+      // Find the candle whose time <= tradeTime < next candle time
+      for (let i = data.length - 1; i >= 0; i--) {
+        if (data[i].time <= tradeTime) {
+          return data[i].time;
         }
       }
-
-      // Only show marker if within a reasonable time window (max 2x candle interval)
-      const maxDist = 7200; // 2 hours for hourly candles
-      if (bestDist > maxDist) return data[bestIdx].time; // use closest anyway
-
-      return data[bestIdx].time;
+      return data[0]?.time ?? null;
     };
 
     for (const trade of (openTrades ?? []).filter(t => t.symbol === symbol && t.status === 'open')) {
-      const time = findCandleTime(trade.opened_at, trade.direction);
+      const time = findCandleTime(trade.opened_at);
       if (time) {
         markers.push({
           time,
@@ -395,7 +399,7 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
 
     // Also show markers for recent (closed) trades on this symbol — last 3 only
     for (const trade of (recentTrades ?? []).filter(t => t.symbol === symbol && t.status === 'closed').slice(-3)) {
-      const entryTime = findCandleTime(trade.opened_at, trade.direction);
+      const entryTime = findCandleTime(trade.opened_at);
       if (entryTime) {
         markers.push({
           time: entryTime,
