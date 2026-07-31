@@ -53,6 +53,17 @@ export interface TraderState {
   updated_at?: string;
 }
 
+export interface PatternInfo {
+  name: string;
+  direction: string;
+  reliability: number;
+  strength: number;
+  zone_high: number;
+  zone_low: number;
+  start_time: number; // unix seconds
+  end_time: number;   // unix seconds
+}
+
 export interface Trade {
   id: string;
   symbol: string;
@@ -72,6 +83,15 @@ export interface Trade {
   remaining_amount?: number;
   entry_quality?: number;
   partial_state?: 'full' | 'tp1_hit' | 'tp2_hit';
+  // v3: pattern info for visualization
+  pattern_name?: string | null;
+  pattern_direction?: string | null;
+  pattern_reliability?: number | null;
+  pattern_strength?: number | null;
+  pattern_zone_high?: number | null;
+  pattern_zone_low?: number | null;
+  pattern_start_time?: number | null;
+  pattern_end_time?: number | null;
 }
 
 export interface IndicatorWeight {
@@ -101,6 +121,8 @@ export interface TradingDecision {
   stopLoss: number;
   takeProfit: number;
   indicators: IndicatorSignal[];
+  // Pattern info (set by Pattern Pro strategy)
+  pattern?: PatternInfo | null;
 }
 
 // BacktestTrade removed — backtest feature disabled

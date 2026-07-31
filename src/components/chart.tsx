@@ -177,6 +177,8 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
   // Drag state for TP lines
   const dragOverlayRef = useRef<HTMLDivElement>(null);
   const dragStateRef = useRef<{ active: boolean; tradeId: string; startPrice: number; currentPrice: number }>({ active: false, tradeId: '', startPrice: 0, currentPrice: 0 });
+  // Pattern zone overlay ref
+  const patternOverlayRef = useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = useState(false);
   const [chartReady, setChartReady] = useState(false);
 
@@ -559,6 +561,134 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
   }, [data, indicators, symbol, chartReady]);
 
   // ============================================================
+  // 4.5 Pattern Zone Overlay — draws colored rectangles for detected
+  //     patterns on open Pattern Pro trades
+  // ============================================================
+  useEffect(() => {
+    const chart = chartRef.current;
+    const overlay = patternOverlayRef.current;
+    if (!chart || !overlay || !chartReady) return;
+
+    overlay.innerHTML = '';
+
+    const tradesWithPattern = (openTrades ?? []).filter(
+      t => t.symbol === symbol && t.status === 'open' && t.pattern_name && t.pattern_start_time && t.pattern_end_time && t.pattern_zone_high && t.pattern_zone_low
+    );
+
+    if (tradesWithPattern.length === 0) return;
+
+    const drawPatternZones = () => {
+      overlay.innerHTML = '';
+
+      for (const trade of tradesWithPattern) {
+        try {
+          const startTime = trade.pattern_start_time!;
+          const endTime = trade.pattern_end_time!;
+          const zoneHigh = trade.pattern_zone_high!;
+          const zoneLow = trade.pattern_zone_low!;
+
+          const x1 = chart.timeScaleToCoordinate(startTime);
+          const x2 = chart.timeScaleToCoordinate(endTime);
+          const yHigh = chart.priceToCoordinate(zoneHigh);
+          const yLow = chart.priceToCoordinate(zoneLow);
+
+          if (x1 === null || x2 === null || yHigh === null || yLow === null) continue;
+
+          const left = Math.min(x1, x2);
+          const right = Math.max(x1, x2);
+          const top = Math.min(yHigh, yLow);
+          const height = Math.abs(yLow - yHigh);
+          const width = Math.max(right - left, 4);
+
+          // Skip if zone is off-screen
+          const containerRect = overlay.getBoundingClientRect();
+          if (right < 0 || left > containerRect.width || top > containerRect.height || top + height < 0) continue;
+
+          const isBullish = trade.pattern_direction === 'bullish';
+          const bgColor = isBullish ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)';
+          const borderColor = isBullish ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)';
+          const textColor = isBullish ? '#4ade80' : '#f87171';
+          const arrow = isBullish ? '▲' : '▼';
+
+          // Pattern zone rectangle
+          const zone = document.createElement('div');
+          zone.style.cssText = `
+            position:absolute;
+            left:${left - 2}px;
+            top:${top}px;
+            width:${width + 4}px;
+            height:${height}px;
+            background:${bgColor};
+            border:1px solid ${borderColor};
+            border-radius:3px;
+            pointer-events:none;
+            z-index:10;
+          `;
+          overlay.appendChild(zone);
+
+          // Pattern label (positioned at the top of the zone)
+          const label = document.createElement('div');
+          label.style.cssText = `
+            position:absolute;
+            left:${left}px;
+            top:${top - 22}px;
+            pointer-events:none;
+            z-index:11;
+            white-space:nowrap;
+            font-size:10px;
+            font-weight:600;
+            font-family:Inter,sans-serif;
+            color:${textColor};
+            background:rgba(13,13,20,0.85);
+            padding:2px 8px;
+            border-radius:4px;
+            border:1px solid ${borderColor};
+            line-height:1.4;
+          `;
+          const reliability = trade.pattern_reliability ? `${(trade.pattern_reliability * 100).toFixed(0)}%` : '';
+          label.textContent = `${arrow} ${trade.pattern_name}${reliability ? ` (${reliability})` : ''}`;
+          overlay.appendChild(label);
+
+          // Dashed trend line from zone end to current (if pattern is structural like flag/wedge)
+          const isStructural = ['Бычий флаг', 'Медвежий флаг', 'Восходящий клин', 'Нисходящий клин', 'Двойное дно', 'Двойная вершина'].includes(trade.pattern_name!);
+          if (isStructural) {
+            const entryPrice = trade.entry_price;
+            if (entryPrice) {
+              const entryCoord = chart.priceToCoordinate(entryPrice);
+              const nowCoord = chart.timeScaleToCoordinate(Math.floor(Date.now() / 1000));
+              if (entryCoord !== null && nowCoord !== null) {
+                const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                svg.style.cssText = `position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:9;`;
+                svg.innerHTML = `<line x1="${right}" y1="${entryCoord}" x2="${Math.max(nowCoord, right)}" y2="${entryCoord}" stroke="${borderColor}" stroke-width="1" stroke-dasharray="4,3" />`;
+                overlay.appendChild(svg);
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('[Chart] Pattern zone draw error:', err);
+        }
+      }
+    };
+
+    drawPatternZones();
+
+    // Redraw on scroll/zoom
+    let cleanupRange: (() => void) | null = null;
+    try {
+      const ts = chart.timeScale();
+      if (ts && typeof ts.subscribeVisibleLogicalRangeChange === 'function') {
+        ts.subscribeVisibleLogicalRangeChange(drawPatternZones);
+        cleanupRange = () => { try { (ts as any).unsubscribeVisibleLogicalRangeChange(drawPatternZones); } catch { /* */ } };
+      }
+    } catch { /* */ }
+
+    return () => {
+      overlay.innerHTML = '';
+      cleanupRange?.();
+    };
+  }, [chartReady, openTrades, symbol, data]);
+
+  // ============================================================
   // 5. Visible TP drag handles — HTML elements positioned over the
   //    green TP labels on the right price axis.
   //    Lightweight-charts native draggable is broken, so we use
@@ -696,6 +826,8 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
   return (
     <div className="w-full h-full min-h-[300px] relative">
       <div ref={chartContainerRef} className="w-full h-full" />
+      {/* Pattern zone overlay — full area, pointer-events:none */}
+      <div ref={patternOverlayRef} className="absolute top-0 left-0 right-0 bottom-0 z-20 pointer-events-none overflow-hidden" />
       {/* Narrow overlay on RIGHT EDGE only — for TP drag handles */}
       <div ref={dragOverlayRef} className="absolute top-0 right-0 w-14 bottom-0 z-40 pointer-events-none" />
     </div>

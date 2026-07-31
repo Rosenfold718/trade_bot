@@ -53,7 +53,19 @@ const SCHEMA_SQL = `
     stop_loss REAL,
     take_profit REAL,
     opened_at TEXT NOT NULL DEFAULT (datetime('now')),
-    closed_at TEXT
+    closed_at TEXT,
+    remaining_amount REAL,
+    entry_quality REAL DEFAULT 0,
+    partial_state TEXT DEFAULT 'full' CHECK(partial_state IN ('full', 'tp1_hit', 'tp2_hit')),
+    -- Pattern Pro: detected pattern info for visualization
+    pattern_name TEXT,
+    pattern_direction TEXT,
+    pattern_reliability REAL,
+    pattern_strength REAL,
+    pattern_zone_high REAL,
+    pattern_zone_low REAL,
+    pattern_start_time INTEGER,
+    pattern_end_time INTEGER
   );
 
   CREATE TABLE IF NOT EXISTS indicator_weights (
@@ -130,6 +142,15 @@ const MIGRATION_SQLS = [
   "ALTER TABLE trades ADD COLUMN remaining_amount REAL",
   "ALTER TABLE trades ADD COLUMN entry_quality REAL DEFAULT 0",
   "ALTER TABLE trades ADD COLUMN partial_state TEXT DEFAULT 'full'",
+  // Phase 6: Pattern Pro — detected pattern info for visualization
+  "ALTER TABLE trades ADD COLUMN pattern_name TEXT",
+  "ALTER TABLE trades ADD COLUMN pattern_direction TEXT",
+  "ALTER TABLE trades ADD COLUMN pattern_reliability REAL",
+  "ALTER TABLE trades ADD COLUMN pattern_strength REAL",
+  "ALTER TABLE trades ADD COLUMN pattern_zone_high REAL",
+  "ALTER TABLE trades ADD COLUMN pattern_zone_low REAL",
+  "ALTER TABLE trades ADD COLUMN pattern_start_time INTEGER",
+  "ALTER TABLE trades ADD COLUMN pattern_end_time INTEGER",
 ];
 
 export async function initDB(): Promise<void> {
@@ -283,6 +304,17 @@ export async function resetTrader(userId: string, strategyId: string = 'momentum
 // Trades (per-user)
 // ============================================================
 
+export interface PatternTradeData {
+  name?: string;
+  direction?: string;
+  reliability?: number;
+  strength?: number;
+  zone_high?: number;
+  zone_low?: number;
+  start_time?: number;
+  end_time?: number;
+}
+
 export async function openTrade(
   userId: string,
   symbol: string,
@@ -294,6 +326,7 @@ export async function openTrade(
   takeProfit: number,
   strategyId: string = 'momentum',
   entryQuality?: number,
+  patternData?: PatternTradeData | null,
 ): Promise<void> {
   // ── Direction-aware SL/TP validation & auto-correction ──
   const slCap = entryPrice * 0.05;  // max 5% distance
@@ -341,9 +374,9 @@ export async function openTrade(
 
   const id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   await tursoDb.execute(
-    `INSERT INTO trades (id, user_id, symbol, strategy_id, entry_price, amount, leverage, direction, status, stop_loss, take_profit, opened_at, remaining_amount, entry_quality, partial_state)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, datetime('now'), ?, ?, 'full')`,
-    [id, userId, symbol, strategyId, entryPrice, amount, leverage, direction, stopLoss, takeProfit, amount, entryQuality ?? 0]
+    `INSERT INTO trades (id, user_id, symbol, strategy_id, entry_price, amount, leverage, direction, status, stop_loss, take_profit, opened_at, remaining_amount, entry_quality, partial_state, pattern_name, pattern_direction, pattern_reliability, pattern_strength, pattern_zone_high, pattern_zone_low, pattern_start_time, pattern_end_time)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, datetime('now'), ?, ?, 'full', ?, ?, ?, ?, ?, ?, ?)`,
+    [id, userId, symbol, strategyId, entryPrice, amount, leverage, direction, stopLoss, takeProfit, amount, entryQuality ?? 0, patternData?.name ?? null, patternData?.direction ?? null, patternData?.reliability ?? null, patternData?.strength ?? null, patternData?.zone_high ?? null, patternData?.zone_low ?? null, patternData?.start_time ?? null, patternData?.end_time ?? null]
   );
 }
 
@@ -353,6 +386,8 @@ export async function getOpenTrades(userId: string, strategyId?: string): Promis
   opened_at: string; closed_at: string | null;
   stop_loss: number | null; take_profit: number | null;
   remaining_amount: number | null; entry_quality: number | null; partial_state: string | null;
+  pattern_name: string | null; pattern_direction: string | null; pattern_reliability: number | null; pattern_strength: number | null;
+  pattern_zone_high: number | null; pattern_zone_low: number | null; pattern_start_time: number | null; pattern_end_time: number | null;
 }>> {
   const sql = strategyId
     ? 'SELECT * FROM trades WHERE status = ? AND user_id = ? AND strategy_id = ?'
@@ -377,6 +412,14 @@ export async function getOpenTrades(userId: string, strategyId?: string): Promis
     remaining_amount: row.remaining_amount !== null ? Number(row.remaining_amount) : Number(row.amount),
     entry_quality: row.entry_quality !== null ? Number(row.entry_quality) : 0,
     partial_state: (row.partial_state as string) ?? 'full',
+    pattern_name: (row.pattern_name as string) ?? null,
+    pattern_direction: (row.pattern_direction as string) ?? null,
+    pattern_reliability: row.pattern_reliability !== null ? Number(row.pattern_reliability) : null,
+    pattern_strength: row.pattern_strength !== null ? Number(row.pattern_strength) : null,
+    pattern_zone_high: row.pattern_zone_high !== null ? Number(row.pattern_zone_high) : null,
+    pattern_zone_low: row.pattern_zone_low !== null ? Number(row.pattern_zone_low) : null,
+    pattern_start_time: row.pattern_start_time !== null ? Number(row.pattern_start_time) : null,
+    pattern_end_time: row.pattern_end_time !== null ? Number(row.pattern_end_time) : null,
   }));
 }
 
@@ -456,6 +499,14 @@ export async function getRecentTrades(userId: string, limit: number = 50, strate
     take_profit: row.take_profit !== null ? Number(row.take_profit) : null,
     opened_at: row.opened_at as string,
     closed_at: row.closed_at as string | null,
+    pattern_name: (row.pattern_name as string) ?? null,
+    pattern_direction: (row.pattern_direction as string) ?? null,
+    pattern_reliability: row.pattern_reliability !== null ? Number(row.pattern_reliability) : null,
+    pattern_strength: row.pattern_strength !== null ? Number(row.pattern_strength) : null,
+    pattern_zone_high: row.pattern_zone_high !== null ? Number(row.pattern_zone_high) : null,
+    pattern_zone_low: row.pattern_zone_low !== null ? Number(row.pattern_zone_low) : null,
+    pattern_start_time: row.pattern_start_time !== null ? Number(row.pattern_start_time) : null,
+    pattern_end_time: row.pattern_end_time !== null ? Number(row.pattern_end_time) : null,
   }));
 }
 
@@ -481,6 +532,14 @@ export async function getClosedTrades(userId: string, strategyId?: string) {
     take_profit: row.take_profit !== null ? Number(row.take_profit) : null,
     opened_at: row.opened_at as string,
     closed_at: row.closed_at as string | null,
+    pattern_name: (row.pattern_name as string) ?? null,
+    pattern_direction: (row.pattern_direction as string) ?? null,
+    pattern_reliability: row.pattern_reliability !== null ? Number(row.pattern_reliability) : null,
+    pattern_strength: row.pattern_strength !== null ? Number(row.pattern_strength) : null,
+    pattern_zone_high: row.pattern_zone_high !== null ? Number(row.pattern_zone_high) : null,
+    pattern_zone_low: row.pattern_zone_low !== null ? Number(row.pattern_zone_low) : null,
+    pattern_start_time: row.pattern_start_time !== null ? Number(row.pattern_start_time) : null,
+    pattern_end_time: row.pattern_end_time !== null ? Number(row.pattern_end_time) : null,
   }));
 }
 

@@ -402,7 +402,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ message: 'Insufficient balance for trade' });
       }
 
-      await openTrade(userId, sym, price, tradeAmount, decision.leverage, decision.direction as 'long' | 'short', decision.stopLoss, decision.takeProfit, strategyId);
+      await openTrade(userId, sym, price, tradeAmount, decision.leverage, decision.direction as 'long' | 'short', decision.stopLoss, decision.takeProfit, strategyId, undefined, decision.pattern ?? undefined);
       await updateBalance(userId, state.balance - tradeAmount, strategyId);
 
       return NextResponse.json({

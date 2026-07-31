@@ -1826,6 +1826,25 @@ function DraggableTradePanel({ focusedTradeId, symbol, onClose }: { focusedTrade
           <span className="text-[10px] text-white/25">Открыта</span>
           <span className="text-[10px] font-mono text-white/20">{new Date(activeTrade.opened_at).toLocaleString('ru-RU', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' } as Intl.DateTimeFormatOptions)}</span>
         </div>
+        {/* Pattern Pro: detected pattern */}
+        {activeTrade.pattern_name && (
+          <div className="mt-1 pt-1.5 border-t border-white/5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-violet-400/60">Фигура</span>
+              <span className={cn('text-[10px] font-mono font-semibold',
+                activeTrade.pattern_direction === 'bullish' ? 'text-green-400/80' : activeTrade.pattern_direction === 'bearish' ? 'text-red-400/80' : 'text-white/50'
+              )}>
+                {activeTrade.pattern_direction === 'bullish' ? '▲ ' : activeTrade.pattern_direction === 'bearish' ? '▼ ' : ''}{activeTrade.pattern_name}
+              </span>
+            </div>
+            {activeTrade.pattern_reliability != null && (
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-white/25">Надёжность</span>
+                <span className="text-[10px] font-mono text-white/40">{(activeTrade.pattern_reliability * 100).toFixed(0)}%</span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
