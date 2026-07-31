@@ -737,7 +737,7 @@ export function makeStrategyDecision(
 
   switch (strategyId) {
     case 'scalper':
-      return makeScalpHunterDecision(symbol, candles, strategy, idleMinutes, effectiveWeights);
+      return makePatternProDecision(symbol, candles, strategy, idleMinutes, effectiveWeights);
     case 'position-alpha':
       return makePositionAlphaDecision(symbol, candles, strategy, idleMinutes, effectiveWeights);
     default:
@@ -847,263 +847,508 @@ function makeMomentumDecision(
 }
 
 // ============================================================
-// Volume Delta & CVD (Bondar-style tape reading)
+// Candlestick Pattern Recognition — Pattern Pro Strategy
+// Comprehensive pattern detection with real statistical win rates
+// Source: Bulkowski's Encyclopedia of Candlestick Charts, Nison
 // ============================================================
 
-/**
- * Estimate buy/sell volume from candle data.
- * Uses (close-open)/(high-low) ratio to split total volume.
- * Returns { buyVol, sellVol, delta } for the last candle.
- */
-function calcCandleDelta(candle: CandleData): { buyVol: number; sellVol: number; delta: number } {
-  const range = candle.high - candle.low;
-  if (range === 0 || candle.volume === 0) return { buyVol: 0, sellVol: 0, delta: 0 };
-  const position = (candle.close - candle.open) / range; // -1 to +1
-  const buyRatio = (position + 1) / 2; // 0 to 1
-  const buyVol = candle.volume * buyRatio;
-  const sellVol = candle.volume * (1 - buyRatio);
-  return { buyVol, sellVol, delta: buyVol - sellVol };
+type PatternDirection = 'bullish' | 'bearish' | 'neutral';
+
+interface DetectedPattern {
+  name: string;
+  direction: PatternDirection;
+  reliability: number;   // 0-1, real-world win rate from research
+  avgMoveATR: number;    // expected move in ATR multiples
+  strength: number;      // 0-1, how well-formed the pattern is
 }
 
-/**
- * Cumulative Volume Delta over N candles.
- * Returns { cvd, cvdSlope } — slope = change over last 5 candles.
- * Positive CVD = net buying pressure, Negative = net selling.
- */
-function calcCVD(candles: CandleData[], period: number = 50): { cvd: number; cvdSlope: number; cvdNorm: number } {
-  if (candles.length < 10) return { cvd: 0, cvdSlope: 0, cvdNorm: 0 };
-  const sliced = candles.slice(-period);
-  let cvd = 0;
-  const deltas: number[] = [];
-  for (const c of sliced) {
-    const d = calcCandleDelta(c);
-    cvd += d.delta;
-    deltas.push(d.delta);
+// ── Helpers ──
+
+function candleBody(c: CandleData): number { return Math.abs(c.close - c.open); }
+function candleRange(c: CandleData): number { return c.high - c.low; }
+function isBullish(c: CandleData): boolean { return c.close > c.open; }
+function isBearish(c: CandleData): boolean { return c.close < c.open; }
+function upperWick(c: CandleData): number { return c.high - Math.max(c.close, c.open); }
+function lowerWick(c: CandleData): number { return Math.min(c.close, c.open) - c.low; }
+function bodyMid(c: CandleData): number { return (c.open + c.close) / 2; }
+
+// ── SINGLE CANDLE PATTERNS ──
+
+function detectHammer(c: CandleData, prevTrend: 'down' | 'up' | 'flat'): DetectedPattern | null {
+  const range = candleRange(c);
+  if (range === 0) return null;
+  const body = candleBody(c);
+  const lw = lowerWick(c);
+  const uw = upperWick(c);
+  // Hammer: small body at top, long lower shadow (≥2× body), tiny upper shadow (≤10% range)
+  if (lw >= body * 2 && uw <= range * 0.1 && body >= range * 0.05) {
+    return { name: 'Молот', direction: 'bullish', reliability: 0.60, avgMoveATR: 1.0, strength: Math.min(lw / (body * 3), 1) };
   }
-  // Slope = sum of last 5 deltas / sum of last 5 volumes (normalised)
-  const last5 = deltas.slice(-5);
-  const last5Vol = candles.slice(-5).reduce((s, c) => s + c.volume, 0);
-  const cvdSlope = last5Vol > 0 ? last5.reduce((s, d) => s + d, 0) / last5Vol : 0;
-  // Normalise CVD by average volume
-  const avgVol = sliced.reduce((s, c) => s + c.volume, 0) / sliced.length;
-  const cvdNorm = avgVol > 0 ? cvd / (avgVol * sliced.length) : 0;
-  return { cvd, cvdSlope, cvdNorm };
+  return null;
 }
 
-/**
- * Absorption detection — high volume but small body.
- * Big player absorbing supply/demand = potential reversal.
- * Returns { absorbed: boolean, direction: 'long'|'short'|'none' }.
- */
-function detectAbsorption(candles: CandleData[]): { absorbed: boolean; direction: 'long' | 'short' | 'none'; strength: number } {
-  if (candles.length < 20) return { absorbed: false, direction: 'none', strength: 0 };
-  const last = candles[candles.length - 1];
-  const prev = candles[candles.length - 2];
-  const avgVol = candles.slice(-20, -1).reduce((s, c) => s + c.volume, 0) / 19;
-  if (avgVol === 0) return { absorbed: false, direction: 'none', strength: 0 };
-  const volRatio = last.volume / avgVol;
-  const range = last.high - last.low;
-  const body = Math.abs(last.close - last.open);
-  const bodyRatio = range > 0 ? body / range : 0;
-  // Absorption: volume > 2x average BUT body < 30% of range
-  // Context: price was moving in one direction, then a big-body-absorbing candle appears
-  if (volRatio > 2 && bodyRatio < 0.3) {
-    const priceUp = last.close > prev.close;
-    // Price moved up but couldn't make a body = selling absorbed → long (buyers won)
-    // Price moved down but couldn't make a body = buying absorbed → short (sellers won)
-    // Actually: absorption means the OPPONENT absorbed → direction of the NEXT move
-    // If green candle with small body + high vol at support = buyers absorbing sells → long
-    // If red candle with small body + high vol at resistance = sellers absorbing buys → short
-    const direction: 'long' | 'short' = last.close > last.open ? 'long' : 'short';
-    return { absorbed: true, direction, strength: Math.min(volRatio / 5, 1) };
+function detectShootingStar(c: CandleData, prevTrend: 'down' | 'up' | 'flat'): DetectedPattern | null {
+  const range = candleRange(c);
+  if (range === 0) return null;
+  const body = candleBody(c);
+  const uw = upperWick(c);
+  const lw = lowerWick(c);
+  if (uw >= body * 2 && lw <= range * 0.1 && body >= range * 0.05) {
+    return { name: 'Падающая звезда', direction: 'bearish', reliability: 0.59, avgMoveATR: 1.0, strength: Math.min(uw / (body * 3), 1) };
   }
-  return { absorbed: false, direction: 'none', strength: 0 };
+  return null;
 }
 
-/**
- * Volume imbalance — ratio of last candle buy vs sell volume.
- * > 2.0 = strong buying, < 0.5 = strong selling.
- */
-function calcVolumeImbalance(candles: CandleData[]): number {
-  if (candles.length < 2) return 1;
-  const last = candles[candles.length - 1];
-  const d = calcCandleDelta(last);
-  if (d.sellVol === 0) return d.buyVol > 0 ? 5 : 1;
-  if (d.buyVol === 0) return d.sellVol > 0 ? 0.2 : 1;
-  return d.buyVol / d.sellVol; // >1 = buying pressure, <1 = selling
+function detectDoji(c: CandleData): DetectedPattern | null {
+  const range = candleRange(c);
+  if (range === 0) return null;
+  const body = candleBody(c);
+  // Doji: body < 5% of range
+  if (body < range * 0.05) {
+    return { name: 'Доджи', direction: 'neutral', reliability: 0.0, avgMoveATR: 0.5, strength: 0.5 };
+  }
+  return null;
+}
+
+function detectDragonflyDoji(c: CandleData): DetectedPattern | null {
+  const range = candleRange(c);
+  if (range === 0) return null;
+  const body = candleBody(c);
+  const lw = lowerWick(c);
+  const uw = upperWick(c);
+  if (body < range * 0.05 && lw > range * 0.6 && uw < range * 0.05) {
+    return { name: 'Доджи стрекоза', direction: 'bullish', reliability: 0.62, avgMoveATR: 1.1, strength: Math.min(lw / range, 1) };
+  }
+  return null;
+}
+
+function detectGravestoneDoji(c: CandleData): DetectedPattern | null {
+  const range = candleRange(c);
+  if (range === 0) return null;
+  const body = candleBody(c);
+  const uw = upperWick(c);
+  const lw = lowerWick(c);
+  if (body < range * 0.05 && uw > range * 0.6 && lw < range * 0.05) {
+    return { name: 'Доджи надгробие', direction: 'bearish', reliability: 0.61, avgMoveATR: 1.0, strength: Math.min(uw / range, 1) };
+  }
+  return null;
+}
+
+function detectMarubozu(c: CandleData): DetectedPattern | null {
+  const range = candleRange(c);
+  if (range === 0) return null;
+  const body = candleBody(c);
+  const uw = upperWick(c);
+  const lw = lowerWick(c);
+  if (body > range * 0.9 && uw < range * 0.05 && lw < range * 0.05) {
+    const dir = isBullish(c) ? 'bullish' : 'bearish';
+    return { name: 'Марубозу', direction: dir as PatternDirection, reliability: 0.70, avgMoveATR: 1.3, strength: 0.9 };
+  }
+  return null;
+}
+
+// ── TWO-CANDLE PATTERNS ──
+
+function detectBullishEngulfing(prev: CandleData, curr: CandleData): DetectedPattern | null {
+  if (!isBearish(prev) || !isBullish(curr)) return null;
+  const prevBody = candleBody(prev);
+  const currBody = candleBody(curr);
+  if (currBody <= prevBody) return null;
+  // Current body completely engulfs previous body
+  if (curr.close >= prev.open && curr.open <= prev.close) {
+    return { name: 'Бычье поглощение', direction: 'bullish', reliability: 0.63, avgMoveATR: 1.2, strength: Math.min(currBody / (prevBody * 1.5), 1) };
+  }
+  return null;
+}
+
+function detectBearishEngulfing(prev: CandleData, curr: CandleData): DetectedPattern | null {
+  if (!isBullish(prev) || !isBearish(curr)) return null;
+  const prevBody = candleBody(prev);
+  const currBody = candleBody(curr);
+  if (currBody <= prevBody) return null;
+  if (curr.open >= prev.close && curr.close <= prev.open) {
+    return { name: 'Медвежье поглощение', direction: 'bearish', reliability: 0.65, avgMoveATR: 1.2, strength: Math.min(currBody / (prevBody * 1.5), 1) };
+  }
+  return null;
+}
+
+function detectPiercingLine(prev: CandleData, curr: CandleData): DetectedPattern | null {
+  if (!isBearish(prev) || !isBullish(curr)) return null;
+  const prevBody = candleBody(prev);
+  const prevMid = bodyMid(prev);
+  // Current opens below prev low, closes above prev mid
+  if (curr.open < prev.close && curr.close > prevMid) {
+    return { name: 'Проникающая линия', direction: 'bullish', reliability: 0.58, avgMoveATR: 0.9, strength: Math.min((curr.close - prevMid) / prevBody, 1) };
+  }
+  return null;
+}
+
+function detectDarkCloudCover(prev: CandleData, curr: CandleData): DetectedPattern | null {
+  if (!isBullish(prev) || !isBearish(curr)) return null;
+  const prevBody = candleBody(prev);
+  const prevMid = bodyMid(prev);
+  if (curr.open > prev.close && curr.close < prevMid) {
+    return { name: 'Тёмное облако', direction: 'bearish', reliability: 0.60, avgMoveATR: 0.9, strength: Math.min((prevMid - curr.close) / prevBody, 1) };
+  }
+  return null;
+}
+
+function detectTweezerBottom(c1: CandleData, c2: CandleData, c3: CandleData): DetectedPattern | null {
+  if (!isBearish(c1) || Math.abs(c2.low - c3.low) > candleRange(c2) * 0.05) return null;
+  if (c2.low <= c1.low * 1.002 && c3.low <= c1.low * 1.002 && isBullish(c3)) {
+    return { name: 'Близнецы (дно)', direction: 'bullish', reliability: 0.61, avgMoveATR: 1.0, strength: 0.7 };
+  }
+  return null;
+}
+
+function detectTweezerTop(c1: CandleData, c2: CandleData, c3: CandleData): DetectedPattern | null {
+  if (!isBullish(c1) || Math.abs(c2.high - c3.high) > candleRange(c2) * 0.05) return null;
+  if (c2.high >= c1.high * 0.998 && c3.high >= c1.high * 0.998 && isBearish(c3)) {
+    return { name: 'Близнецы (вершина)', direction: 'bearish', reliability: 0.62, avgMoveATR: 1.0, strength: 0.7 };
+  }
+  return null;
+}
+
+// ── THREE-CANDLE PATTERNS ──
+
+function detectMorningStar(c1: CandleData, c2: CandleData, c3: CandleData): DetectedPattern | null {
+  if (!isBearish(c1) || !isBullish(c3)) return null;
+  const r2 = candleRange(c2);
+  // Star: small body, can be doji-like
+  if (r2 > 0 && candleBody(c2) < r2 * 0.15) {
+    // Gap down from c1 to c2, gap up from c2 to c3
+    const gapDown = c2.high < c1.close;
+    const gapUp = c2.low > c3.open;
+    // c3 closes into c1's body
+    const closesIntoPrev = c3.close > bodyMid(c1);
+    if ((gapDown || c2.open < c1.close) && closesIntoPrev) {
+      return { name: 'Утренняя звезда', direction: 'bullish', reliability: 0.78, avgMoveATR: 1.5, strength: gapDown && gapUp ? 1.0 : 0.7 };
+    }
+  }
+  return null;
+}
+
+function detectEveningStar(c1: CandleData, c2: CandleData, c3: CandleData): DetectedPattern | null {
+  if (!isBullish(c1) || !isBearish(c3)) return null;
+  const r2 = candleRange(c2);
+  if (r2 > 0 && candleBody(c2) < r2 * 0.15) {
+    const gapUp = c2.low > c1.close;
+    const gapDown = c2.high < c3.open;
+    const closesIntoPrev = c3.close < bodyMid(c1);
+    if ((gapUp || c2.open > c1.close) && closesIntoPrev) {
+      return { name: 'Вечерняя звезда', direction: 'bearish', reliability: 0.75, avgMoveATR: 1.4, strength: gapUp && gapDown ? 1.0 : 0.7 };
+    }
+  }
+  return null;
+}
+
+function detectThreeWhiteSoldiers(c1: CandleData, c2: CandleData, c3: CandleData): DetectedPattern | null {
+  if (!isBullish(c1) || !isBullish(c2) || !isBullish(c3)) return null;
+  // Each opens within previous body, each closes higher
+  const ok = c2.open > c1.open && c2.close > c1.close && c3.open > c2.open && c3.close > c2.close;
+  // No long upper wicks (< 30% of body)
+  const noWick = [c1, c2, c3].every(c => upperWick(c) < candleBody(c) * 0.3);
+  if (ok && noWick) {
+    return { name: 'Три белых солдата', direction: 'bullish', reliability: 0.73, avgMoveATR: 1.4, strength: 0.85 };
+  }
+  return null;
+}
+
+function detectThreeBlackCrows(c1: CandleData, c2: CandleData, c3: CandleData): DetectedPattern | null {
+  if (!isBearish(c1) || !isBearish(c2) || !isBearish(c3)) return null;
+  const ok = c2.open < c1.open && c2.close < c1.close && c3.open < c2.open && c3.close < c2.close;
+  const noWick = [c1, c2, c3].every(c => lowerWick(c) < candleBody(c) * 0.3);
+  if (ok && noWick) {
+    return { name: 'Три чёрных ворона', direction: 'bearish', reliability: 0.71, avgMoveATR: 1.3, strength: 0.85 };
+  }
+  return null;
+}
+
+// ── MULTI-CANDLE STRUCTURAL PATTERNS ──
+
+function detectDoubleBottom(candles: CandleData[]): DetectedPattern | null {
+  if (candles.length < 15) return null;
+  const last20 = candles.slice(-20);
+  const lows = last20.map(c => c.low);
+  const min1 = Math.min(...lows.slice(0, -5));
+  const min1Idx = lows.slice(0, -5).indexOf(min1);
+  const min2 = Math.min(...lows.slice(-8));
+  const min2Idx = lows.length - 8 + lows.slice(-8).indexOf(min2);
+  // Two lows at similar price (within 1%), with a peak between them
+  const priceDiff = Math.abs(min1 - min2) / min1;
+  if (priceDiff < 0.01 && min2Idx > min1Idx + 3) {
+    // Find the peak between the two lows
+    const between = last20.slice(min1Idx, min2Idx);
+    if (between.length > 2) {
+      const peakHigh = Math.max(...between.map(c => c.high));
+      const peakLow = Math.min(min1, min2);
+      const peakHeight = (peakHigh - peakLow) / peakLow;
+      if (peakHeight > 0.005) {
+        return { name: 'Двойное дно', direction: 'bullish', reliability: 0.78, avgMoveATR: 2.0, strength: Math.min(peakHeight / 0.03, 1) };
+      }
+    }
+  }
+  return null;
+}
+
+function detectDoubleTop(candles: CandleData[]): DetectedPattern | null {
+  if (candles.length < 15) return null;
+  const last20 = candles.slice(-20);
+  const highs = last20.map(c => c.high);
+  const max1 = Math.max(...highs.slice(0, -5));
+  const max1Idx = highs.slice(0, -5).indexOf(max1);
+  const max2 = Math.max(...highs.slice(-8));
+  const max2Idx = highs.length - 8 + highs.slice(-8).indexOf(max2);
+  const priceDiff = Math.abs(max1 - max2) / max1;
+  if (priceDiff < 0.01 && max2Idx > max1Idx + 3) {
+    const between = last20.slice(max1Idx, max2Idx);
+    if (between.length > 2) {
+      const troughLow = Math.min(...between.map(c => c.low));
+      const troughDepth = (max1 - troughLow) / max1;
+      if (troughDepth > 0.005) {
+        return { name: 'Двойная вершина', direction: 'bearish', reliability: 0.76, avgMoveATR: 2.0, strength: Math.min(troughDepth / 0.03, 1) };
+      }
+    }
+  }
+  return null;
+}
+
+function detectBullFlag(candles: CandleData[]): DetectedPattern | null {
+  if (candles.length < 15) return null;
+  const last15 = candles.slice(-15);
+  // Pole: strong 3-5 candle move up
+  const poleCandles = last15.slice(0, 5);
+  const poleMove = (poleCandles[poleCandles.length - 1].close - poleCandles[0].open) / poleCandles[0].open;
+  if (poleMove < 0.015) return null; // pole must be >1.5%
+  // Flag: 5-10 candles of consolidation (max 50% retracement of pole, slight downward channel)
+  const flagCandles = last15.slice(5);
+  if (flagCandles.length < 5) return null;
+  const flagHigh = Math.max(...flagCandles.map(c => c.high));
+  const flagLow = Math.min(...flagCandles.map(c => c.low));
+  const poleHigh = Math.max(...poleCandles.map(c => c.high));
+  const poleLow = poleCandles[0].open;
+  const retracement = (flagHigh - flagLow) / (poleHigh - poleLow);
+  if (retracement < 0.5 && flagCandles[flagCandles.length - 1].close > flagLow) {
+    return { name: 'Бычий флаг', direction: 'bullish', reliability: 0.65, avgMoveATR: 1.5, strength: Math.min(poleMove / 0.04, 1) };
+  }
+  return null;
+}
+
+function detectBearFlag(candles: CandleData[]): DetectedPattern | null {
+  if (candles.length < 15) return null;
+  const last15 = candles.slice(-15);
+  const poleCandles = last15.slice(0, 5);
+  const poleMove = (poleCandles[0].open - poleCandles[poleCandles.length - 1].close) / poleCandles[0].open;
+  if (poleMove < 0.015) return null;
+  const flagCandles = last15.slice(5);
+  if (flagCandles.length < 5) return null;
+  const flagHigh = Math.max(...flagCandles.map(c => c.high));
+  const flagLow = Math.min(...flagCandles.map(c => c.low));
+  const poleHigh = poleCandles[0].open;
+  const poleLow = Math.min(...poleCandles.map(c => c.low));
+  const retracement = (flagHigh - flagLow) / (poleHigh - poleLow);
+  if (retracement < 0.5 && flagCandles[flagCandles.length - 1].close < flagHigh) {
+    return { name: 'Медвежий флаг', direction: 'bearish', reliability: 0.64, avgMoveATR: 1.5, strength: Math.min(poleMove / 0.04, 1) };
+  }
+  return null;
+}
+
+function detectAscendingWedge(candles: CandleData[]): DetectedPattern | null {
+  if (candles.length < 20) return null;
+  const last20 = candles.slice(-20);
+  // Ascending wedge: both trendlines slope up, but they converge
+  // Higher highs AND higher lows, but highs rise faster than lows
+  const highs = last20.map(c => c.high);
+  const lows = last20.map(c => c.low);
+  // Linear regression slope for highs and lows
+  const n = highs.length;
+  const xMean = (n - 1) / 2;
+  let sumXYH = 0, sumX2 = 0, sumYH = 0, sumYL = 0, sumXYL = 0;
+  for (let i = 0; i < n; i++) {
+    sumXYH += i * highs[i]; sumX2 += i * i; sumYH += highs[i];
+    sumXYL += i * lows[i]; sumYL += lows[i];
+  }
+  const slopeH = (n * sumXYH - (n * (n - 1) / 2) * sumYH) / (n * sumX2 - (n * (n - 1) / 2) ** 2);
+  const slopeL = (n * sumXYL - (n * (n - 1) / 2) * sumYL) / (n * sumX2 - (n * (n - 1) / 2) ** 2);
+  // Both slopes positive (ascending), highs slope > lows slope (converging)
+  if (slopeH > 0 && slopeL > 0 && slopeH > slopeL * 1.1) {
+    const convergence = (slopeH - slopeL) / slopeH;
+    if (convergence > 0.05) {
+      return { name: 'Восходящий клин', direction: 'bearish', reliability: 0.71, avgMoveATR: 1.8, strength: Math.min(convergence / 0.3, 1) };
+    }
+  }
+  return null;
+}
+
+function detectDescendingWedge(candles: CandleData[]): DetectedPattern | null {
+  if (candles.length < 20) return null;
+  const last20 = candles.slice(-20);
+  const highs = last20.map(c => c.high);
+  const lows = last20.map(c => c.low);
+  const n = highs.length;
+  let sumXYH = 0, sumX2 = 0, sumYH = 0, sumYL = 0, sumXYL = 0;
+  for (let i = 0; i < n; i++) {
+    sumXYH += i * highs[i]; sumX2 += i * i; sumYH += highs[i];
+    sumXYL += i * lows[i]; sumYL += lows[i];
+  }
+  const slopeH = (n * sumXYH - (n * (n - 1) / 2) * sumYH) / (n * sumX2 - (n * (n - 1) / 2) ** 2);
+  const slopeL = (n * sumXYL - (n * (n - 1) / 2) * sumYL) / (n * sumX2 - (n * (n - 1) / 2) ** 2);
+  // Both slopes negative (descending), lows slope more negative (converging)
+  if (slopeH < 0 && slopeL < 0 && Math.abs(slopeL) > Math.abs(slopeH) * 1.1) {
+    const convergence = (Math.abs(slopeL) - Math.abs(slopeH)) / Math.abs(slopeL);
+    if (convergence > 0.05) {
+      return { name: 'Нисходящий клин', direction: 'bullish', reliability: 0.68, avgMoveATR: 1.8, strength: Math.min(convergence / 0.3, 1) };
+    }
+  }
+  return null;
+}
+
+// ── MASTER PATTERN SCANNER ──
+
+function scanPatterns(candles: CandleData[]): DetectedPattern[] {
+  if (candles.length < 20) return [];
+  const patterns: DetectedPattern[] = [];
+  const c = candles;
+  const n = c.length;
+  const last = c[n - 1];
+  const prev = c[n - 2];
+  const prev2 = c[n - 3];
+
+  // Determine recent trend (last 5-10 candles)
+  const recent5 = c.slice(-6, -1);
+  const trendDown = recent5.length >= 3 && recent5.every((x, i) => i === 0 || x.close < recent5[i - 1].close);
+  const trendUp = recent5.length >= 3 && recent5.every((x, i) => i === 0 || x.close > recent5[i - 1].close);
+  const prevTrend = trendDown ? 'down' : trendUp ? 'up' : 'flat';
+
+  // ── Single candle patterns ──
+  const add = (p: DetectedPattern | null) => { if (p) patterns.push(p); };
+  add(detectHammer(last, prevTrend));
+  add(detectShootingStar(last, prevTrend));
+  add(detectDragonflyDoji(last));
+  add(detectGravestoneDoji(last));
+  add(detectMarubozu(last));
+
+  // ── Two-candle patterns ──
+  add(detectBullishEngulfing(prev, last));
+  add(detectBearishEngulfing(prev, last));
+  add(detectPiercingLine(prev, last));
+  add(detectDarkCloudCover(prev, last));
+  add(detectTweezerBottom(prev2, prev, last));
+  add(detectTweezerTop(prev2, prev, last));
+
+  // ── Three-candle patterns ──
+  add(detectMorningStar(prev2, prev, last));
+  add(detectEveningStar(prev2, prev, last));
+  add(detectThreeWhiteSoldiers(prev2, prev, last));
+  add(detectThreeBlackCrows(prev2, prev, last));
+
+  // ── Multi-candle structural patterns ──
+  add(detectDoubleBottom(c));
+  add(detectDoubleTop(c));
+  add(detectBullFlag(c));
+  add(detectBearFlag(c));
+  add(detectAscendingWedge(c));
+  add(detectDescendingWedge(c));
+
+  return patterns;
 }
 
 // ============================================================
-// Strategy 2: Scalp Hunter (Volume-based, Bondar style)
-// Tape reading: volume delta, CVD, absorption, imbalance
-// Entry: volume delta confirms direction, CVD agrees, VWAP filter
-// SL: 1.5× ATR (floored 0.8%), TP: 1:1.5 R:R with partial closes
+// Strategy 2: Pattern Pro — Candlestick Pattern Recognition
+// Scans all candlestick patterns, scores by reliability + confluence
+// Source: Bulkowski's Encyclopedia, Nison's Japanese Candlestick Charting
+// SL: 1.5×ATR, TP: based on pattern's avg move, with partial closes
 // ============================================================
 
-function makeScalpHunterDecision(
+function makePatternProDecision(
   symbol: string,
   candles: CandleData[],
   strategy: StrategyConfig,
   _idleMinutes: number = 0,
-  weights: Record<string, number> = {},
+  _weights: Record<string, number> = {},
 ): TradingDecision {
-  if (candles.length < 30) return noDecision(symbol, candles);
+  if (candles.length < 20) return noDecision(symbol, candles);
 
   const closes = candles.map(c => c.close);
   const price = closes[closes.length - 1];
   const atr = calcATR(candles, 14);
-  const indicators: IndicatorSignal[] = [];
+  const patterns = scanPatterns(candles);
 
-  // ── 1. Volume Delta (PRIMARY — Bondar's core) ──
-  const lastCandle = candles[candles.length - 1];
-  const delta = calcCandleDelta(lastCandle);
-  const avgVol20 = candles.slice(-21, -1).reduce((s, c) => s + c.volume, 0) / 20;
-  const deltaNorm = avgVol20 > 0 ? delta.delta / avgVol20 : 0;
-  // Signal: delta must be significant (>10% of avg volume) and in one direction
-  const deltaLong = deltaNorm > 0.15;
-  const deltaShort = deltaNorm < -0.15;
-  const deltaStrength = Math.min(Math.abs(deltaNorm) / 0.5, 1);
-  indicators.push({
-    name: 'VolDelta',
-    signal: deltaLong ? 1 : deltaShort ? -1 : 0,
-    strength: deltaStrength,
-  });
-
-  // ── 2. CVD (Cumulative Volume Delta — trend confirmation) ──
-  const cvd = calcCVD(candles, 50);
-  const cvdLong = cvd.cvdSlope > 0.1;
-  const cvdShort = cvd.cvdSlope < -0.1;
-  const cvdStrength = Math.min(Math.abs(cvd.cvdSlope) / 0.3, 1);
-  indicators.push({
-    name: 'CVD',
-    signal: cvdLong ? 1 : cvdShort ? -1 : 0,
-    strength: cvdStrength,
-  });
-
-  // ── 3. Volume Imbalance (buy vs sell ratio on last candle) ──
-  const imbalance = calcVolumeImbalance(candles);
-  const imbLong = imbalance > 1.8;
-  const imbShort = imbalance < 0.55;
-  const imbStrength = imbLong
-    ? Math.min((imbalance - 1.8) / 3, 1)
-    : imbShort
-      ? Math.min((0.55 - imbalance) / 0.4, 1)
-      : 0;
-  indicators.push({
-    name: 'Imbalance',
-    signal: imbLong ? 1 : imbShort ? -1 : 0,
-    strength: imbStrength,
-  });
-
-  // ── 4. VWAP (session trend filter — wider window for 5m) ──
-  const vwapResult = calcVWAP(candles, 50);
-  const vwapLong = vwapResult.signal < -0.15;   // price below VWAP → long (mean reversion to VWAP)
-  const vwapShort = vwapResult.signal > 0.15;   // price above VWAP → short
-  const vwapStrength = Math.min(Math.abs(vwapResult.signal) / 0.5, 1);
-  indicators.push({
-    name: 'VWAP',
-    signal: vwapLong ? 1 : vwapShort ? -1 : 0,
-    strength: vwapStrength,
-  });
-
-  // ── 5. RSI(7) — extreme for precise timing ──
-  const rsi = calcRSI(closes, 7);
-  const rsiLong = rsi < 25;
-  const rsiShort = rsi > 75;
-  const rsiStrength = rsiLong ? (25 - rsi) / 25 : rsiShort ? (rsi - 75) / 25 : 0;
-  indicators.push({
-    name: 'RSI',
-    signal: rsiLong ? 1 : rsiShort ? -1 : 0,
-    strength: rsiStrength,
-  });
-
-  // ── 6. Absorption (large player activity — reversal signal) ──
-  const absResult = detectAbsorption(candles);
-  if (absResult.absorbed) {
-    indicators.push({
-      name: 'Absorption',
-      signal: absResult.direction === 'long' ? 1 : -1,
-      strength: absResult.strength,
-    });
-  } else {
-    // Fallback: 3-candle momentum (volume-confirmed)
-    const last3 = candles.slice(-3);
-    const volConfirm = last3.every((c, i) => {
-      if (i === 0) return true;
-      return c.volume > avgVol20 * 0.8; // at least 80% of average
-    });
-    const allUp = last3[1].close > last3[0].close && last3[2].close > last3[1].close;
-    const allDown = last3[1].close < last3[0].close && last3[2].close < last3[1].close;
-    const momLong = allUp && volConfirm;
-    const momShort = allDown && volConfirm;
-    const moveSize = Math.abs(last3[2].close - last3[0].close) / last3[0].close;
-    indicators.push({
-      name: 'MomVol',
-      signal: momLong ? 1 : momShort ? -1 : 0,
-      strength: Math.min(moveSize * 30, 1),
-    });
+  if (patterns.length === 0) {
+    return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators: [] };
   }
 
-  // ── Confluence: require ≥3 of 7 indicators to agree ──
-  let longCount = 0, shortCount = 0, longScore = 0, shortScore = 0;
-  for (const ind of indicators) {
-    const w = weights[ind.name] ?? 1;
-    if (ind.signal > 0) { longCount++; longScore += ind.strength * w; }
-    else if (ind.signal < 0) { shortCount++; shortScore += ind.strength * w; }
+  // Convert patterns to indicators for logging/display
+  const indicators: IndicatorSignal[] = patterns.map(p => ({
+    name: p.name,
+    signal: p.direction === 'bullish' ? 1 : p.direction === 'bearish' ? -1 : 0,
+    strength: p.strength,
+  }));
+
+  // Score bullish and bearish separately
+  // Weight = reliability × strength × (1 + avgMoveATR/2)
+  let bullScore = 0, bearScore = 0;
+  let bullCount = 0, bearCount = 0;
+  let bestBullMove = 0, bestBearMove = 0;
+
+  for (const p of patterns) {
+    if (p.direction === 'neutral') continue;
+    const weight = p.reliability * p.strength * (1 + p.avgMoveATR / 2);
+    if (p.direction === 'bullish') {
+      bullScore += weight;
+      bullCount++;
+      bestBullMove = Math.max(bestBullMove, p.avgMoveATR);
+    } else {
+      bearScore += weight;
+      bearCount++;
+      bestBearMove = Math.max(bestBearMove, p.avgMoveATR);
+    }
   }
 
-  // HARD REQUIREMENT: VolDelta MUST agree (Bondar's rule — trade WITH the tape)
-  const deltaSignal = indicators.find(i => i.name === 'VolDelta')?.signal ?? 0;
-  if (longCount >= 3 && deltaSignal <= 0) longCount = 0;
-  if (shortCount >= 3 && deltaSignal >= 0) shortCount = 0;
+  // Need at least 1 strong pattern (reliability > 0.60)
+  const hasStrongBull = patterns.some(p => p.direction === 'bullish' && p.reliability > 0.60);
+  const hasStrongBear = patterns.some(p => p.direction === 'bearish' && p.reliability > 0.60);
 
-  if (longCount < 3 && shortCount < 3) {
-    return { symbol, direction: 'none', score: Math.max(longScore, shortScore), leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
+  if ((!hasStrongBull || bullCount < 1) && (!hasStrongBear || bearCount < 1)) {
+    return { symbol, direction: 'none', score: Math.max(bullScore, bearScore), leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
+  }
+
+  // RSI filter: don't buy overbought, don't sell oversold (unless pattern is very strong)
+  const rsi = calcRSI(closes, 14);
+  if (bullScore > 0 && rsi > 80 && !patterns.some(p => p.direction === 'bullish' && p.reliability > 0.75)) {
+    return { symbol, direction: 'none', score: bullScore, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
+  }
+  if (bearScore > 0 && rsi < 20 && !patterns.some(p => p.direction === 'bearish' && p.reliability > 0.75)) {
+    return { symbol, direction: 'none', score: bearScore, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
   }
 
   let direction: 'long' | 'short' | 'none' = 'none';
   let score = 0;
+  let expectedMoveATR = 0;
 
-  if (longCount >= 3 && longScore >= strategy.scoreThreshold && longScore >= shortScore) {
+  if (bullScore >= strategy.scoreThreshold && bullScore >= bearScore) {
     direction = 'long';
-    score = longScore;
-  } else if (shortCount >= 3 && shortScore >= strategy.scoreThreshold && shortScore > longScore) {
+    score = bullScore;
+    expectedMoveATR = bestBullMove;
+  } else if (bearScore >= strategy.scoreThreshold && bearScore > bullScore) {
     direction = 'short';
-    score = shortScore;
+    score = bearScore;
+    expectedMoveATR = bestBearMove;
   }
 
   if (direction === 'none') {
-    return { symbol, direction: 'none', score: Math.max(longScore, shortScore), leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
+    return { symbol, direction: 'none', score: Math.max(bullScore, bearScore), leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
   }
 
-  // ── SPIKE GUARD (relaxed for scalping) ──
-  {
-    const ema20Arr = ema(closes, 20);
-    const ema20 = ema20Arr[ema20Arr.length - 1] || price;
-    const guard = spikeGuard(candles, closes, atr, rsi, direction, ema20, {
-      atrRatioMax: 4.0,
-      roc3Max: 15,
-      rsiOverbought: 85,
-      rsiOversold: 15,
-      emaDistMax: 8,
-      cciMax: 300,
-    });
-    if (guard.blocked) {
-      return { symbol, direction: 'none', score: Math.max(longScore, shortScore), leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
-    }
-  }
+  // SL: 1.5× ATR, or below/above pattern's key level
+  const slDist = Math.max(1.5 * atr, atr * 0.8);
+  const stopLoss = direction === 'long' ? price - slDist : price + slDist;
+
+  // TP: based on pattern's expected move (min 1.5× SL = 1:1.5, max 3× SL = 1:3)
+  const tpMult = Math.max(1.5, Math.min(expectedMoveATR, 3));
+  const takeProfit = direction === 'long' ? price + slDist * tpMult : price - slDist * tpMult;
 
   const leverage = Math.min(strategy.maxLeverage, Math.max(1, Math.round(score * 2)));
-  // Stop: 1.5× ATR, floored at 0.8%, capped at 4%
-  const stopLossPercent = Math.max(0.008, Math.min(1.5 * atr / price, 0.04));
-  const takeProfitPercent = Math.min(stopLossPercent * strategy.riskRewardRatio, 0.06);
-
-  const stopLoss = direction === 'long'
-    ? price * (1 - stopLossPercent)
-    : price * (1 + stopLossPercent);
-  const takeProfit = direction === 'long'
-    ? price * (1 + takeProfitPercent)
-    : price * (1 - takeProfitPercent);
 
   return { symbol, direction, score, leverage, stopLoss, takeProfit, indicators };
 }

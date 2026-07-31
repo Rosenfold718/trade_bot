@@ -87,13 +87,13 @@ export const STRATEGIES: StrategyConfig[] = [
   },
 
   // ──────────────────────────────────────────────────────────────
-  // Стратегия 2: Scalp Hunter
-  // Скальпинг: множество быстрых сделок на микро-движениях
+  // Стратегия 2: Pattern Pro
+  // Распознавание свечных фигур с реальной статистикой
   // ──────────────────────────────────────────────────────────────
   {
     id: 'scalper',
-    name: 'Scalp Hunter',
-    description: 'Объёмный скальпинг (Bondar-style): Volume Delta, CVD, Imbalance, Absorption, VWAP. Торгует С лентой объёмов. SL 1.5×ATR (мин 0.8%), TP 1:1.5 + partial. 5м таймфрейм.',
+    name: 'Pattern Pro',
+    description: 'Свечные фигуры: Молот, Поглощение, Утренняя/Вечерняя звезда, Двойное дно/вершина, Клин, Флаг. Bulkowski статистика. SL 1.5×ATR, TP по фигуре.',
     color: 'text-violet-400',
     bgColor: 'bg-violet-500/10',
     borderColor: 'border-violet-500/30',
@@ -118,17 +118,17 @@ export const STRATEGIES: StrategyConfig[] = [
     timeFilterEnabled: false,
     timeFilterStart: 0,
     timeFilterEnd: 0,
-    defaultInterval: '5m',
+    defaultInterval: '15m',
     candleLimit: 500,
-    monitorInterval: '5m',
-    maxHoldMinutes: 45, // 45 минут макс удержание (быстрый скальпинг)
+    monitorInterval: '15m',
+    maxHoldMinutes: 240, // 4 часа макс удержание (фигурам нужно время)
     enabled: true,
-    cycleIntervalMs: 60 * 1000,    // 1 минута (5m ТФ)
-    cooldownCandles: 6,            // 30 минут cooldown после SL
-    entryStalenessMaxPct: 0.002,   // 0.2% — строгий для скальпинга
-    drawdownPausePct: 8,
+    cycleIntervalMs: 3 * 60 * 1000,  // 3 минуты (15m ТФ)
+    cooldownCandles: 4,            // 1 час cooldown после SL
+    entryStalenessMaxPct: 0.003,   // 0.3%
+    drawdownPausePct: 10,
     drawdownLookback: 5,
-    maxDailyTrades: 10,
+    maxDailyTrades: 6,
   },
 
   // ──────────────────────────────────────────────────────────────
