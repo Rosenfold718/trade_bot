@@ -112,7 +112,7 @@ export const STRATEGIES: StrategyConfig[] = [
     riskRewardRatio: 1.5,
     tradeSizePercent: 0.04,
     maxOpenTrades: 4,
-    scoreThreshold: 0.35,
+    scoreThreshold: 0.50,
     adxMin: null,
     mtfEnabled: false,
     timeFilterEnabled: false,
@@ -121,7 +121,7 @@ export const STRATEGIES: StrategyConfig[] = [
     defaultInterval: '15m',
     candleLimit: 500,
     monitorInterval: '15m',
-    maxHoldMinutes: 240, // 4 часа макс удержание (фигурам нужно время)
+    maxHoldMinutes: 480, // 8 часов (было 4ч — паттернам нужно время)
     enabled: true,
     cycleIntervalMs: 3 * 60 * 1000,  // 3 минуты (15m ТФ)
     cooldownCandles: 4,            // 1 час cooldown после SL

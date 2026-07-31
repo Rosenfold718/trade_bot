@@ -43,6 +43,12 @@ function ema(data: number[], period: number): number[] {
   return result;
 }
 
+function calcLocalEMA(data: number[], period: number): number | null {
+  const result = ema(data, period);
+  const last = result[result.length - 1];
+  return (last !== undefined && isFinite(last)) ? last : null;
+}
+
 function calcRSI(closes: number[], period: number = 14): number {
   if (closes.length < period + 1) return 50;
   // Wilder's smoothing method
@@ -1280,19 +1286,38 @@ function makePatternProDecision(
   _idleMinutes: number = 0,
   _weights: Record<string, number> = {},
 ): TradingDecision {
-  if (candles.length < 20) return noDecision(symbol, candles);
+  if (candles.length < 50) return noDecision(symbol, candles);
 
   const closes = candles.map(c => c.close);
   const price = closes[closes.length - 1];
   const atr = calcATR(candles, 14);
   const patterns = scanPatterns(candles);
 
+  // ── EMA20 TREND FILTER ──
+  // Don't buy in a downtrend, don't sell in an uptrend
+  const ema20 = calcLocalEMA(closes, 20);
+  if (ema20 === null || !isFinite(ema20)) return noDecision(symbol, candles);
+  const trendUp = price > ema20;
+  const trendDown = price < ema20;
+
   if (patterns.length === 0) {
     return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators: [], pattern: null };
   }
 
+  // Filter patterns by trend: only keep bullish in uptrend, bearish in downtrend
+  const trendFiltered = patterns.filter(p => {
+    if (p.direction === 'neutral') return false;
+    if (p.direction === 'bullish') return trendUp;
+    if (p.direction === 'bearish') return trendDown;
+    return false;
+  });
+
+  if (trendFiltered.length === 0) {
+    return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators: [], pattern: null };
+  }
+
   // Convert patterns to indicators for logging/display
-  const indicators: IndicatorSignal[] = patterns.map(p => ({
+  const indicators: IndicatorSignal[] = trendFiltered.map(p => ({
     name: p.name,
     signal: p.direction === 'bullish' ? 1 : p.direction === 'bearish' ? -1 : 0,
     strength: p.strength,
@@ -1306,7 +1331,7 @@ function makePatternProDecision(
   let bestBullPattern: DetectedPattern | null = null;
   let bestBearPattern: DetectedPattern | null = null;
 
-  for (const p of patterns) {
+  for (const p of trendFiltered) {
     if (p.direction === 'neutral') continue;
     const weight = p.reliability * p.strength * (1 + p.avgMoveATR / 2);
     if (p.direction === 'bullish') {
@@ -1327,21 +1352,20 @@ function makePatternProDecision(
   }
 
   // Need at least 1 strong pattern (reliability > 0.60)
-  const hasStrongBull = patterns.some(p => p.direction === 'bullish' && p.reliability > 0.60);
-  const hasStrongBear = patterns.some(p => p.direction === 'bearish' && p.reliability > 0.60);
+  const hasStrongBull = trendFiltered.some(p => p.direction === 'bullish' && p.reliability > 0.60);
+  const hasStrongBear = trendFiltered.some(p => p.direction === 'bearish' && p.reliability > 0.60);
 
   if ((!hasStrongBull || bullCount < 1) && (!hasStrongBear || bearCount < 1)) {
-    const best = bestBullPattern ?? bestBearPattern;
-    return { symbol, direction: 'none', score: Math.max(bullScore, bearScore), leverage: 1, stopLoss: 0, takeProfit: 0, indicators, pattern: best ? toPatternInfo(best, candles) : null };
+    return { symbol, direction: 'none', score: Math.max(bullScore, bearScore), leverage: 1, stopLoss: 0, takeProfit: 0, indicators, pattern: null };
   }
 
   // RSI filter: don't buy overbought, don't sell oversold (unless pattern is very strong)
   const rsi = calcRSI(closes, 14);
-  if (bullScore > 0 && rsi > 80 && !patterns.some(p => p.direction === 'bullish' && p.reliability > 0.75)) {
-    return { symbol, direction: 'none', score: bullScore, leverage: 1, stopLoss: 0, takeProfit: 0, indicators, pattern: bestBullPattern ? toPatternInfo(bestBullPattern, candles) : null };
+  if (bullScore > 0 && rsi > 75 && !trendFiltered.some(p => p.direction === 'bullish' && p.reliability > 0.75)) {
+    return { symbol, direction: 'none', score: bullScore, leverage: 1, stopLoss: 0, takeProfit: 0, indicators, pattern: null };
   }
-  if (bearScore > 0 && rsi < 20 && !patterns.some(p => p.direction === 'bearish' && p.reliability > 0.75)) {
-    return { symbol, direction: 'none', score: bearScore, leverage: 1, stopLoss: 0, takeProfit: 0, indicators, pattern: bestBearPattern ? toPatternInfo(bestBearPattern, candles) : null };
+  if (bearScore > 0 && rsi < 25 && !trendFiltered.some(p => p.direction === 'bearish' && p.reliability > 0.75)) {
+    return { symbol, direction: 'none', score: bearScore, leverage: 1, stopLoss: 0, takeProfit: 0, indicators, pattern: null };
   }
 
   let direction: 'long' | 'short' | 'none' = 'none';
@@ -1362,8 +1386,8 @@ function makePatternProDecision(
     return { symbol, direction: 'none', score: Math.max(bullScore, bearScore), leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
   }
 
-  // SL: 1.5× ATR, or below/above pattern's key level
-  const slDist = Math.max(1.5 * atr, atr * 0.8);
+  // SL: 2.5× ATR (wider to avoid noise stop-outs)
+  const slDist = 2.5 * atr;
   const stopLoss = direction === 'long' ? price - slDist : price + slDist;
 
   // TP: based on pattern's expected move (min 1.5× SL = 1:1.5, max 3× SL = 1:3)

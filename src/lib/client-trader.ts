@@ -661,25 +661,22 @@ export async function monitorTradesClient(
       }
 
       // ════════════════════════════════════════════════════════════
-      // v2: SMART ABORT — progressive early exit (replaces flat 8h time exit)
-      // 2h: no momentum → abort with tiny loss
-      // 4h: not at breakeven → abort
+      // v3: SMART ABORT — much more relaxed
+      // Only for 1h+ TF strategies (NOT for 15m Pattern Pro — patterns need time)
+      // 6h: deep underwater (< -1.5R) → cut loss
       // Only for trades that haven't hit TP1 yet (partialState === 'full')
       // ════════════════════════════════════════════════════════════
       const openMs = Date.now() - new Date(trade.opened_at).getTime();
       const openMinutes = openMs / 60000;
 
-      if (smartAbortEnabled && partialState === 'full' && initialSlDistance > 0) {
-        // 2h check: no momentum (favorable move < 0.5× SL distance)
-        if (openMinutes >= 120 && openMinutes < 180 && favorableMove < initialSlDistance * 0.5) {
+      // Determine if this strategy's TF is short-term (15m or less) — skip Smart Abort
+      const isShortTermTF = monitorInterval === '15m' || monitorInterval === '5m' || monitorInterval === '1m';
+
+      if (smartAbortEnabled && !isShortTermTF && partialState === 'full' && initialSlDistance > 0) {
+        // 6h check: deep underwater (unfavorable move > 1.5× SL distance)
+        if (openMinutes >= 360 && favorableMove < -initialSlDistance * 1.5) {
           shouldClose = true;
-          reason = `SmartAbort 2ч (${(favorableMove / initialSlDistance).toFixed(1)}R)`;
-          exitPrice = livePrice;
-        }
-        // 4h check: not at breakeven (favorable move < 1× SL distance)
-        else if (openMinutes >= 240 && openMinutes < 360 && favorableMove < initialSlDistance) {
-          shouldClose = true;
-          reason = `SmartAbort 4ч (${(favorableMove / initialSlDistance).toFixed(1)}R)`;
+          reason = `SmartAbort 6ч (${(favorableMove / initialSlDistance).toFixed(1)}R)`;
           exitPrice = livePrice;
         }
       }
