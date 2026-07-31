@@ -335,6 +335,7 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
       const slDist = trade.entry_price != null && trade.stop_loss != null
         ? Math.abs(trade.entry_price - trade.stop_loss) : 0;
       const partialState = (trade as any).partial_state ?? 'full';
+      console.log(`[Chart] Trade ${trade.symbol}: entry=${trade.entry_price}, sl=${trade.stop_loss}, slDist=${slDist}, partialState=${partialState}`);
 
       if (trade.entry_price != null) addLine(trade.entry_price, 'rgba(255,255,255,0.3)', 2, 1, '');
 
@@ -342,10 +343,11 @@ export default function TradingChart({ data, symbol, timeframe, openTrades, rece
       if (slDist > 0 && trade.entry_price != null) {
         const tp1 = isLong ? trade.entry_price + slDist : trade.entry_price - slDist;
         const tp2 = isLong ? trade.entry_price + slDist * 1.5 : trade.entry_price - slDist * 1.5;
-        addLine(tp1, partialState !== 'full' ? 'rgba(34,197,94,0.2)' : 'rgba(34,197,94,0.5)', partialState !== 'full' ? 2 : 0, 1, 'TP1 (1R)');
-        addLine(tp2, partialState === 'tp2_hit' ? 'rgba(52,211,153,0.2)' : 'rgba(52,211,153,0.5)', partialState === 'tp2_hit' ? 2 : 0, 1, 'TP2 (1.5R)');
+        console.log(`[Chart] Drawing TP1=${tp1}, TP2=${tp2} for ${trade.symbol}`);
+        addLine(tp1, '#22c55e', 0, 2, `TP1 (1R) $${fmtPrice(tp1)}`);
+        addLine(tp2, '#34d399', 0, 2, `TP2 (1.5R) $${fmtPrice(tp2)}`);
       } else if (trade.take_profit != null) {
-        // Fallback: if no SL distance, show the original TP from DB
+        console.log(`[Chart] FALLBACK old TP=${trade.take_profit} for ${trade.symbol} (slDist=${slDist})`);
         const tpLine = addLine(trade.take_profit, 'rgba(34,197,94,0.4)', 0, 1, '');
         if (tpLine) tpLinesMap.current.set(trade.id, { line: tpLine, price: trade.take_profit, tradeId: trade.id });
       }
