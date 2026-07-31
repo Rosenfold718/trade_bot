@@ -852,16 +852,14 @@ export async function runAutoTradeCycle(
   // The caller (frontend) must process these to update balance + DB.
   // We add them to the monitor message but don't filter them from openTrades here.
   const partialParts: string[] = [];
+  const partialTradeIds = new Set<string>();
   if (partialCloses.length > 0) {
     for (const pc of partialCloses) {
       partialParts.push(`${pc.symbol.replace('USDT', '')} ${pc.reason} +$${pc.pnl.toFixed(2)}`);
+      partialTradeIds.add(pc.tradeId);
     }
-    // Remove partially-closed trades from "new trade" consideration this cycle
-    const partialTradeIds = new Set(partialCloses.map(pc => pc.tradeId));
-    const effectiveOpenTrades = updatedOpenTrades.filter(t => !partialTradeIds.has(t.id));
-  } else {
-    const effectiveOpenTrades = updatedOpenTrades;
   }
+  const effectiveOpenTrades = updatedOpenTrades.filter(t => !partialTradeIds.has(t.id));
 
   // ── UPDATE COOLDOWNS from closed trades ──
   // For each SL hit, add the symbol to cooldown
