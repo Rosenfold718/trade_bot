@@ -861,6 +861,18 @@ export async function runAutoTradeCycle(
     }
   }
 
+  // ── SCAN FREQUENCY: only scan for new signals every N hours (CORE+TRAIL) ──
+  // Monitoring (SL/TP/trailing) still runs every cycle — only NEW trade search is throttled.
+  const scanFreqHours = Number(getSys(settings, 'system.scanFreqHours', 2));
+  const currentUtcHour = new Date().getUTCHours();
+  if (scanFreqHours > 1 && currentUtcHour % scanFreqHours !== 0) {
+    const remainHours = scanFreqHours - (currentUtcHour % scanFreqHours);
+    const msg = monitorParts.length > 0
+      ? monitorParts.join(' | ') + ` | Скан через ${remainHours}ч`
+      : `Скан через ${remainHours}ч (каждые ${scanFreqHours}ч)...`;
+    return { action: 'idle', closedTrades, trailingUpdates, tpRepairs, message: msg, scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
+  }
+
   const openSymbols = new Set(updatedOpenTrades.map(t => t.symbol));
   if (globalLockedSymbols) {
     for (const sym of globalLockedSymbols) openSymbols.add(sym);

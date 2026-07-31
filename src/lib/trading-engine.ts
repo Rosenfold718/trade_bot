@@ -530,19 +530,12 @@ export function analyzeIndicators(
     signals.push({ name: 'StochRSI', signal: 0, strength: 0 });
   }
 
-  // ADX
+  // ADX as indicator (CORE+TRAIL): always give directional signal when DI diverge
   const adxResult = calcADX(candles);
-  if (adxResult.adx > 25) {
-    // Strong trend — follow +DI vs -DI
-    const adxStrength = Math.min((adxResult.adx - 25) / 25, 1);
-    if (adxResult.plusDI > adxResult.minusDI) {
-      signals.push({ name: 'ADX', signal: 1, strength: adxStrength });
-    } else {
-      signals.push({ name: 'ADX', signal: -1, strength: adxStrength });
-    }
-  } else if (adxResult.adx < 20) {
-    // Weak/ranging — avoid, slight neutral
-    signals.push({ name: 'ADX', signal: 0, strength: 0.1 });
+  if (adxResult.plusDI > adxResult.minusDI + 5) {
+    signals.push({ name: 'ADX', signal: 1, strength: Math.min((adxResult.plusDI - adxResult.minusDI) / 50, 1) });
+  } else if (adxResult.minusDI > adxResult.plusDI + 5) {
+    signals.push({ name: 'ADX', signal: -1, strength: Math.min((adxResult.minusDI - adxResult.plusDI) / 50, 1) });
   } else {
     signals.push({ name: 'ADX', signal: 0, strength: 0 });
   }
@@ -838,9 +831,9 @@ function makeMomentumDecision(
     ? 1
     : Math.min(strategy.maxLeverage, Math.max(1, Math.round(maxScore * 1.5)));
 
-  // Stop loss: 2× ATR (tight — cuts losses fast), floored at 0.8%, capped at 5%
-  const stopLossPercent = Math.max(0.008, Math.min(2.0 * atr / price, 0.05));
-  // TP uses strategy.riskRewardRatio (4× for Momentum = 1:4 R:R)
+  // Stop loss: 3× ATR (CORE+TRAIL — wider, less noise stop-outs), floored at 0.8%, capped at 5%
+  const stopLossPercent = Math.max(0.008, Math.min(3.0 * atr / price, 0.05));
+  // TP uses strategy.riskRewardRatio (2.5× for Momentum = 1:2.5 R:R CORE+TRAIL)
   const takeProfitPercent = Math.min(stopLossPercent * strategy.riskRewardRatio, 0.20);
 
   const stopLoss = direction === 'long'

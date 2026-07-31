@@ -49,7 +49,7 @@ export const STRATEGIES: StrategyConfig[] = [
   {
     id: 'momentum',
     name: 'Импульс Pro',
-    description: 'Следование за сильным трендом. Требует ≥6 индикаторов, score > 0.58. Стоп 2× ATR, TP 1:4. Строгий отбор — мало сделок, но каждая с высоким R:R.',
+    description: 'CORE+TRAIL: SL 3×ATR, RR 1:2.5, TE 8h, безубыток + трейлинг. ADX как индикатор. Скан каждые 2ч. ≥6 индикаторов, score > 0.50.',
     color: 'text-amber-400',
     bgColor: 'bg-amber-500/10',
     borderColor: 'border-amber-500/30',
@@ -64,11 +64,11 @@ export const STRATEGIES: StrategyConfig[] = [
       swings: { visible: true },
     },
     maxLeverage: 3,
-    riskRewardRatio: 4,
+    riskRewardRatio: 2.5,         // CORE+TRAIL: RR 2.5 (было 4)
     tradeSizePercent: 0.06,
-    maxOpenTrades: 5,         // ↓ с 10 до 5 — меньше одновременных позиций
-    scoreThreshold: 0.58,
-    adxMin: 20,
+    maxOpenTrades: 4,         // CORE+TRAIL: макс 4 (было 5)
+    scoreThreshold: 0.50,     // CORE+TRAIL: порог 0.50 (было 0.58)
+    adxMin: null,               // CORE+TRAIL: ADX как индикатор, не фильтр
     mtfEnabled: true,
     timeFilterEnabled: false,
     timeFilterStart: 0,
@@ -76,14 +76,14 @@ export const STRATEGIES: StrategyConfig[] = [
     defaultInterval: '1h',
     candleLimit: 1440,
     monitorInterval: '1h',
-    maxHoldMinutes: 840, // 14 часов
+    maxHoldMinutes: 480, // CORE+TRAIL: 8 часов (было 14)
     enabled: true,
     cycleIntervalMs: 5 * 60 * 1000,  // 5 минут (1h ТФ — нет смысла чаще)
     cooldownCandles: 4,             // 4 часа cooldown после SL на символе
     entryStalenessMaxPct: 0.003,    // 0.3% — строгий для 1h
     drawdownPausePct: 10,           // пауза при 10% просадке
     drawdownLookback: 5,            // за последние 5 сделок
-    maxDailyTrades: 4,              // макс 4 сделки в день (бэктест: MD4 лучше MD6)
+    maxDailyTrades: 3,              // CORE+TRAIL: макс 3 сделки в день
   },
 
   // ──────────────────────────────────────────────────────────────
