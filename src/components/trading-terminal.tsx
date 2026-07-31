@@ -1707,14 +1707,30 @@ function DraggableTradePanel({ focusedTradeId, symbol, onClose }: { focusedTrade
   const mins = diffMin % 60;
   const durationStr = hours > 0 ? `${hours}ч ${mins}м` : `${mins}м`;
 
-  let distTP = 0, distSL = 0;
+  // Calculate partial TP levels (same logic as client-trader.ts)
+  const partialState = (activeTrade as any).partial_state ?? 'full';
+  const remainingAmount = (activeTrade as any).remaining_amount ?? activeTrade.amount;
+  const initialSlDistance = activeTrade.entry_price != null && activeTrade.stop_loss != null
+    ? Math.abs(activeTrade.entry_price - activeTrade.stop_loss) : 0;
+  const tp1Price = initialSlDistance > 0
+    ? (isLong ? activeTrade.entry_price! + initialSlDistance : activeTrade.entry_price! - initialSlDistance) : null;
+  const tp2Price = initialSlDistance > 0
+    ? (isLong ? activeTrade.entry_price! + initialSlDistance * 1.5 : activeTrade.entry_price! - initialSlDistance * 1.5) : null;
+
+  let distTP = 0, distSL = 0, distTP1 = 0, distTP2 = 0;
   if (isOpen) {
-    distTP = isLong
-      ? ((activeTrade.take_profit ?? livePrice) - livePrice) / livePrice * 100
-      : (livePrice - (activeTrade.take_profit ?? livePrice)) / livePrice * 100;
     distSL = isLong
       ? (livePrice - (activeTrade.stop_loss ?? livePrice)) / livePrice * 100
       : ((activeTrade.stop_loss ?? livePrice) - livePrice) / livePrice * 100;
+    if (tp1Price) {
+      distTP1 = isLong ? (tp1Price - livePrice) / livePrice * 100 : (livePrice - tp1Price) / livePrice * 100;
+    }
+    if (tp2Price) {
+      distTP2 = isLong ? (tp2Price - livePrice) / livePrice * 100 : (livePrice - tp2Price) / livePrice * 100;
+    }
+    distTP = isLong
+      ? ((activeTrade.take_profit ?? livePrice) - livePrice) / livePrice * 100
+      : (livePrice - (activeTrade.take_profit ?? livePrice)) / livePrice * 100;
   }
 
   return (
@@ -1774,16 +1790,28 @@ function DraggableTradePanel({ focusedTradeId, symbol, onClose }: { focusedTrade
           <span className="text-[10px] text-white/25">Вход</span>
           <span className="text-[10px] font-mono text-white/50">${fmtP(activeTrade.entry_price)}</span>
         </div>
-        {isOpen && activeTrade.take_profit != null && (
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] text-green-400/50">TP ({distTP >= 0 ? '+' : ''}{distTP.toFixed(1)}%)</span>
-            <span className="text-[10px] font-mono text-green-400/70">${fmtP(activeTrade.take_profit)}</span>
+        {isOpen && tp1Price != null && (
+          <div className={cn('flex items-center justify-between', partialState !== 'full' && 'opacity-40 line-through')}>
+            <span className="text-[10px] text-green-400/50">TP1 {partialState !== 'full' ? '✓' : ''} ({distTP1 >= 0 ? '+' : ''}{distTP1.toFixed(1)}%)</span>
+            <span className="text-[10px] font-mono text-green-400/70">${fmtP(tp1Price)}</span>
+          </div>
+        )}
+        {isOpen && tp2Price != null && (
+          <div className={cn('flex items-center justify-between', partialState !== 'tp1_hit' && 'opacity-40 line-through')}>
+            <span className="text-[10px] text-emerald-400/50">TP2 {partialState === 'tp2_hit' ? '✓' : ''} ({distTP2 >= 0 ? '+' : ''}{distTP2.toFixed(1)}%)</span>
+            <span className="text-[10px] font-mono text-emerald-400/70">${fmtP(tp2Price)}</span>
           </div>
         )}
         {isOpen && activeTrade.stop_loss != null && (
           <div className="flex items-center justify-between">
             <span className="text-[10px] text-red-400/50">SL ({distSL <= 0 ? '' : '+'}{distSL.toFixed(1)}%)</span>
             <span className="text-[10px] font-mono text-red-400/70">${fmtP(activeTrade.stop_loss)}</span>
+          </div>
+        )}
+        {isOpen && partialState !== 'full' && (
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-yellow-400/50">Позиция</span>
+            <span className="text-[10px] font-mono text-yellow-400/70">${remainingAmount.toFixed(1)} ({Math.round(remainingAmount / activeTrade.amount * 100)}%)</span>
           </div>
         )}
         <div className="flex items-center justify-between">

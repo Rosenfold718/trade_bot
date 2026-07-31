@@ -181,17 +181,28 @@ function TradeChart({ trade }: { trade: Trade }) {
         });
         priceLinesRef.current.push(line);
       }
-      // TP — green solid
-      if (trade.take_profit != null) {
-        const line = candleSeries.createPriceLine({
-          price: trade.take_profit,
-          color: '#22c55e',
-          lineWidth: 1,
-          lineStyle: 0,
-          axisLabelVisible: true,
-          title: `TP $${fmtPrice(trade.take_profit)}`,
+      // Partial TP levels + SL
+      const isLong = trade.direction === 'long';
+      const slDist = trade.entry_price != null && trade.stop_loss != null
+        ? Math.abs(trade.entry_price - trade.stop_loss) : 0;
+      if (slDist > 0 && trade.entry_price != null) {
+        const tp1 = isLong ? trade.entry_price + slDist : trade.entry_price - slDist;
+        const tp2 = isLong ? trade.entry_price + slDist * 1.5 : trade.entry_price - slDist * 1.5;
+        const partialState = (trade as any).partial_state ?? 'full';
+
+        const l1 = candleSeries.createPriceLine({
+          price: tp1, color: partialState !== 'full' ? 'rgba(34,197,94,0.3)' : '#22c55e',
+          lineWidth: 1, lineStyle: partialState !== 'full' ? 2 : 0,
+          axisLabelVisible: true, title: `TP1 (1R) $${fmtPrice(tp1)}`,
         });
-        priceLinesRef.current.push(line);
+        priceLinesRef.current.push(l1);
+
+        const l2 = candleSeries.createPriceLine({
+          price: tp2, color: partialState === 'tp2_hit' ? 'rgba(52,211,153,0.3)' : '#34d399',
+          lineWidth: 1, lineStyle: partialState === 'tp2_hit' ? 2 : 0,
+          axisLabelVisible: true, title: `TP2 (1.5R) $${fmtPrice(tp2)}`,
+        });
+        priceLinesRef.current.push(l2);
       }
       // SL — red solid
       if (trade.stop_loss != null) {
@@ -275,13 +286,18 @@ export default function TradeDetailModal({ trade, onClose }: TradeDetailModalPro
   const isLong = trade.direction === 'long';
   const pnl = trade.pnl;
   const isClosed = trade.status === 'closed';
+  const partialState = (trade as any).partial_state ?? 'full';
+  const slDist = trade.entry_price != null && trade.stop_loss != null
+    ? Math.abs(trade.entry_price - trade.stop_loss) : 0;
 
   const infoRows = [
     { label: 'Символ', value: trade.symbol.replace('USDT', '') + '/USDT' },
     { label: 'Направление', value: isLong ? 'LONG' : 'SHORT', color: isLong ? 'text-green-400' : 'text-red-400' },
     { label: 'Вход', value: `$${fmtPrice(trade.entry_price)}` },
-    { label: 'Тейк-профит', value: trade.take_profit != null ? `$${fmtPrice(trade.take_profit)}` : '—' },
+    { label: 'TP1 (1R)', value: slDist > 0 ? `$${fmtPrice(isLong ? trade.entry_price! + slDist : trade.entry_price! - slDist)}` : '—', color: partialState !== 'full' ? 'text-green-400/40' : 'text-green-400' },
+    { label: 'TP2 (1.5R)', value: slDist > 0 ? `$${fmtPrice(isLong ? trade.entry_price! + slDist * 1.5 : trade.entry_price! - slDist * 1.5)}` : '—', color: partialState === 'tp2_hit' ? 'text-emerald-400/40' : 'text-emerald-400' },
     { label: 'Стоп-лосс', value: trade.stop_loss != null ? `$${fmtPrice(trade.stop_loss)}` : '—' },
+    ...(partialState !== 'full' ? [{ label: 'Остаток', value: `$${(trade as any).remaining_amount?.toFixed(2) ?? trade.amount.toFixed(2)} (${Math.round(((trade as any).remaining_amount ?? trade.amount) / trade.amount * 100)}%)`, color: 'text-yellow-400' }] : []),
     ...(isClosed && trade.exit_price != null ? [{ label: 'Выход', value: `$${fmtPrice(trade.exit_price)}` }] : []),
     { label: 'PnL', value: pnl != null ? fmtMoney(pnl) : '—', color: pnl == null ? 'text-white/30' : pnl >= 0 ? 'text-green-400' : 'text-red-400' },
     { label: 'Плечо', value: `${trade.leverage}x` },
@@ -381,7 +397,11 @@ export default function TradeDetailModal({ trade, onClose }: TradeDetailModalPro
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="w-4 h-0 border-t border-green-500" />
-                  <span className="text-[10px] text-white/50">Тейк-профит (TP)</span>
+                  <span className="text-[10px] text-white/50">TP1 — 1R (50% позиции)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-0 border-t border-emerald-400" />
+                  <span className="text-[10px] text-white/50">TP2 — 1.5R (25% позиции)</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="w-4 h-0 border-t border-red-500" />
