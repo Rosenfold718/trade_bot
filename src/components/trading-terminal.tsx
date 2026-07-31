@@ -354,6 +354,7 @@ export default function TradingTerminal() {
           closedTrades: Array<{ tradeId: string; symbol: string; direction: string; pnl: number; reason: string; exitPrice: number }>;
           trailingUpdates: Array<{ tradeId: string; newStopLoss: number; reason: string }>;
           tpRepairs: Array<{ tradeId: string; newTakeProfit: number; reason: string }>;
+          partialCloses?: Array<{ tradeId: string; symbol: string; closedAmount: number; pnl: number; reason: string; exitPrice: number; newRemainingAmount: number; newPartialState: string; newStopLoss?: number }>;
           newTrades?: Array<{ symbol: string; direction: string; price: number; leverage: number; stopLoss: number; takeProfit: number; amount: number; strategyId: string; label: string }>;
         };
 
@@ -417,6 +418,25 @@ export default function TradingTerminal() {
               body: JSON.stringify({ action: 'update-tp', tradeId: tpr.tradeId, newTakeProfit: tpr.newTakeProfit, strategyId }),
             });
             addLog(`[${strategy.name}] TP ремонт: ${tpr.reason}`, 'info');
+          } catch { /* silent */ }
+        }
+
+        // Process partial TP closes (TP1, TP2)
+        for (const pc of (r.partialCloses ?? [])) {
+          try {
+            const pcRes = await fetch('/api/trader', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'partial-close-trade', tradeId: pc.tradeId, strategyId,
+                closeAmount: pc.closedAmount, pnl: pc.pnl,
+                newRemainingAmount: pc.newRemainingAmount, newPartialState: pc.newPartialState,
+                newStopLoss: pc.newStopLoss,
+              }),
+            });
+            const pcData = await pcRes.json();
+            if (pcData.success) {
+              addLog(`[${strategy.name}] ${pc.symbol.replace('USDT', '')} ${pc.reason}: +$${pc.pnl.toFixed(2)} (осталось $${pc.newRemainingAmount.toFixed(2)})`, 'trade');
+            }
           } catch { /* silent */ }
         }
 
