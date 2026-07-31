@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useTerminalStore } from '@/lib/store';
 import type { OrderBookLevel, OrderBookData } from '@/lib/types';
+import { RefreshCw, WifiOff } from 'lucide-react';
 
 function formatPrice(price: number, basePrice: number): string {
   if (basePrice >= 10000) return price.toFixed(1);
@@ -31,22 +32,27 @@ interface FlashMap {
   [priceKey: string]: 'up' | 'down' | null;
 }
 
+type ConnectionMode = 'ws' | 'rest' | 'error';
+
 export default function OrderBook() {
   const { selectedSymbol } = useTerminalStore();
   const [orderBook, setOrderBook] = useState<OrderBookData | null>(null);
   const [flashes, setFlashes] = useState<FlashMap>({});
+  const [mode, setMode] = useState<ConnectionMode>('ws');
   const prevDataRef = useRef<Map<string, number>>(new Map());
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const wsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Keep asks/bids pinned to the center
   const asksContainerRef = useRef<HTMLDivElement>(null);
   const bidsContainerRef = useRef<HTMLDivElement>(null);
 
   const processDepth = useCallback((raw: {
-    lastUpdateId: number;
+    lastUpdateId?: number;
     bids: [string, string][];
     asks: [string, string][];
   }) => {
@@ -104,21 +110,67 @@ export default function OrderBook() {
     flashTimerRef.current = setTimeout(() => setFlashes({}), 200);
   }, []);
 
+  // ── Cleanup helper (must be declared before startRestPolling) ──
+  const stopAll = useCallback(() => {
+    if (wsRef.current) {
+      wsRef.current.onclose = null;
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    if (reconnectRef.current) { clearTimeout(reconnectRef.current); reconnectRef.current = null; }
+    if (wsTimeoutRef.current) { clearTimeout(wsTimeoutRef.current); wsTimeoutRef.current = null; }
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  }, []);
+
+  // ── REST polling fallback ──
+  const startRestPolling = useCallback(() => {
+    stopAll();
+    setMode('rest');
+
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/orderbook?symbol=${selectedSymbol}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.bids && data.asks) {
+            processDepth(data);
+          }
+        }
+      } catch {
+        // silent — will retry on next interval
+      }
+    };
+
+    poll(); // immediate first fetch
+    pollRef.current = setInterval(poll, 2000);
+  }, [selectedSymbol, processDepth]);
+
   useEffect(() => {
     let active = true;
+    let wsConnected = false;
 
-    function connect() {
+    function connectWS() {
       if (!active) return;
       if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
         return;
       }
 
       const streamName = `${selectedSymbol.toLowerCase()}@depth20@100ms`;
-      const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${streamName}`);
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(`wss://stream.binance.com:9443/ws/${streamName}`);
+      } catch {
+        // WebSocket constructor can throw in restricted environments
+        if (active) startRestPolling();
+        return;
+      }
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log(`[OrderBook] Connected: ${selectedSymbol}`);
+        if (!active) return;
+        wsConnected = true;
+        if (wsTimeoutRef.current) { clearTimeout(wsTimeoutRef.current); wsTimeoutRef.current = null; }
+        console.log(`[OrderBook] WS Connected: ${selectedSymbol}`);
       };
 
       ws.onmessage = (event) => {
@@ -128,36 +180,44 @@ export default function OrderBook() {
             processDepth(data);
           }
         } catch {
-          // ignore
+          // ignore parse errors
         }
       };
 
       ws.onclose = () => {
         if (!active) return;
         wsRef.current = null;
-        reconnectRef.current = setTimeout(connect, 3000);
+        // If WS never connected, fall back to REST
+        if (!wsConnected) {
+          startRestPolling();
+          return;
+        }
+        // If WS was working, try to reconnect
+        reconnectRef.current = setTimeout(connectWS, 3000);
       };
 
       ws.onerror = () => {
         ws.close();
       };
+
+      // Timeout: if WS doesn't connect in 4s, fall back to REST
+      wsTimeoutRef.current = setTimeout(() => {
+        if (!wsConnected && active) {
+          console.log('[OrderBook] WS timeout, falling back to REST');
+          if (wsRef.current) { wsRef.current.onclose = null; wsRef.current.close(); wsRef.current = null; }
+          startRestPolling();
+        }
+      }, 4000);
     }
 
-    // Clear previous data when symbol changes
-    prevDataRef.current.clear();
-    connect();
+    connectWS();
 
     return () => {
       active = false;
-      if (reconnectRef.current) clearTimeout(reconnectRef.current);
+      stopAll();
       if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
-      if (wsRef.current) {
-        wsRef.current.onclose = null;
-        wsRef.current.close();
-        wsRef.current = null;
-      }
     };
-  }, [selectedSymbol, processDepth]);
+  }, [selectedSymbol, processDepth, startRestPolling, stopAll]);
 
   // Scroll asks to bottom, bids to top (pin to spread)
   useEffect(() => {
@@ -194,18 +254,32 @@ export default function OrderBook() {
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-white/50 uppercase tracking-wider">Стакан</span>
           <div className="flex items-center gap-1">
-            <div className="w-1.5 h-1.5 rounded-full bg-green-400/80 animate-pulse" />
-            <span className="text-[9px] text-white/20 font-mono">LIVE</span>
+            <div className={
+              mode === 'error'
+                ? 'w-1.5 h-1.5 rounded-full bg-red-400'
+                : 'w-1.5 h-1.5 rounded-full bg-green-400/80 animate-pulse'
+            } />
+            <span className="text-[9px] text-white/20 font-mono">
+              {mode === 'rest' ? 'POLL' : mode === 'error' ? 'OFF' : 'LIVE'}
+            </span>
           </div>
         </div>
-        {orderBook && (
+        {orderBook ? (
           <div className="flex items-center gap-2.5 text-[10px] font-mono">
             <div className="flex items-center gap-1">
               <span className="text-white/20">Спред</span>
               <span className="text-yellow-400/60 font-medium">{orderBook.spreadPercent.toFixed(3)}%</span>
             </div>
           </div>
-        )}
+        ) : mode === 'error' ? (
+          <button
+            onClick={startRestPolling}
+            className="text-white/30 hover:text-white/60 transition-colors"
+            title="Retry"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
+        ) : null}
       </div>
 
       {/* Column Headers */}
@@ -217,7 +291,21 @@ export default function OrderBook() {
 
       {/* Order Book Body */}
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-        {!orderBook ? (
+        {mode === 'error' ? (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="flex flex-col items-center gap-2">
+              <WifiOff className="w-5 h-5 text-white/15" />
+              <span className="text-[10px] text-white/25">Нет подключения</span>
+              <button
+                onClick={startRestPolling}
+                className="text-[10px] text-yellow-400/60 hover:text-yellow-400/90 transition-colors flex items-center gap-1"
+              >
+                <RefreshCw className="w-3 h-3" />
+                Повторить
+              </button>
+            </div>
+          </div>
+        ) : !orderBook ? (
           <div className="flex-1 flex items-center justify-center">
             <div className="flex flex-col items-center gap-2">
               <div className="w-4 h-4 border-2 border-white/10 border-t-white/30 rounded-full animate-spin" />

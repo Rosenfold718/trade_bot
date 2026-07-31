@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initDB, getTraderState, getOpenTrades, getRecentTrades, getClosedTrades, getTotalClosedPnl, getClosedTradeCount, getIndicatorWeights } from '@/lib/db';
+import { initDB, getTraderState, getOpenTrades, getClosedTrades, getIndicatorWeights } from '@/lib/db';
 import { getAuthUserId } from '@/lib/auth-helpers';
-import { makeStrategyDecision, fetchKlines } from '@/lib/trading-engine';
 import type { Trade } from '@/lib/types';
 import { getStrategy } from '@/lib/strategies';
 
@@ -243,10 +242,11 @@ export async function GET(request: NextRequest) {
     const avgRR = avgLoss > 0 ? avgWin / avgLoss : 0;
 
     // Max drawdown calculation
-    let peak = 100; // starting balance
+    const initialBalance = Number(state.initial_balance ?? 100);
+    let peak = initialBalance;
     let maxDrawdown = 0;
-    let runningBalance = 100;
-    const balanceHistory: Array<{ time: string; balance: number }> = [{ time: 'start', balance: 100 }];
+    let runningBalance = initialBalance;
+    const balanceHistory: Array<{ time: string; balance: number }> = [{ time: 'start', balance: initialBalance }];
 
     // Sort closed trades by time
     const sortedClosed = [...closedWithPnl].sort((a, b) =>
@@ -349,13 +349,13 @@ export async function GET(request: NextRequest) {
     }
 
     // Calculate true equity: balance + open trade amounts + unrealized PnL
-    const openTradeAmounts = openTrades.reduce((s, t) => s + t.amount, 0);
+    const openTradeAmounts = openTrades.reduce((s, t) => s + (t.remaining_amount ?? t.amount), 0);
     const unrealizedPnl = openTradeDetails.reduce((s, t) => {
       const isLong = t.direction === 'long';
       const priceChange = isLong
         ? (t.currentPrice - t.entry_price) / t.entry_price
         : (t.entry_price - t.currentPrice) / t.entry_price;
-      return s + (t.amount * priceChange * t.leverage); // no fee deduction for unrealized
+      return s + ((t.remaining_amount ?? t.amount) * priceChange * t.leverage); // no fee deduction for unrealized
     }, 0);
     const totalEquity = state.balance + openTradeAmounts + unrealizedPnl;
     const startingBalance = Number(state.initial_balance ?? 100);

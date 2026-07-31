@@ -155,15 +155,16 @@ export async function POST(request: NextRequest) {
       const trade = openTrades.find(t => t.id === tradeId);
       if (!trade) return NextResponse.json({ error: 'Trade not found' }, { status: 404 });
 
+      const closeAmt = trade.remaining_amount ?? trade.amount;
       const priceChange = trade.direction === 'long'
         ? (exitPrice - trade.entry_price) / trade.entry_price
         : (trade.entry_price - exitPrice) / trade.entry_price;
-      const pnl = trade.amount * priceChange * trade.leverage - trade.amount * 0.001 - (trade.amount / trade.leverage) * 0.001;
+      const pnl = closeAmt * priceChange * trade.leverage - closeAmt * 0.001 - (closeAmt / trade.leverage) * 0.001;
 
       await closeTrade(tradeId, exitPrice, pnl);
 
       const state = await getTraderState(userId, strategyId);
-      const newBalance = Math.max(0, state.balance + trade.amount + pnl);
+      const newBalance = Math.max(0, state.balance + closeAmt + pnl);
 
       await updateBalance(userId, newBalance, strategyId);
 
@@ -175,6 +176,11 @@ export async function POST(request: NextRequest) {
         tradeId: string; closeAmount: number; pnl: number; newRemainingAmount: number;
         newPartialState: string; newStopLoss?: number;
       };
+
+      // Verify trade ownership
+      const partialTrades = await getOpenTrades(userId, strategyId);
+      const partialTrade = partialTrades.find(t => t.id === tradeId);
+      if (!partialTrade) return NextResponse.json({ error: 'Trade not found' }, { status: 404 });
 
       // 1. Update trade in DB (remaining_amount + partial_state + optional SL)
       await partialCloseTrade(tradeId, newRemainingAmount, newPartialState, newStopLoss);
@@ -189,12 +195,16 @@ export async function POST(request: NextRequest) {
 
     if (action === 'update-sl') {
       const { tradeId, newStopLoss } = rest as { tradeId: string; newStopLoss: number };
+      const slTrades = await getOpenTrades(userId, strategyId);
+      if (!slTrades.find(t => t.id === tradeId)) return NextResponse.json({ error: 'Trade not found' }, { status: 404 });
       await updateStopLoss(tradeId, newStopLoss);
       return NextResponse.json({ success: true });
     }
 
     if (action === 'update-tp') {
       const { tradeId, newTakeProfit } = rest as { tradeId: string; newTakeProfit: number };
+      const tpTrades = await getOpenTrades(userId, strategyId);
+      if (!tpTrades.find(t => t.id === tradeId)) return NextResponse.json({ error: 'Trade not found' }, { status: 404 });
       await updateTakeProfit(tradeId, newTakeProfit);
       return NextResponse.json({ success: true });
     }
@@ -296,15 +306,16 @@ export async function POST(request: NextRequest) {
           }
 
           if (shouldClose) {
+            const monCloseAmt = trade.remaining_amount ?? trade.amount;
             const priceChange = trade.direction === 'long'
               ? (candleClose - trade.entry_price) / trade.entry_price
               : (trade.entry_price - candleClose) / trade.entry_price;
-            const pnl = trade.amount * priceChange * trade.leverage - trade.amount * 0.001 - (trade.amount / trade.leverage) * 0.001;
+            const pnl = monCloseAmt * priceChange * trade.leverage - monCloseAmt * 0.001 - (monCloseAmt / trade.leverage) * 0.001;
 
             await closeTrade(trade.id, candleClose, pnl);
 
             const state = await getTraderState(userId, strategyId);
-            let newBalance = state.balance + trade.amount + pnl;
+            let newBalance = state.balance + monCloseAmt + pnl;
 
             if (pnl > 0 && state.debt_to_repay > 0) {
               const repayAmount = Math.min(pnl * 0.1, state.debt_to_repay);
