@@ -375,7 +375,7 @@ export async function openTrade(
   const id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   await tursoDb.execute(
     `INSERT INTO trades (id, user_id, symbol, strategy_id, entry_price, amount, leverage, direction, status, stop_loss, take_profit, opened_at, remaining_amount, entry_quality, partial_state, pattern_name, pattern_direction, pattern_reliability, pattern_strength, pattern_zone_high, pattern_zone_low, pattern_start_time, pattern_end_time)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, datetime('now'), ?, ?, 'full', ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, datetime('now'), ?, ?, 'full', ?, ?, ?, ?, ?, ?, ?, ?)`,
     [id, userId, symbol, strategyId, entryPrice, amount, leverage, direction, stopLoss, takeProfit, amount, entryQuality ?? 0, patternData?.name ?? null, patternData?.direction ?? null, patternData?.reliability ?? null, patternData?.strength ?? null, patternData?.zone_high ?? null, patternData?.zone_low ?? null, patternData?.start_time ?? null, patternData?.end_time ?? null]
   );
 }
