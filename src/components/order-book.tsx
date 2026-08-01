@@ -46,6 +46,7 @@ export default function OrderBook() {
   const containerRef = useRef<HTMLDivElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const failCountRef = useRef(0);
 
   // Keep asks/bids pinned to the center
   const asksContainerRef = useRef<HTMLDivElement>(null);
@@ -126,6 +127,7 @@ export default function OrderBook() {
   const startRestPolling = useCallback(() => {
     stopAll();
     setMode('rest');
+    failCountRef.current = 0;
 
     const poll = async () => {
       try {
@@ -134,10 +136,18 @@ export default function OrderBook() {
           const data = await res.json();
           if (data.bids && data.asks) {
             processDepth(data);
+            failCountRef.current = 0;
+            return;
           }
         }
+        failCountRef.current++;
       } catch {
-        // silent — will retry on next interval
+        failCountRef.current++;
+      }
+      // After 5 consecutive failures, show error state
+      if (failCountRef.current >= 5) {
+        setMode('error');
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
       }
     };
 

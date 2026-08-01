@@ -118,13 +118,13 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: `Максимальное плечо: ${maxAllowedLeverage}x` }, { status: 400 });
       }
 
-      // Dynamic max trade amount: scales with user's balance (no fixed cap)
+      // Dynamic max trade amount: allow up to strategy's tradeSizePercent (default 6-8%)
       // The client-side position sizing already calculates proper amounts,
       // so the backend just validates it doesn't exceed a reasonable % of balance.
       const state = await getTraderState(userId, strategyId);
-      const dynamicMaxAmount = Math.max(8, state.balance * 0.10); // min $8, max 10% of balance
+      const dynamicMaxAmount = Math.max(3, state.balance * 0.15); // min $3, max 15% of balance
       if (amount > dynamicMaxAmount) {
-        return NextResponse.json({ error: `Максимальная сумма сделки: $${dynamicMaxAmount.toFixed(0)} (10% от баланса $${state.balance.toFixed(0)})` }, { status: 400 });
+        return NextResponse.json({ error: `Максимальная сумма сделки: $${dynamicMaxAmount.toFixed(0)} (15% от баланса $${state.balance.toFixed(0)})` }, { status: 400 });
       }
       if (stopLoss <= 0 || takeProfit <= 0) {
         return NextResponse.json({ error: 'SL и TP должны быть больше 0' }, { status: 400 });
@@ -135,8 +135,8 @@ export async function POST(request: NextRequest) {
       if (slDist > 0.08) {
         return NextResponse.json({ error: 'Stop-loss слишком далёкий (макс. 8%)' }, { status: 400 });
       }
-      if (tpDist > 0.20) {
-        return NextResponse.json({ error: 'Take-profit слишком далёкий (макс. 20%)' }, { status: 400 });
+      if (tpDist > 0.15) {
+        return NextResponse.json({ error: 'Take-profit слишком далёкий (макс. 15%)' }, { status: 400 });
       }
 
       if (state.balance < amount) {
@@ -239,13 +239,13 @@ export async function POST(request: NextRequest) {
               }
               needsRepair = true;
             }
-            // Also cap excessive distances (>10%)
+            // Also cap excessive distances (>15% TP, >8% SL)
             if (trade.take_profit) {
               const tpDist = Math.abs(trade.take_profit - trade.entry_price) / trade.entry_price;
-              if (tpDist > 0.10) {
+              if (tpDist > 0.15) {
                 const cappedTP = isLong
-                  ? Math.round((trade.entry_price * 1.10) * 1e8) / 1e8
-                  : Math.round((trade.entry_price * 0.90) * 1e8) / 1e8;
+                  ? Math.round((trade.entry_price * 1.15) * 1e8) / 1e8
+                  : Math.round((trade.entry_price * 0.85) * 1e8) / 1e8;
                 console.warn(`[monitor-trades] Capping excessive TP for ${trade.id}: ${trade.take_profit} -> ${cappedTP}`);
                 await updateTakeProfit(trade.id, cappedTP);
                 trade.take_profit = cappedTP;
@@ -254,10 +254,10 @@ export async function POST(request: NextRequest) {
             }
             if (trade.stop_loss) {
               const slDist = Math.abs(trade.stop_loss - trade.entry_price) / trade.entry_price;
-              if (slDist > 0.05) {
+              if (slDist > 0.08) {
                 const cappedSL = isLong
-                  ? Math.round((trade.entry_price * 0.95) * 1e8) / 1e8
-                  : Math.round((trade.entry_price * 1.05) * 1e8) / 1e8;
+                  ? Math.round((trade.entry_price * 0.92) * 1e8) / 1e8
+                  : Math.round((trade.entry_price * 1.08) * 1e8) / 1e8;
                 console.warn(`[monitor-trades] Capping excessive SL for ${trade.id}: ${trade.stop_loss} -> ${cappedSL}`);
                 await updateStopLoss(trade.id, cappedSL);
                 trade.stop_loss = cappedSL;

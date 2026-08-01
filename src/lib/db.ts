@@ -329,8 +329,8 @@ export async function openTrade(
   patternData?: PatternTradeData | null,
 ): Promise<void> {
   // ── Direction-aware SL/TP validation & auto-correction ──
-  const slCap = entryPrice * 0.05;  // max 5% distance
-  const tpCap = entryPrice * 0.10;  // max 10% distance
+  const slCap = entryPrice * 0.08;  // max 8% distance (was 5% — too tight for 3×ATR)
+  const tpCap = entryPrice * 0.15;  // max 15% distance (was 10% — too tight for 1:5 R:R)
 
   if (direction === 'long') {
     // SL must be BELOW entry, TP must be ABOVE entry

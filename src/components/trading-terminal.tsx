@@ -415,8 +415,12 @@ export default function TradingTerminal() {
           } catch { /* silent */ }
         }
 
+        // Collect IDs of fully closed trades — skip partial close for these
+        const fullyClosedIds = new Set(r.closedTrades.map(ct => ct.tradeId));
+
         // Process partial TP closes (TP1, TP2)
         for (const pc of (r.partialCloses ?? [])) {
+          if (fullyClosedIds.has(pc.tradeId)) continue; // trade was fully closed, skip partial
           try {
             const pcRes = await fetch('/api/trader', {
               method: 'POST', headers: { 'Content-Type': 'application/json' },

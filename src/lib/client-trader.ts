@@ -544,9 +544,9 @@ export async function monitorTradesClient(
   const partialCloses: MonitorResult['partialCloses'] = [];
   const currentSlot = getCurrentCandleSlot(monitorInterval);
 
-  // System settings for auto-repair caps (defaults: SL 5%, TP 10%)
-  const slCapPct = sysSettings ? Number(getSys(sysSettings, 'system.maxSLCapDistance', 5)) / 100 : 0.05;
-  const tpCapPct = sysSettings ? Number(getSys(sysSettings, 'system.maxTPCapDistance', 10)) / 100 : 0.10;
+  // System settings for auto-repair caps (defaults: SL 8%, TP 15%)
+  const slCapPct = sysSettings ? Number(getSys(sysSettings, 'system.maxSLCapDistance', 8)) / 100 : 0.08;
+  const tpCapPct = sysSettings ? Number(getSys(sysSettings, 'system.maxTPCapDistance', 15)) / 100 : 0.15;
 
   // System settings for trailing stop toggles
   const trailing1x = sysSettings ? getSys(sysSettings, 'system.trailing1x', true) : true;
@@ -618,6 +618,7 @@ export async function monitorTradesClient(
       // v2: PARTIAL TP — TP1 (1R, close 50%) and TP2 (1.5R, close 50% of remaining)
       // Only if trade hasn't been partially closed yet (or at the next level)
       // ════════════════════════════════════════════════════════════
+      let skipMainTP = false; // Don't also full-close by main TP if partial TP fired
       if (partialTPEnabled && initialSlDistance > 0 && trade.entry_price) {
         const tp1Price = isLong ? trade.entry_price + initialSlDistance : trade.entry_price - initialSlDistance;
         const tp2Price = isLong ? trade.entry_price + initialSlDistance * 1.5 : trade.entry_price - initialSlDistance * 1.5;
@@ -641,8 +642,8 @@ export async function monitorTradesClient(
             closedAmount: closeAmt, pnl, reason: 'TP1 (1R)', exitPrice: tp1Price,
             newRemainingAmount: newRemaining, newPartialState: 'tp1_hit', newStopLoss: beSL,
           });
-          // Skip further checks this cycle — will continue next cycle with updated state
-          continue;
+          skipMainTP = true; // Don't also full-close by main TP
+          // DO NOT continue — still check SL, time exit, and trailing below
         }
 
         // TP2: close 50% of remaining (= 25% of original), trailing for the rest
@@ -656,7 +657,8 @@ export async function monitorTradesClient(
             closedAmount: closeAmt, pnl, reason: 'TP2 (1.5R)', exitPrice: tp2Price,
             newRemainingAmount: newRemaining, newPartialState: 'tp2_hit',
           });
-          continue;
+          skipMainTP = true;
+          // DO NOT continue — still check SL, time exit, and trailing below
         }
       }
 
@@ -693,20 +695,22 @@ export async function monitorTradesClient(
       // MAIN TP/SL CHECK using candle HIGH/LOW
       // ════════════════════════════════════════════════════════════
       if (!shouldClose) {
-        // Check main TP on completed + current candle
-        if (isLong && trade.take_profit) {
-          if (completed.high >= trade.take_profit || current.high >= trade.take_profit
-            || completed.close >= trade.take_profit) {
-            shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
-          }
-        } else if (!isLong && trade.take_profit) {
-          if (completed.low <= trade.take_profit || current.low <= trade.take_profit
-            || completed.close <= trade.take_profit) {
-            shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
+        // Check main TP — skip if partial TP already fired for this trade
+        if (!skipMainTP) {
+          if (isLong && trade.take_profit) {
+            if (completed.high >= trade.take_profit || current.high >= trade.take_profit
+              || completed.close >= trade.take_profit) {
+              shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
+            }
+          } else if (!isLong && trade.take_profit) {
+            if (completed.low <= trade.take_profit || current.low <= trade.take_profit
+              || completed.close <= trade.take_profit) {
+              shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
+            }
           }
         }
 
-        // Check SL on completed + current candle
+        // Check SL — ALWAYS runs, even if partial TP fired (protect against reversal)
         if (!shouldClose && isLong && trade.stop_loss) {
           if (completed.low <= trade.stop_loss || current.low <= trade.stop_loss
             || completed.close <= trade.stop_loss) {
@@ -851,16 +855,14 @@ export async function runAutoTradeCycle(
   // ── v2: Handle PARTIAL CLOSES (TP1, TP2) ──
   // These return PnL and reduce the trade's remaining amount.
   // The caller (frontend) must process these to update balance + DB.
-  // We add them to the monitor message but don't filter them from openTrades here.
   const partialParts: string[] = [];
-  const partialTradeIds = new Set<string>();
   if (partialCloses.length > 0) {
     for (const pc of partialCloses) {
       partialParts.push(`${pc.symbol.replace('USDT', '')} ${pc.reason} +$${pc.pnl.toFixed(2)}`);
-      partialTradeIds.add(pc.tradeId);
     }
   }
-  const effectiveOpenTrades = updatedOpenTrades.filter(t => !partialTradeIds.has(t.id));
+  // Use updatedOpenTrades for max trade count (partial closes still count as open trades)
+  const effectiveOpenTrades = updatedOpenTrades;
 
   // ── UPDATE COOLDOWNS from closed trades ──
   // For each SL hit, add the symbol to cooldown
@@ -923,8 +925,8 @@ export async function runAutoTradeCycle(
   // Monitoring (SL/TP/trailing) still runs every cycle — only NEW trade search is throttled.
   // IMPORTANT: Skip throttle for short-TF strategies (≤1h) — patterns on 15m/5m
   // form and disappear within a single candle, so scanning every 2h misses them entirely.
-  const shortTfMs: Record<string, number> = { '1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000 };
-  const isShortTF = (shortTfMs[strategyInterval] ?? Infinity) <= 3600000;
+  const shortTfMs: Record<string, number> = { '1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000, '4h': 14400000 };
+  const isShortTF = (shortTfMs[strategyInterval] ?? Infinity) <= 14400000; // 4h and below
   const scanFreqHours = isShortTF ? 1 : Number(getSys(settings, 'system.scanFreqHours', 2));
   const currentUtcHour = new Date().getUTCHours();
   if (scanFreqHours > 1 && currentUtcHour % scanFreqHours !== 0) {
