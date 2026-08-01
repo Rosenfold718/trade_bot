@@ -958,26 +958,68 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
 }) {
   const [closingTrade, setClosingTrade] = useState<Trade | null>(null);
   const [closingLoading, setClosingLoading] = useState(false);
+  const [extraPrices, setExtraPrices] = useState<Record<string, number>>({});
   const allTrades = useMemo(
     () => [...openTrades, ...recentTrades].slice(0, 30),
     [openTrades, recentTrades],
   );
+
+  // Fetch prices for open trade symbols not in WebSocket coins list (e.g. MKR not in top-50)
+  useEffect(() => {
+    const missingSymbols = openTrades
+      .filter(t => t.status === 'open' && !coins.find(c => c.symbol === t.symbol))
+      .map(t => t.symbol);
+    if (missingSymbols.length === 0) return;
+    const uniqueSymbols = [...new Set(missingSymbols)];
+    let active = true;
+    const fetchPrices = async () => {
+      try {
+        const results = await Promise.all(
+          uniqueSymbols.map(async (sym) => {
+            try {
+              const res = await fetch(`/api/price?symbol=${sym}`);
+              if (res.ok) {
+                const data = await res.json();
+                return { symbol: sym, price: data.price ?? 0 };
+              }
+            } catch { /* skip */ }
+            return null;
+          })
+        );
+        if (!active) return;
+        const prices: Record<string, number> = {};
+        for (const r of results) {
+          if (r && r.price > 0) prices[r.symbol] = r.price;
+        }
+        setExtraPrices(prev => ({ ...prev, ...prices }));
+      } catch { /* skip */ }
+    };
+    fetchPrices();
+    const interval = setInterval(fetchPrices, 10000);
+    return () => { active = false; clearInterval(interval); };
+  }, [openTrades, coins]);
+
+  // Helper: get live price for any symbol (coins list or fallback fetch)
+  const getLivePrice = useCallback((symbol: string): number | undefined => {
+    return coins.find(c => c.symbol === symbol)?.price ?? extraPrices[symbol];
+  }, [coins, extraPrices]);
 
   // Calculate total unrealized PnL for open trades
   const totalOpenPnl = useMemo(() => {
     let total = 0;
     for (const trade of openTrades) {
       if (trade.status !== 'open') continue;
-      const livePrice = coins.find(c => c.symbol === trade.symbol)?.price;
+      const livePrice = getLivePrice(trade.symbol);
       if (!livePrice || livePrice <= 0) continue;
       const isLong = trade.direction === 'long';
       const priceChange = isLong
         ? (livePrice - trade.entry_price) / trade.entry_price
         : (trade.entry_price - livePrice) / trade.entry_price;
-      total += trade.amount * priceChange * trade.leverage;
+      const effectiveAmount = trade.remaining_amount ?? trade.amount;
+      total += effectiveAmount * priceChange * trade.leverage;
     }
     return total;
-  }, [openTrades, coins]);
+  }, [openTrades, getLivePrice]);
 
   // Total realized PnL now comes from DB (totalClosedPnl prop) — no more computing from recentTrades
 
@@ -1153,12 +1195,13 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
             // Calculate live PnL for open trades
             let displayPnl = trade.pnl;
             if (isOpen) {
-              const livePrice = coins.find(c => c.symbol === trade.symbol)?.price;
+              const livePrice = getLivePrice(trade.symbol);
               if (livePrice && livePrice > 0) {
                 const priceChange = isLong
                   ? (livePrice - trade.entry_price) / trade.entry_price
                   : (trade.entry_price - livePrice) / trade.entry_price;
-                displayPnl = trade.amount * priceChange * trade.leverage;
+                const effectiveAmount = trade.remaining_amount ?? trade.amount;
+                displayPnl = effectiveAmount * priceChange * trade.leverage;
               }
             }
 
