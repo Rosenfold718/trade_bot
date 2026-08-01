@@ -67,7 +67,7 @@ export const STRATEGIES: StrategyConfig[] = [
     riskRewardRatio: 2.5,         // CORE+TRAIL: RR 2.5 (было 4)
     tradeSizePercent: 0.06,
     maxOpenTrades: 4,         // CORE+TRAIL: макс 4 (было 5)
-    scoreThreshold: 0.50,     // CORE+TRAIL: порог 0.50 (было 0.58)
+    scoreThreshold: 0.30,     // CORE+TRAIL: порог 0.30 (было 0.50 — слишком строгий)
     adxMin: null,               // CORE+TRAIL: ADX как индикатор, не фильтр
     mtfEnabled: true,
     timeFilterEnabled: false,
@@ -112,7 +112,7 @@ export const STRATEGIES: StrategyConfig[] = [
     riskRewardRatio: 1.5,
     tradeSizePercent: 0.04,
     maxOpenTrades: 4,
-    scoreThreshold: 0.50,
+    scoreThreshold: 0.25,     // Порог 0.25 (было 0.50 — слишком строгий)
     adxMin: null,
     mtfEnabled: false,
     timeFilterEnabled: false,

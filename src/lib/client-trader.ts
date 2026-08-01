@@ -152,8 +152,8 @@ function assessEntryQuality(
   // ── DECISION ──
   // Strategy-specific thresholds (scalper is more lenient with entry quality)
   const isScalper = strategyId === 'scalper';
-  const hardLimit = isScalper ? 3.5 : 3.0;   // ATR units — hard reject
-  const softLimit = isScalper ? 2.5 : 2.0;   // ATR units — heavy penalty
+  const hardLimit = isScalper ? 4.5 : 4.0;   // ATR units — hard reject (relaxed)
+  const softLimit = isScalper ? 3.5 : 3.0;   // ATR units — heavy penalty (relaxed)
   const pullbackZone = 1.0;                    // ATR units — ideal entry zone
 
   // HARD REJECT: price is way too far from EMA (chasing the move)
@@ -165,22 +165,8 @@ function assessEntryQuality(
     };
   }
 
-  // HARD REJECT: 4+ consecutive candles in trade direction (exhaustion likely)
-  if (consecutive >= 4 && extension > 1.5) {
-    return {
-      pass: false,
-      scoreMultiplier: 0,
-      reason: `${consecutive} свечей подряд + ${extension.toFixed(1)}×ATR`,
-    };
-  }
-
-  // HARD REJECT: RSI exhaustion
-  if (isLong && rsi > 78) {
-    return { pass: false, scoreMultiplier: 0, reason: `RSI ${rsi.toFixed(0)} (перекупленность)` };
-  }
-  if (!isLong && rsi < 22) {
-    return { pass: false, scoreMultiplier: 0, reason: `RSI ${rsi.toFixed(0)} (перепроданность)` };
-  }
+  // NOTE: RSI hard reject and consecutive candles hard reject removed —
+  // spikeGuard in trading-engine.ts already handles this, and double-filtering kills valid entries.
 
   // Calculate score multiplier
   let multiplier = 1.0;
@@ -630,26 +616,29 @@ export async function monitorTradesClient(
           ? (completed.high >= tp2Price || current.high >= tp2Price)
           : (completed.low <= tp2Price || current.low <= tp2Price);
 
+        // Track effective amount after each partial close
+        let currentEffectiveAmount = effectiveAmount;
+
         // TP1: close 50% of remaining, move SL to breakeven
         if (partialState === 'full' && priceReachedTP1) {
-          const closeAmt = effectiveAmount * 0.5;
-          const newRemaining = effectiveAmount - closeAmt;
+          const closeAmt = currentEffectiveAmount * 0.5;
+          currentEffectiveAmount -= closeAmt;
           const priceChange = isLong ? (tp1Price - trade.entry_price) / trade.entry_price : (trade.entry_price - tp1Price) / trade.entry_price;
           const pnl = closeAmt * priceChange * trade.leverage - closeAmt * 0.001 - (closeAmt / trade.leverage) * 0.001;
           const beSL = isLong ? trade.entry_price * 1.001 : trade.entry_price * 0.999;
           partialCloses.push({
             tradeId: trade.id, symbol: trade.symbol,
             closedAmount: closeAmt, pnl, reason: 'TP1 (1R)', exitPrice: tp1Price,
-            newRemainingAmount: newRemaining, newPartialState: 'tp1_hit', newStopLoss: beSL,
+            newRemainingAmount: currentEffectiveAmount, newPartialState: 'tp1_hit', newStopLoss: beSL,
           });
           skipMainTP = true; // Don't also full-close by main TP
           // DO NOT continue — still check SL, time exit, and trailing below
         }
 
-        // TP2: close 50% of remaining (= 25% of original), trailing for the rest
+        // TP2: close 50% of REMAINING (= 25% of original), trailing for the rest
         if (partialState === 'tp1_hit' && priceReachedTP2) {
-          const closeAmt = effectiveAmount * 0.5;
-          const newRemaining = effectiveAmount - closeAmt;
+          const closeAmt = currentEffectiveAmount * 0.5;
+          const newRemaining = currentEffectiveAmount - closeAmt;
           const priceChange = isLong ? (tp2Price - trade.entry_price) / trade.entry_price : (trade.entry_price - tp2Price) / trade.entry_price;
           const pnl = closeAmt * priceChange * trade.leverage - closeAmt * 0.001 - (closeAmt / trade.leverage) * 0.001;
           partialCloses.push({
@@ -793,6 +782,7 @@ export async function runAutoTradeCycle(
     closedTrades: MonitorResult['closedTrades'];
     trailingUpdates: MonitorResult['trailingUpdates'];
     tpRepairs: MonitorResult['tpRepairs'];
+    partialCloses: MonitorResult['partialCloses'];
     newTrades?: NewTradeInfo[];
     message: string;
     scannedCount: number;

@@ -123,22 +123,49 @@ export default function OrderBook() {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
   }, []);
 
+  const [errorDetail, setErrorDetail] = useState<string>('');
+
   // ── REST polling fallback ──
   const startRestPolling = useCallback(() => {
     stopAll();
     setMode('rest');
     failCountRef.current = 0;
+    setErrorDetail('');
 
     const poll = async () => {
       try {
-        const res = await fetch(`/api/orderbook?symbol=${selectedSymbol}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.bids && data.asks) {
-            processDepth(data);
-            failCountRef.current = 0;
-            return;
+        // Try server API first
+        let data: any = null;
+        try {
+          const res = await fetch(`/api/orderbook?symbol=${selectedSymbol}`);
+          if (res.ok) {
+            data = await res.json();
+          } else {
+            setErrorDetail(`API ${res.status}`);
           }
+        } catch (apiErr) {
+          setErrorDetail(apiErr instanceof Error ? apiErr.message : 'API error');
+        }
+
+        // Fallback: direct Binance REST (CORS works from browsers)
+        if (!data?.bids || !data?.asks) {
+          try {
+            const binanceRes = await fetch(`https://api.binance.com/api/v3/depth?symbol=${selectedSymbol}&limit=20`);
+            if (binanceRes.ok) {
+              data = await binanceRes.json();
+            } else {
+              setErrorDetail(`Binance ${binanceRes.status}`);
+            }
+          } catch (binanceErr) {
+            setErrorDetail(binanceErr instanceof Error ? binanceErr.message : 'Binance error');
+          }
+        }
+
+        if (data?.bids && data?.asks) {
+          processDepth(data);
+          failCountRef.current = 0;
+          setErrorDetail('');
+          return;
         }
         failCountRef.current++;
       } catch {
@@ -306,6 +333,8 @@ export default function OrderBook() {
             <div className="flex flex-col items-center gap-2">
               <WifiOff className="w-5 h-5 text-white/15" />
               <span className="text-[10px] text-white/25">Нет подключения</span>
+              {errorDetail && <span className="text-[9px] text-red-400/40 font-mono">{errorDetail}</span>}
+              {!selectedSymbol && <span className="text-[9px] text-yellow-400/40">Символ не выбран</span>}
               <button
                 onClick={startRestPolling}
                 className="text-[10px] text-yellow-400/60 hover:text-yellow-400/90 transition-colors flex items-center gap-1"

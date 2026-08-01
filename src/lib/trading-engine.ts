@@ -795,9 +795,9 @@ function makeMomentumDecision(
   const absShortScore = Math.abs(shortScore);
   const maxScore = Math.max(absLongScore, absShortScore);
 
-  // Confluence: require ≥6 of 10 indicators to agree
+  // Confluence: require ≥5 of 10 indicators to agree
   const bestCount = Math.max(longCount, shortCount);
-  if (bestCount < 6) {
+  if (bestCount < 5) {
     return { symbol, direction: 'none', score: maxScore, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
   }
 
@@ -1315,13 +1315,15 @@ function makePatternProDecision(
     'Утренняя звезда', 'Вечерняя звезда',
     'Бычий флаг', 'Медвежий флаг',
     'Близнецы (дно)',
+    'Нисходящий клин',    // 68% reliability — moved from Tier-2
+    'Двойное дно',         // 78% reliability — moved from Tier-2
   ]);
   const TIER2_NAMES = new Set([
     'Бычье поглощение', 'Медвежье поглощение',
     'Проникающая линия', 'Тёмное облако',
     'Три белых солдата', 'Три чёрных ворона',
-    'Двойное дно', 'Двойная вершина',
-    'Восходящий клин', 'Нисходящий клин',
+    'Двойная вершина',
+    'Восходящий клин',
     'Близнецы (вершина)',
   ]);
   const STRUCTURAL_NAMES = new Set([...TIER1_NAMES, ...TIER2_NAMES]);
@@ -1380,8 +1382,8 @@ function makePatternProDecision(
     return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators, pattern: null };
   }
 
-  // ── REQUIRE MINIMUM STRENGTH > 0.25 on tier-1 pattern ──
-  const strongTier1 = tier1Patterns.filter(p => p.strength > 0.25);
+  // ── REQUIRE MINIMUM STRENGTH > 0.15 on tier-1 pattern ──
+  const strongTier1 = tier1Patterns.filter(p => p.strength > 0.15);
   if (strongTier1.length === 0) {
     return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators: [], pattern: null };
   }

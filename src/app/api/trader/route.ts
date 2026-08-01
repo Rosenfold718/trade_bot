@@ -273,8 +273,19 @@ export async function POST(request: NextRequest) {
           if (!klineRes.ok) continue;
           const klineData = await klineRes.json();
           if (!Array.isArray(klineData) || klineData.length < 1) continue;
-          const completedCandle = klineData.length >= 2 ? klineData[0] : klineData[klineData.length - 1];
-          const candleClose = parseFloat(String(completedCandle[4]));
+          // Parse both completed and current candles for high/low wick checks
+          const parseKline = (k: (string | number)[]) => ({
+            high: parseFloat(String(k[2])),
+            low: parseFloat(String(k[3])),
+            close: parseFloat(String(k[4])),
+          });
+          const completed = parseKline(klineData[0]);
+          const current = klineData.length >= 2 ? parseKline(klineData[1]) : completed;
+          const candleClose = current.close;
+
+          // Use max high / min low across both candles for TP/SL detection
+          const checkHigh = Math.max(completed.high, current.high);
+          const checkLow = Math.min(completed.low, current.low);
 
           let shouldClose = false;
           let reason = '';
@@ -293,15 +304,15 @@ export async function POST(request: NextRequest) {
             }
           }
 
-          if (trade.direction === 'long' && trade.take_profit && candleClose >= trade.take_profit) {
+          if (trade.direction === 'long' && trade.take_profit && (checkHigh >= trade.take_profit || candleClose >= trade.take_profit)) {
             shouldClose = true; reason = 'TP hit';
-          } else if (trade.direction === 'short' && trade.take_profit && candleClose <= trade.take_profit) {
+          } else if (trade.direction === 'short' && trade.take_profit && (checkLow <= trade.take_profit || candleClose <= trade.take_profit)) {
             shouldClose = true; reason = 'TP hit';
           }
 
-          if (trade.direction === 'long' && trade.stop_loss && candleClose <= trade.stop_loss) {
+          if (trade.direction === 'long' && trade.stop_loss && (checkLow <= trade.stop_loss || candleClose <= trade.stop_loss)) {
             shouldClose = true; reason = 'SL hit';
-          } else if (trade.direction === 'short' && trade.stop_loss && candleClose >= trade.stop_loss) {
+          } else if (trade.direction === 'short' && trade.stop_loss && (checkHigh >= trade.stop_loss || candleClose >= trade.stop_loss)) {
             shouldClose = true; reason = 'SL hit';
           }
 
