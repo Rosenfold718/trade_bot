@@ -406,7 +406,8 @@ export async function monitorTradesClient(
         const priceChange = trade.direction === 'long'
           ? (effectiveExitPrice - trade.entry_price) / trade.entry_price
           : (trade.entry_price - effectiveExitPrice) / trade.entry_price;
-        const pnl = trade.amount * priceChange * trade.leverage - trade.amount * 0.001 - (trade.amount / trade.leverage) * 0.001;
+        const effectiveAmount = trade.remaining_amount ?? trade.amount;
+        const pnl = effectiveAmount * priceChange * trade.leverage - effectiveAmount * 0.001 - (effectiveAmount / trade.leverage) * 0.001;
         closedTrades.push({ tradeId: trade.id, symbol: trade.symbol, direction: trade.direction, pnl, reason, exitPrice: effectiveExitPrice });
       }
     } catch { continue; }

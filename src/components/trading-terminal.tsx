@@ -799,7 +799,7 @@ export default function TradingTerminal() {
             </div>
 
             {/* Order Book — desktop only */}
-            <div className="w-56 xl:w-64 2xl:w-72 shrink-0 border-l border-white/[0.06] hidden lg:block">
+            <div className="w-56 xl:w-64 2xl:w-72 shrink-0 border-l border-white/[0.06]">
               <OrderBook key={selectedSymbol} />
             </div>
           </div>
@@ -1051,7 +1051,7 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
     const priceChange = isLong
       ? (livePrice - closingTrade.entry_price) / closingTrade.entry_price
       : (closingTrade.entry_price - livePrice) / closingTrade.entry_price;
-    return closingTrade.amount * priceChange * closingTrade.leverage;
+    return (closingTrade.remaining_amount ?? closingTrade.amount) * priceChange * closingTrade.leverage;
   }, [closingTrade, coins]);
 
   if (allTrades.length === 0 && openTrades.length === 0) {
