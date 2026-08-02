@@ -19,7 +19,9 @@ async function recalcBalance(userId: string, strategyId: string): Promise<{ corr
   const openAmountSum = openTrades.reduce((sum, t) => sum + (t.remaining_amount ?? t.amount), 0);
 
   // Correct available balance = initial_balance + all PnL - locked amounts
-  const initialBalance = Number(state.initial_balance ?? state.balance ?? 100);
+  // IMPORTANT: if initial_balance is NULL, use 100 (the system default).
+  // NEVER fall back to state.balance — that would double-count PnL.
+  const initialBalance = Number(state.initial_balance ?? 100);
   const correctBalance = Math.max(0, initialBalance + closedPnlSum - openAmountSum);
 
   const corrected = Math.abs(state.balance - correctBalance) > 0.01;

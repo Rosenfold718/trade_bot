@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
     // This ensures balance is consistent with the new deposit
     const tradesRes = await tursoDb.execute(
       `SELECT COALESCE(SUM(pnl), 0) as pnl_sum, 
-       (SELECT COALESCE(SUM(amount), 0) FROM trades WHERE user_id = ? AND strategy_id = ? AND status = 'open') as open_sum
+       (SELECT COALESCE(SUM(COALESCE(remaining_amount, amount)), 0) FROM trades WHERE user_id = ? AND strategy_id = ? AND status = 'open') as open_sum
        FROM trades WHERE user_id = ? AND strategy_id = ? AND status = 'closed' AND pnl IS NOT NULL`,
       [userId, strategyId, userId, strategyId]
     );

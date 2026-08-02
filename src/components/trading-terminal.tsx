@@ -1196,7 +1196,7 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
             const isLong = trade.direction === 'long';
             const isOpen = trade.status === 'open';
 
-            // Calculate live PnL for open trades
+            // Calculate live PnL for open trades, fallback for closed with NULL pnl
             let displayPnl = trade.pnl;
             if (isOpen) {
               const livePrice = getLivePrice(trade.symbol);
@@ -1207,6 +1207,14 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
                 const effectiveAmount = trade.remaining_amount ?? trade.amount;
                 displayPnl = effectiveAmount * priceChange * trade.leverage;
               }
+            } else if (displayPnl == null && trade.exit_price != null && trade.entry_price) {
+              // Closed trade with NULL pnl — recalculate from entry/exit prices
+              const effAmt = trade.remaining_amount ?? trade.amount;
+              const pc = isLong
+                ? (trade.exit_price - trade.entry_price) / trade.entry_price
+                : (trade.entry_price - trade.exit_price) / trade.entry_price;
+              const fee = effAmt * 0.001 + (effAmt / (trade.leverage || 1)) * 0.001;
+              displayPnl = effAmt * pc * trade.leverage - fee;
             }
 
             return (
