@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, getTotalClosedPnl, getClosedTradeCount, openTrade, closeTrade, updateStopLoss, updateTakeProfit, updateBalance, initUserTradingData, getClosedTrades, partialCloseTrade } from '@/lib/db';
+import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, getTotalClosedPnl, getClosedTradeCount, openTrade, closeTrade, updateStopLoss, updateTakeProfit, updateBalance, initUserTradingData, getClosedTrades } from '@/lib/db';
 import { fetchKlines, makeStrategyDecision, fetchTopSymbols } from '@/lib/trading-engine';
 import { getAuthUserId } from '@/lib/auth-helpers';
 import { getStrategy } from '@/lib/strategies';
@@ -29,16 +29,17 @@ export async function GET(request: NextRequest) {
     ]);
 
     // ── Balance self-heal: recalculate from trade history to fix any drift ──
-    // Formula: balance = initial_balance + realizedPnl - lockedInOpenTrades
-    // Uses state.initial_balance (from update-deposit) instead of hardcoded $100
+    // Formula: balance = INITIAL_DEPOSIT($100) + realizedPnl - lockedInOpenTrades
+    // This ensures balance GROWS when profitable trades close (realizedPnl increases)
+    // and shrinks when losing trades close. PnL (totalClosedPnl) = growth from initial $100.
     try {
       const allClosed = await getClosedTrades(userId, strategyId);
       const closedPnlSum = allClosed.reduce((s, t) => s + (t.pnl ?? 0), 0);
-      const openAmountSum = openTrades.reduce((s, t) => s + (t.remaining_amount ?? t.amount), 0);
-      const initialDeposit = state.initial_balance ?? 100;
-      const correctBalance = Math.max(0, initialDeposit + closedPnlSum - openAmountSum);
+      const openAmountSum = openTrades.reduce((s, t) => s + t.amount, 0);
+      const INITIAL_DEPOSIT = 100;
+      const correctBalance = Math.max(0, INITIAL_DEPOSIT + closedPnlSum - openAmountSum);
       if (Math.abs(state.balance - correctBalance) > 0.01) {
-        console.log(`[trader GET] Balance self-heal: ${state.balance.toFixed(2)} → ${correctBalance.toFixed(2)} (initial=$${initialDeposit} + pnl=${closedPnlSum.toFixed(2)} - open=${openAmountSum.toFixed(2)})`);
+        console.log(`[trader GET] Balance self-heal: ${state.balance.toFixed(2)} → ${correctBalance.toFixed(2)} (initial=$${INITIAL_DEPOSIT} + pnl=${closedPnlSum.toFixed(2)} - open=${openAmountSum.toFixed(2)})`);
         await updateBalance(userId, correctBalance, strategyId);
         state.balance = correctBalance;
       }
@@ -104,27 +105,23 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'open-trade') {
-      const { symbol: sym, entryPrice, amount, leverage, direction, stopLoss, takeProfit, pattern: patternData } = rest as {
+      const { symbol: sym, entryPrice, amount, leverage, direction, stopLoss, takeProfit } = rest as {
         symbol: string; entryPrice: number; amount: number; leverage: number;
         direction: 'long' | 'short'; stopLoss: number; takeProfit: number;
-        pattern?: { name?: string; direction?: string; reliability?: number; strength?: number; zone_high?: number; zone_low?: number; start_time?: number; end_time?: number } | null;
       };
 
       if (amount <= 0) return NextResponse.json({ error: 'Invalid amount' }, { status: 400 });
 
+      const state = await getTraderState(userId, strategyId);
+
       // Validate trade parameters
-      const maxAllowedLeverage = 3;
+      const maxAllowedLeverage = 5;
       if (leverage > maxAllowedLeverage) {
         return NextResponse.json({ error: `Максимальное плечо: ${maxAllowedLeverage}x` }, { status: 400 });
       }
-
-      // Dynamic max trade amount: allow up to strategy's tradeSizePercent (default 6-8%)
-      // The client-side position sizing already calculates proper amounts,
-      // so the backend just validates it doesn't exceed a reasonable % of balance.
-      const state = await getTraderState(userId, strategyId);
-      const dynamicMaxAmount = Math.max(3, state.balance * 0.15); // min $3, max 15% of balance
+      const dynamicMaxAmount = Math.max(5, state.balance * 0.25);
       if (amount > dynamicMaxAmount) {
-        return NextResponse.json({ error: `Максимальная сумма сделки: $${dynamicMaxAmount.toFixed(0)} (15% от баланса $${state.balance.toFixed(0)})` }, { status: 400 });
+        return NextResponse.json({ error: `Максимальная сумма сделки: 25% баланса ( currently $${dynamicMaxAmount.toFixed(2)} )` }, { status: 400 });
       }
       if (stopLoss <= 0 || takeProfit <= 0) {
         return NextResponse.json({ error: 'SL и TP должны быть больше 0' }, { status: 400 });
@@ -132,18 +129,18 @@ export async function POST(request: NextRequest) {
       // Check SL/TP distances are reasonable
       const slDist = Math.abs(entryPrice - stopLoss) / entryPrice;
       const tpDist = Math.abs(takeProfit - entryPrice) / entryPrice;
-      if (slDist > 0.08) {
-        return NextResponse.json({ error: 'Stop-loss слишком далёкий (макс. 8%)' }, { status: 400 });
+      if (slDist > 0.10) {
+        return NextResponse.json({ error: 'Stop-loss слишком далёкий (макс. 10%)' }, { status: 400 });
       }
-      if (tpDist > 0.15) {
-        return NextResponse.json({ error: 'Take-profit слишком далёкий (макс. 15%)' }, { status: 400 });
+      if (tpDist > 0.20) {
+        return NextResponse.json({ error: 'Take-profit слишком далёкий (макс. 20%)' }, { status: 400 });
       }
 
       if (state.balance < amount) {
         return NextResponse.json({ error: 'Insufficient balance' }, { status: 400 });
       }
 
-      await openTrade(userId, sym, entryPrice, amount, leverage, direction, stopLoss, takeProfit, strategyId, undefined, patternData ?? undefined);
+      await openTrade(userId, sym, entryPrice, amount, leverage, direction, stopLoss, takeProfit, strategyId);
       await updateBalance(userId, state.balance - amount, strategyId);
 
       return NextResponse.json({ success: true, message: `Opened ${direction} on ${sym}` });
@@ -155,56 +152,29 @@ export async function POST(request: NextRequest) {
       const trade = openTrades.find(t => t.id === tradeId);
       if (!trade) return NextResponse.json({ error: 'Trade not found' }, { status: 404 });
 
-      const closeAmt = trade.remaining_amount ?? trade.amount;
       const priceChange = trade.direction === 'long'
         ? (exitPrice - trade.entry_price) / trade.entry_price
         : (trade.entry_price - exitPrice) / trade.entry_price;
-      const pnl = closeAmt * priceChange * trade.leverage - closeAmt * 0.001 - (closeAmt / trade.leverage) * 0.001;
+      const pnl = trade.amount * priceChange * trade.leverage - trade.amount * 0.001 - (trade.amount / trade.leverage) * 0.001;
 
       await closeTrade(tradeId, exitPrice, pnl);
 
       const state = await getTraderState(userId, strategyId);
-      const newBalance = Math.max(0, state.balance + closeAmt + pnl);
+      const newBalance = Math.max(0, state.balance + trade.amount + pnl);
 
       await updateBalance(userId, newBalance, strategyId);
 
       return NextResponse.json({ success: true, pnl, newBalance });
     }
 
-    if (action === 'partial-close-trade') {
-      const { tradeId, closeAmount, pnl, newRemainingAmount, newPartialState, newStopLoss } = rest as {
-        tradeId: string; closeAmount: number; pnl: number; newRemainingAmount: number;
-        newPartialState: string; newStopLoss?: number;
-      };
-
-      // Verify trade ownership
-      const partialTrades = await getOpenTrades(userId, strategyId);
-      const partialTrade = partialTrades.find(t => t.id === tradeId);
-      if (!partialTrade) return NextResponse.json({ error: 'Trade not found' }, { status: 404 });
-
-      // 1. Update trade in DB (remaining_amount + partial_state + optional SL)
-      await partialCloseTrade(tradeId, newRemainingAmount, newPartialState, newStopLoss);
-
-      // 2. Credit the partial PnL + closed amount back to balance
-      const state = await getTraderState(userId, strategyId);
-      const newBalance = state.balance + closeAmount + pnl;
-      await updateBalance(userId, newBalance, strategyId);
-
-      return NextResponse.json({ success: true, pnl, closedAmount, newBalance });
-    }
-
     if (action === 'update-sl') {
       const { tradeId, newStopLoss } = rest as { tradeId: string; newStopLoss: number };
-      const slTrades = await getOpenTrades(userId, strategyId);
-      if (!slTrades.find(t => t.id === tradeId)) return NextResponse.json({ error: 'Trade not found' }, { status: 404 });
       await updateStopLoss(tradeId, newStopLoss);
       return NextResponse.json({ success: true });
     }
 
     if (action === 'update-tp') {
       const { tradeId, newTakeProfit } = rest as { tradeId: string; newTakeProfit: number };
-      const tpTrades = await getOpenTrades(userId, strategyId);
-      if (!tpTrades.find(t => t.id === tradeId)) return NextResponse.json({ error: 'Trade not found' }, { status: 404 });
       await updateTakeProfit(tradeId, newTakeProfit);
       return NextResponse.json({ success: true });
     }
@@ -239,13 +209,13 @@ export async function POST(request: NextRequest) {
               }
               needsRepair = true;
             }
-            // Also cap excessive distances (>15% TP, >8% SL)
+            // Also cap excessive distances (>10%)
             if (trade.take_profit) {
               const tpDist = Math.abs(trade.take_profit - trade.entry_price) / trade.entry_price;
-              if (tpDist > 0.15) {
+              if (tpDist > 0.10) {
                 const cappedTP = isLong
-                  ? Math.round((trade.entry_price * 1.15) * 1e8) / 1e8
-                  : Math.round((trade.entry_price * 0.85) * 1e8) / 1e8;
+                  ? Math.round((trade.entry_price * 1.10) * 1e8) / 1e8
+                  : Math.round((trade.entry_price * 0.90) * 1e8) / 1e8;
                 console.warn(`[monitor-trades] Capping excessive TP for ${trade.id}: ${trade.take_profit} -> ${cappedTP}`);
                 await updateTakeProfit(trade.id, cappedTP);
                 trade.take_profit = cappedTP;
@@ -254,10 +224,10 @@ export async function POST(request: NextRequest) {
             }
             if (trade.stop_loss) {
               const slDist = Math.abs(trade.stop_loss - trade.entry_price) / trade.entry_price;
-              if (slDist > 0.08) {
+              if (slDist > 0.05) {
                 const cappedSL = isLong
-                  ? Math.round((trade.entry_price * 0.92) * 1e8) / 1e8
-                  : Math.round((trade.entry_price * 1.08) * 1e8) / 1e8;
+                  ? Math.round((trade.entry_price * 0.95) * 1e8) / 1e8
+                  : Math.round((trade.entry_price * 1.05) * 1e8) / 1e8;
                 console.warn(`[monitor-trades] Capping excessive SL for ${trade.id}: ${trade.stop_loss} -> ${cappedSL}`);
                 await updateStopLoss(trade.id, cappedSL);
                 trade.stop_loss = cappedSL;
@@ -273,19 +243,8 @@ export async function POST(request: NextRequest) {
           if (!klineRes.ok) continue;
           const klineData = await klineRes.json();
           if (!Array.isArray(klineData) || klineData.length < 1) continue;
-          // Parse both completed and current candles for high/low wick checks
-          const parseKline = (k: (string | number)[]) => ({
-            high: parseFloat(String(k[2])),
-            low: parseFloat(String(k[3])),
-            close: parseFloat(String(k[4])),
-          });
-          const completed = parseKline(klineData[0]);
-          const current = klineData.length >= 2 ? parseKline(klineData[1]) : completed;
-          const candleClose = current.close;
-
-          // Use max high / min low across both candles for TP/SL detection
-          const checkHigh = Math.max(completed.high, current.high);
-          const checkLow = Math.min(completed.low, current.low);
+          const completedCandle = klineData.length >= 2 ? klineData[0] : klineData[klineData.length - 1];
+          const candleClose = parseFloat(String(completedCandle[4]));
 
           let shouldClose = false;
           let reason = '';
@@ -304,29 +263,28 @@ export async function POST(request: NextRequest) {
             }
           }
 
-          if (trade.direction === 'long' && trade.take_profit && (checkHigh >= trade.take_profit || candleClose >= trade.take_profit)) {
+          if (trade.direction === 'long' && trade.take_profit && candleClose >= trade.take_profit) {
             shouldClose = true; reason = 'TP hit';
-          } else if (trade.direction === 'short' && trade.take_profit && (checkLow <= trade.take_profit || candleClose <= trade.take_profit)) {
+          } else if (trade.direction === 'short' && trade.take_profit && candleClose <= trade.take_profit) {
             shouldClose = true; reason = 'TP hit';
           }
 
-          if (trade.direction === 'long' && trade.stop_loss && (checkLow <= trade.stop_loss || candleClose <= trade.stop_loss)) {
+          if (trade.direction === 'long' && trade.stop_loss && candleClose <= trade.stop_loss) {
             shouldClose = true; reason = 'SL hit';
-          } else if (trade.direction === 'short' && trade.stop_loss && (checkHigh >= trade.stop_loss || candleClose >= trade.stop_loss)) {
+          } else if (trade.direction === 'short' && trade.stop_loss && candleClose >= trade.stop_loss) {
             shouldClose = true; reason = 'SL hit';
           }
 
           if (shouldClose) {
-            const monCloseAmt = trade.remaining_amount ?? trade.amount;
             const priceChange = trade.direction === 'long'
               ? (candleClose - trade.entry_price) / trade.entry_price
               : (trade.entry_price - candleClose) / trade.entry_price;
-            const pnl = monCloseAmt * priceChange * trade.leverage - monCloseAmt * 0.001 - (monCloseAmt / trade.leverage) * 0.001;
+            const pnl = trade.amount * priceChange * trade.leverage - trade.amount * 0.001 - (trade.amount / trade.leverage) * 0.001;
 
             await closeTrade(trade.id, candleClose, pnl);
 
             const state = await getTraderState(userId, strategyId);
-            let newBalance = state.balance + monCloseAmt + pnl;
+            let newBalance = state.balance + trade.amount + pnl;
 
             if (pnl > 0 && state.debt_to_repay > 0) {
               const repayAmount = Math.min(pnl * 0.1, state.debt_to_repay);
@@ -425,7 +383,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ message: 'Insufficient balance for trade' });
       }
 
-      await openTrade(userId, sym, price, tradeAmount, decision.leverage, decision.direction as 'long' | 'short', decision.stopLoss, decision.takeProfit, strategyId, undefined, decision.pattern ?? undefined);
+      await openTrade(userId, sym, price, tradeAmount, decision.leverage, decision.direction as 'long' | 'short', decision.stopLoss, decision.takeProfit, strategyId);
       await updateBalance(userId, state.balance - tradeAmount, strategyId);
 
       return NextResponse.json({
