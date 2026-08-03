@@ -130,6 +130,7 @@ export default function BacktestDialog({ open, onClose }: BacktestDialogProps) {
     try {
       const res = await fetch('/api/backtest-run', {
         method: 'POST',
+        headers: { 'Authorization': 'Bearer trade-bot-admin-2024' },
         signal: abortRef.current.signal,
       });
 

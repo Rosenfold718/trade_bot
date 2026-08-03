@@ -1,9 +1,16 @@
+import { NextRequest } from 'next/server';
 import { getTursoClient } from '@/lib/db';
 import { makeStrategyDecision, fetchTopSymbols } from '@/lib/trading-engine';
 import type { CandleData } from '@/lib/types';
 
+const ADMIN_SETUP_KEY = process.env.ADMIN_SETUP_KEY || 'trade-bot-admin-2024';
 const BACKTEST_USER_ID_BEST = 'backtest_100_best';
 const BACKTEST_USER_ID_MEDIAN = 'backtest_100_median';
+
+function checkAuth(request: NextRequest): boolean {
+  const authHeader = request.headers.get('authorization');
+  return authHeader === `Bearer ${ADMIN_SETUP_KEY}`;
+}
 
 export const maxDuration = 600;
 
@@ -209,8 +216,11 @@ async function saveResult(userId: string, result: AccountResult) {
   }
 }
 
-// POST /api/backtest-run — SSE streaming
-export async function POST() {
+// POST /api/backtest-run — SSE streaming (admin only)
+export async function POST(request: NextRequest) {
+  if (!checkAuth(request)) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+  }
   const encoder = new TextEncoder();
   let controller: ReadableStreamDefaultController | null = null;
 
