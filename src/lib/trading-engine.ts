@@ -21,7 +21,7 @@ function sma(data: number[], period: number): number[] {
   return result;
 }
 
-function ema(data: number[], period: number): number[] {
+export function ema(data: number[], period: number): number[] {
   const result: number[] = [];
   const multiplier = 2 / (period + 1);
   let prevEma: number | null = null;
@@ -42,7 +42,7 @@ function ema(data: number[], period: number): number[] {
   return result;
 }
 
-function calcRSI(closes: number[], period: number = 14): number {
+export function calcRSI(closes: number[], period: number = 14): number {
   if (closes.length < period + 1) return 50;
   // Wilder's smoothing method
   const multiplier = 1 / period;
@@ -70,7 +70,7 @@ function calcRSI(closes: number[], period: number = 14): number {
   return 100 - (100 / (1 + rs));
 }
 
-function calcMACD(closes: number[]): { macdLine: number; signalLine: number; histogram: number } {
+export function calcMACD(closes: number[]): { macdLine: number; signalLine: number; histogram: number } {
   const ema12 = ema(closes, 12);
   const ema26 = ema(closes, 26);
   const macdLineArr: number[] = [];
@@ -147,7 +147,7 @@ function calcStochRSI(closes: number[], rsiPeriod: number = 14, stochPeriod: num
   return (currentRSI - minRSI) / (maxRSI - minRSI);
 }
 
-function calcADX(candles: CandleData[], period: number = 14): { adx: number; plusDI: number; minusDI: number } {
+export function calcADX(candles: CandleData[], period: number = 14): { adx: number; plusDI: number; minusDI: number } {
   if (candles.length < period * 2) return { adx: 0, plusDI: 0, minusDI: 0 };
 
   const trueRanges: number[] = [];

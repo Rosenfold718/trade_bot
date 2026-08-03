@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { getTursoClient } from '@/lib/db';
-import { fetchTopSymbols, analyzeIndicators, calcATR } from '@/lib/trading-engine';
+import { fetchTopSymbols, analyzeIndicators, calcATR, calcRSI, calcMACD, calcADX, ema } from '@/lib/trading-engine';
 import type { CandleData } from '@/lib/types';
 
 const ADMIN_SETUP_KEY = process.env.ADMIN_SETUP_KEY || 'trade-bot-admin-2024';
@@ -80,7 +80,6 @@ const STRATS = [
   { id: 'position-alpha', label: 'Position Alpha', interval: '4h', maxOpen: 2, cooldownCandles: 2, maxDaily: 2, maxHoldHours: 120, rr: 3.0, warmup: 60 },
 ];
 
-// Build O(1) lookup: candleTime → index in the array
 type TimeMap = Map<number, number>;
 function buildTimeMap(candles: CandleData[]): TimeMap {
   const m = new Map<number, number>();
@@ -88,16 +87,13 @@ function buildTimeMap(candles: CandleData[]): TimeMap {
   return m;
 }
 
-// Find candle index at or just after timestamp t (O(1) average)
 function findCandleIdx(candles: CandleData[], tm: TimeMap, t: number): number {
   let idx = tm.get(t);
   if (idx !== undefined) return idx;
-  // No exact match — find next available candle
   for (let d = 1; d <= 5; d++) {
     idx = tm.get(t - d);
     if (idx !== undefined) return idx;
   }
-  // Fallback: binary search
   let lo = 0, hi = candles.length - 1;
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
@@ -106,8 +102,19 @@ function findCandleIdx(candles: CandleData[], tm: TimeMap, t: number): number {
   return lo;
 }
 
-// Simple, fast backtest signal generator
-// Uses analyzeIndicators (10 indicators) with confluence ≥3 instead of ≥4
+/*
+ * Simple, aggressive backtest signal generator.
+ * Does NOT use analyzeIndicators (too conservative with its tight thresholds).
+ * Instead computes raw indicators directly and uses wider bands.
+ *
+ * 6 simple checks, confluence ≥3:
+ * 1. RSI: oversold < 45 → bullish, overbought > 55 → bearish (wide band)
+ * 2. MACD: histogram > 0 → bullish, < 0 → bearish (always directional)
+ * 3. EMA 20 vs 50: price above EMA50 → bullish, below → bearish
+ * 4. EMA 12 vs 26 (MACD lines): EMA12 > EMA26 → bullish
+ * 5. ADX + DI: if ADX > 15, follow +DI vs -DI direction
+ * 6. Candle body: green close > open → bullish, red → bearish (last 3 candles majority)
+ */
 function btSignal(
   candles: CandleData[],
   idx: number,
@@ -115,33 +122,67 @@ function btSignal(
   price: number,
   rr: number,
 ): { direction: 'long' | 'short' | null; leverage: number; sl: number; tp: number } {
-  if (idx < 50) return { direction: null, leverage: 1, sl: 0, tp: 0 };
-  const slice = candles.slice(0, idx + 1);
-  const indicators = analyzeIndicators(slice, {});
-  if (indicators.length === 0) return { direction: null, leverage: 1, sl: 0, tp: 0 };
+  const minCandles = 55; // need enough for EMA50 + RSI14 + MACD
+  if (idx < minCandles || atr <= 0 || price <= 0) return { direction: null, leverage: 1, sl: 0, tp: 0 };
 
-  let longCount = 0, shortCount = 0, longScore = 0, shortScore = 0;
-  for (const ind of indicators) {
-    if (ind.signal > 0) { longCount++; longScore += ind.strength; }
-    else if (ind.signal < 0) { shortCount++; shortScore += ind.strength; }
+  const slice = candles.slice(0, idx + 1);
+  const closes = slice.map(c => c.close);
+  let longCount = 0, shortCount = 0, longStr = 0, shortStr = 0;
+
+  // 1. RSI — wide bands: < 42 bullish, > 58 bearish
+  const rsi = calcRSI(closes);
+  if (rsi < 42) { longCount++; longStr += (42 - rsi) / 42; }
+  else if (rsi > 58) { shortCount++; shortStr += (rsi - 58) / 42; }
+
+  // 2. MACD histogram direction
+  const macd = calcMACD(closes);
+  if (macd.histogram > 0) { longCount++; longStr += Math.min(macd.histogram / (Math.abs(macd.signalLine) || 1), 1); }
+  else if (macd.histogram < 0) { shortCount++; shortStr += Math.min(Math.abs(macd.histogram) / (Math.abs(macd.signalLine) || 1), 1); }
+
+  // 3. Price vs EMA 50
+  const ema50Arr = ema(closes, 50);
+  const ema50 = ema50Arr[ema50Arr.length - 1];
+  if (!isNaN(ema50)) {
+    if (price > ema50) { longCount++; longStr += Math.min(Math.abs(price - ema50) / ema50 * 10, 1); }
+    else { shortCount++; shortStr += Math.min(Math.abs(price - ema50) / ema50 * 10, 1); }
   }
 
-  // Confluence: require ≥3 of 10 (relaxed from 4)
+  // 4. EMA 12 vs 26
+  const ema12 = ema(closes, 12);
+  const ema26 = ema(closes, 26);
+  const e12 = ema12[ema12.length - 1];
+  const e26 = ema26[ema26.length - 1];
+  if (!isNaN(e12) && !isNaN(e26)) {
+    if (e12 > e26) { longCount++; longStr += 0.5; }
+    else { shortCount++; shortStr += 0.5; }
+  }
+
+  // 5. ADX + DI direction (lowered threshold: ADX > 15)
+  const adxResult = calcADX(slice);
+  if (adxResult.adx > 15) {
+    if (adxResult.plusDI > adxResult.minusDI) { longCount++; longStr += 0.5; }
+    else { shortCount++; shortStr += 0.5; }
+  }
+
+  // 6. Recent candle direction (last 3 candles majority)
+  const last3 = slice.slice(-3);
+  const greens = last3.filter(c => c.close > c.open).length;
+  if (greens >= 2) { longCount++; longStr += 0.3; }
+  else if (greens <= 1) { shortCount++; shortStr += 0.3; }
+
+  // Confluence: require ≥ 3 of 6
   const bestCount = Math.max(longCount, shortCount);
   if (bestCount < 3) return { direction: null, leverage: 1, sl: 0, tp: 0 };
 
-  const absLong = Math.abs(longScore);
-  const absShort = Math.abs(shortScore);
+  const absLong = Math.abs(longStr);
+  const absShort = Math.abs(shortStr);
   const score = Math.max(absLong, absShort);
-  // Lower score threshold for backtest: 0.10 instead of 0.20
-  if (score < 0.10) return { direction: null, leverage: 1, sl: 0, tp: 0 };
+  if (score < 0.15) return { direction: null, leverage: 1, sl: 0, tp: 0 };
 
-  const direction: 'long' | 'short' | null = absLong >= absShort ? 'long' : 'short';
+  const direction: 'long' | 'short' = absLong >= absShort ? 'long' : 'short';
   const leverage = Math.min(5, Math.max(2, Math.round(score * 3)));
 
-  // SL: 2.5× ATR, capped at 8%
   const slPct = Math.max(0.008, Math.min(2.5 * atr / price, 0.08));
-  // TP: SL × risk/reward ratio, capped at 15%
   const tpPct = Math.min(slPct * rr, 0.15);
 
   const sl = direction === 'long' ? price * (1 - slPct) : price * (1 + slPct);
@@ -165,7 +206,6 @@ function simulate(
   let dayTrades = 0, lastDay = -1;
   let totalEvals = 0, signalFound = 0;
 
-  // Pre-filter to only symbols that have enough candles
   const validSymbols = symbols.filter(s => {
     const cd = candleData.get(s);
     return cd && cd.length >= strat.warmup + 10;
@@ -206,11 +246,9 @@ function simulate(
       }
     }
 
-    // Check if we can open new trades
     const open = trades.filter(x => !x.closeTime);
     if (open.length >= strat.maxOpen || bal < 5) continue;
 
-    // Shuffle and pick up to 20 symbols to evaluate
     const shuffled = [...validSymbols].sort(() => rand() - 0.5).slice(0, 20);
     const openSyms = new Set(open.map(x => x.symbol));
     let bSym = '', bScore = 0, bDir: 'long' | 'short' | null = null, bLev = 1, bSL = 0, bTP = 0;
@@ -234,7 +272,7 @@ function simulate(
 
       signalFound++;
       bScore = 1; bSym = sym; bDir = sig.direction; bLev = sig.leverage; bSL = sig.sl; bTP = sig.tp;
-      break; // take first valid signal to save time
+      break; // first valid signal per step
     }
 
     if (!bDir || !bSym || bSL === 0 || bTP === 0) continue;
@@ -392,10 +430,8 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Diagnostics
       send('log', { msg: `📊 Диагностика: ${globalEvals} оценок, ${globalSignals} сигналов (${(globalSignals / Math.max(globalEvals, 1) * 100).toFixed(1)}%)` });
 
-      // Calculate stats
       const profitable = results.filter(r => r.pnl > 0).length;
       const totalTrades = results.reduce((s, r) => s + r.totalTrades, 0);
       const avgPnlPct = results.reduce((s, r) => s + r.pnlPct, 0) / results.length;
@@ -417,9 +453,7 @@ export async function POST(request: NextRequest) {
       const stratStats = STRATS.map(s => {
         const sr = results.filter(r => r.strategyId === s.id);
         return {
-          id: s.id,
-          interval: s.interval,
-          count: sr.length,
+          id: s.id, interval: s.interval, count: sr.length,
           profitable: sr.filter(r => r.pnl > 0).length,
           avgPnl: sr.length > 0 ? (sr.reduce((sum, r) => sum + r.pnlPct, 0) / sr.length).toFixed(1) : '0.0',
           avgWR: sr.length > 0 ? (sr.reduce((sum, r) => sum + r.winRate, 0) / sr.length).toFixed(1) : '0.0',
@@ -436,18 +470,11 @@ export async function POST(request: NextRequest) {
       send('log', { msg: '✅ Готово!' });
 
       send('done', {
-        profitable,
-        totalTrades,
+        profitable, totalTrades,
         avgPnlPct: avgPnlPct.toFixed(1),
-        bestPnl: best.pnlPct,
-        worstPnl: worst.pnlPct,
-        medianPnl: median.pnlPct,
-        globalWR,
-        avgDD,
-        stratStats,
-        distribution,
-        bestUserId: BACKTEST_USER_ID_BEST,
-        medianUserId: BACKTEST_USER_ID_MEDIAN,
+        bestPnl: best.pnlPct, worstPnl: worst.pnlPct, medianPnl: median.pnlPct,
+        globalWR, avgDD, stratStats, distribution,
+        bestUserId: BACKTEST_USER_ID_BEST, medianUserId: BACKTEST_USER_ID_MEDIAN,
         allResults: results.map(r => ({
           id: r.id, strategyId: r.strategyId, pnlPct: r.pnlPct,
           totalTrades: r.totalTrades, winRate: r.winRate, maxDrawdownPct: r.maxDrawdownPct,
