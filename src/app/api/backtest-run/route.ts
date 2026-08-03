@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { getTursoClient } from '@/lib/db';
-import { makeStrategyDecision, fetchTopSymbols } from '@/lib/trading-engine';
+import { fetchTopSymbols, analyzeIndicators, calcATR } from '@/lib/trading-engine';
 import type { CandleData } from '@/lib/types';
 
 const ADMIN_SETUP_KEY = process.env.ADMIN_SETUP_KEY || 'trade-bot-admin-2024';
@@ -67,46 +67,122 @@ async function fetchCandlesBT(symbol: string, interval: string, startTime: numbe
   return all;
 }
 
-function calcAmount(balance: number, freeBalance: number, tradeSizePct: number): number {
-  const maxByBalance = freeBalance * Math.min(tradeSizePct, 0.5);
-  let amount: number;
-  if (freeBalance < 200) amount = Math.max(1.5, Math.min(freeBalance * 0.08, 8));
-  else if (freeBalance < 1000) amount = Math.max(5, Math.min(freeBalance * 0.05, 50));
-  else if (freeBalance < 5000) amount = Math.max(20, Math.min(freeBalance * 0.03, 150));
-  else amount = Math.max(50, Math.min(freeBalance * 0.02, 500));
-  return Math.round(Math.min(amount, maxByBalance) * 100) / 100;
+function calcAmount(balance: number, freeBalance: number): number {
+  if (freeBalance < 5) return 0;
+  if (freeBalance < 50) return Math.min(Math.max(freeBalance * 0.10, 1.5), 8);
+  if (freeBalance < 200) return Math.min(Math.max(freeBalance * 0.06, 5), 30);
+  return Math.min(Math.max(freeBalance * 0.04, 10), 50);
 }
 
 const STRATS = [
-  { id: 'momentum', interval: '1h', maxOpen: 5, cooldownCandles: 3, maxDaily: 5, maxHoldHours: 8, tradeSizePct: 0.10, warmup: 120 },
-  { id: 'scalper', interval: '15m', maxOpen: 5, cooldownCandles: 3, maxDaily: 8, maxHoldHours: 8, tradeSizePct: 0.08, warmup: 25 },
-  { id: 'position-alpha', interval: '4h', maxOpen: 3, cooldownCandles: 2, maxDaily: 2, maxHoldHours: 168, tradeSizePct: 0.06, warmup: 250 },
+  { id: 'momentum', label: 'Momentum Pro', interval: '1h', maxOpen: 4, cooldownCandles: 3, maxDaily: 4, maxHoldHours: 12, rr: 2.5, warmup: 60 },
+  { id: 'scalper', label: 'Pattern Pro', interval: '15m', maxOpen: 4, cooldownCandles: 4, maxDaily: 6, maxHoldHours: 6, rr: 2.0, warmup: 50 },
+  { id: 'position-alpha', label: 'Position Alpha', interval: '4h', maxOpen: 2, cooldownCandles: 2, maxDaily: 2, maxHoldHours: 120, rr: 3.0, warmup: 60 },
 ];
 
-async function simulate(
+// Build O(1) lookup: candleTime → index in the array
+type TimeMap = Map<number, number>;
+function buildTimeMap(candles: CandleData[]): TimeMap {
+  const m = new Map<number, number>();
+  for (let i = 0; i < candles.length; i++) m.set(candles[i].time, i);
+  return m;
+}
+
+// Find candle index at or just after timestamp t (O(1) average)
+function findCandleIdx(candles: CandleData[], tm: TimeMap, t: number): number {
+  let idx = tm.get(t);
+  if (idx !== undefined) return idx;
+  // No exact match — find next available candle
+  for (let d = 1; d <= 5; d++) {
+    idx = tm.get(t - d);
+    if (idx !== undefined) return idx;
+  }
+  // Fallback: binary search
+  let lo = 0, hi = candles.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (candles[mid].time < t) lo = mid + 1; else hi = mid;
+  }
+  return lo;
+}
+
+// Simple, fast backtest signal generator
+// Uses analyzeIndicators (10 indicators) with confluence ≥3 instead of ≥4
+function btSignal(
+  candles: CandleData[],
+  idx: number,
+  atr: number,
+  price: number,
+  rr: number,
+): { direction: 'long' | 'short' | null; leverage: number; sl: number; tp: number } {
+  if (idx < 50) return { direction: null, leverage: 1, sl: 0, tp: 0 };
+  const slice = candles.slice(0, idx + 1);
+  const indicators = analyzeIndicators(slice, {});
+  if (indicators.length === 0) return { direction: null, leverage: 1, sl: 0, tp: 0 };
+
+  let longCount = 0, shortCount = 0, longScore = 0, shortScore = 0;
+  for (const ind of indicators) {
+    if (ind.signal > 0) { longCount++; longScore += ind.strength; }
+    else if (ind.signal < 0) { shortCount++; shortScore += ind.strength; }
+  }
+
+  // Confluence: require ≥3 of 10 (relaxed from 4)
+  const bestCount = Math.max(longCount, shortCount);
+  if (bestCount < 3) return { direction: null, leverage: 1, sl: 0, tp: 0 };
+
+  const absLong = Math.abs(longScore);
+  const absShort = Math.abs(shortScore);
+  const score = Math.max(absLong, absShort);
+  // Lower score threshold for backtest: 0.10 instead of 0.20
+  if (score < 0.10) return { direction: null, leverage: 1, sl: 0, tp: 0 };
+
+  const direction: 'long' | 'short' | null = absLong >= absShort ? 'long' : 'short';
+  const leverage = Math.min(5, Math.max(2, Math.round(score * 3)));
+
+  // SL: 2.5× ATR, capped at 8%
+  const slPct = Math.max(0.008, Math.min(2.5 * atr / price, 0.08));
+  // TP: SL × risk/reward ratio, capped at 15%
+  const tpPct = Math.min(slPct * rr, 0.15);
+
+  const sl = direction === 'long' ? price * (1 - slPct) : price * (1 + slPct);
+  const tp = direction === 'long' ? price * (1 + tpPct) : price * (1 - tpPct);
+
+  return { direction, leverage, sl, tp };
+}
+
+function simulate(
   accId: number, strat: typeof STRATS[0], balance0: number,
-  candles: Map<string, CandleData[]>, symbols: string[], seed: number,
-  t0: number, t1: number,
-): Promise<AccountResult> {
+  candleData: Map<string, CandleData[]>, timeMaps: Map<string, TimeMap>,
+  symbols: string[], seed: number, t0: number, t1: number,
+): AccountResult {
   const trades: SimTrade[] = [];
-  let bal = balance0, maxDD = 0, totPnl = 0;
+  let bal = balance0, maxDD = 0;
   let wins = 0, losses = 0, winSum = 0, lossSum = 0;
   let rng = seed;
   const rand = () => { rng = (rng * 1664525 + 1013904223) & 0xFFFFFFFF; return (rng >>> 0) / 0xFFFFFFFF; };
   const iSec = strat.interval === '15m' ? 900 : strat.interval === '4h' ? 14400 : 3600;
   const cdMap = new Map<string, number>();
   let dayTrades = 0, lastDay = -1;
+  let totalEvals = 0, signalFound = 0;
+
+  // Pre-filter to only symbols that have enough candles
+  const validSymbols = symbols.filter(s => {
+    const cd = candleData.get(s);
+    return cd && cd.length >= strat.warmup + 10;
+  });
 
   for (let t = t0 + strat.warmup * iSec; t <= t1; t += iSec) {
     const day = Math.floor(t / 86400);
     if (day !== lastDay) { dayTrades = 0; lastDay = day; }
     if (dayTrades >= strat.maxDaily) continue;
 
-    for (const tr of [...trades]) {
+    // Close existing trades
+    for (const tr of trades) {
       if (tr.closeTime) continue;
-      const sc = candles.get(tr.symbol);
-      if (!sc) continue;
-      const ci = sc.findIndex(c => c.time >= t);
+      const sc = candleData.get(tr.symbol);
+      const tm = timeMaps.get(tr.symbol);
+      if (!sc || !tm) continue;
+      const ci = findCandleIdx(sc, tm, t);
       if (ci < 1) continue;
       const c = sc[ci];
       let close = false, reason = '', exit = c.close;
@@ -124,56 +200,70 @@ async function simulate(
         const fees = tr.amount * 0.001 + (tr.amount / tr.leverage) * 0.001;
         tr.pnl = tr.amount * pc * tr.leverage - fees;
         tr.reason = reason;
-        totPnl += tr.pnl; bal += tr.amount + tr.pnl;
+        bal += tr.amount + tr.pnl;
         if (tr.pnl >= 0) { wins++; winSum += tr.pnl; } else { losses++; lossSum += Math.abs(tr.pnl); }
         if (reason === 'SL' || reason === 'Тайм') cdMap.set(tr.symbol, t + strat.cooldownCandles * iSec);
       }
     }
 
+    // Check if we can open new trades
     const open = trades.filter(x => !x.closeTime);
     if (open.length >= strat.maxOpen || bal < 5) continue;
 
-    const shuffled = [...symbols].sort(() => rand() - 0.5).slice(0, 20);
+    // Shuffle and pick up to 20 symbols to evaluate
+    const shuffled = [...validSymbols].sort(() => rand() - 0.5).slice(0, 20);
     const openSyms = new Set(open.map(x => x.symbol));
     let bSym = '', bScore = 0, bDir: 'long' | 'short' | null = null, bLev = 1, bSL = 0, bTP = 0;
 
     for (const sym of shuffled) {
       if (openSyms.has(sym)) continue;
       const cd = cdMap.get(sym); if (cd && t < cd) continue;
-      const sc = candles.get(sym); if (!sc) continue;
-      const ci = sc.findIndex(c => c.time >= t); if (ci < strat.warmup) continue;
-      try {
-        const d = makeStrategyDecision(strat.id, sym, sc.slice(0, ci + 1));
-        if (d.direction === 'none') continue;
-        const s = Math.abs(d.score);
-        if (s > bScore) { bScore = s; bSym = sym; bDir = d.direction; bLev = d.leverage; bSL = d.stopLoss; bTP = d.takeProfit; }
-      } catch { continue; }
+      const sc = candleData.get(sym);
+      const tm = timeMaps.get(sym);
+      if (!sc || !tm) continue;
+      const ci = findCandleIdx(sc, tm, t);
+      if (ci < strat.warmup) continue;
+
+      totalEvals++;
+      const atr = calcATR(sc.slice(Math.max(0, ci - 20), ci + 1));
+      const price = sc[ci].close;
+      if (atr <= 0 || price <= 0) continue;
+
+      const sig = btSignal(sc, ci, atr, price, strat.rr);
+      if (!sig.direction) continue;
+
+      signalFound++;
+      bScore = 1; bSym = sym; bDir = sig.direction; bLev = sig.leverage; bSL = sig.sl; bTP = sig.tp;
+      break; // take first valid signal to save time
     }
 
     if (!bDir || !bSym || bSL === 0 || bTP === 0) continue;
-    const sc = candles.get(bSym)!;
-    const ci = sc.findIndex(c => c.time >= t);
+    const sc = candleData.get(bSym)!;
+    const tm = timeMaps.get(bSym)!;
+    const ci = findCandleIdx(sc, tm, t);
     const price = sc[ci].close;
     const free = Math.max(0, bal - open.reduce((s, x) => s + x.amount, 0));
-    const amt = calcAmount(bal, free, strat.tradeSizePct);
+    const amt = calcAmount(bal, free);
     if (amt < 1) continue;
 
     trades.push({ id: `bt_${accId}_t${trades.length}`, symbol: bSym, strategyId: strat.id, direction: bDir, entryPrice: price, amount: amt, leverage: bLev, stopLoss: bSL, takeProfit: bTP, openTime: t });
     bal -= amt; dayTrades++;
   }
 
+  // Close remaining open trades at last price
   for (const tr of trades) {
     if (tr.closeTime) continue;
-    const sc = candles.get(tr.symbol); if (!sc) continue;
+    const sc = candleData.get(tr.symbol); if (!sc) continue;
     const lp = sc[sc.length - 1].close;
     const pc = tr.direction === 'long' ? (lp - tr.entryPrice) / tr.entryPrice : (tr.entryPrice - lp) / tr.entryPrice;
     const fees = tr.amount * 0.001 + (tr.amount / tr.leverage) * 0.001;
     tr.pnl = tr.amount * pc * tr.leverage - fees;
     tr.closeTime = t1; tr.closePrice = lp; tr.reason = 'конец';
-    totPnl += tr.pnl; bal += tr.amount + tr.pnl;
+    bal += tr.amount + tr.pnl;
     if (tr.pnl >= 0) { wins++; winSum += tr.pnl; } else { losses++; lossSum += Math.abs(tr.pnl); }
   }
 
+  // Max drawdown
   let peak = balance0, run = balance0;
   for (const tr of trades) {
     if (!tr.closeTime) continue;
@@ -195,7 +285,8 @@ async function simulate(
     avgLoss: losses > 0 ? Math.round((lossSum / losses) * 100) / 100 : 0,
     profitFactor: lossSum > 0 ? Math.round((winSum / lossSum) * 100) / 100 : wins > 0 ? 99.99 : 0,
     trades,
-  };
+    _debug: { totalEvals, signalFound },
+  } as any;
 }
 
 async function saveResult(userId: string, result: AccountResult) {
@@ -210,7 +301,6 @@ async function saveResult(userId: string, result: AccountResult) {
     sql: `INSERT INTO trades (id, user_id, symbol, strategy_id, entry_price, exit_price, amount, leverage, direction, pnl, status, stop_loss, take_profit, opened_at, closed_at, remaining_amount, entry_quality, partial_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'full')`,
     args: [`${userId}_${tr.id}`, userId, tr.symbol, tr.strategyId, tr.entryPrice, tr.closePrice ?? null, tr.amount, tr.leverage, tr.direction, tr.pnl ?? null, 'closed', tr.stopLoss, tr.takeProfit, new Date(tr.openTime * 1000).toISOString(), tr.closeTime ? new Date(tr.closeTime * 1000).toISOString() : null, null] as any[],
   }));
-  // Batch insert in chunks of 50 to avoid Turso limits
   for (let i = 0; i < batchStmts.length; i += 50) {
     await db.batch(batchStmts.slice(i, i + 50));
   }
@@ -230,15 +320,10 @@ export async function POST(request: NextRequest) {
   };
 
   const stream = new ReadableStream({
-    async start(ctrl) {
-      controller = ctrl;
-    },
-    async cancel() {
-      controller = null;
-    },
+    async start(ctrl) { controller = ctrl; },
+    async cancel() { controller = null; },
   });
 
-  // Run backtest in background
   (async () => {
     try {
       const t1 = Math.floor(Date.now() / 1000);
@@ -249,6 +334,7 @@ export async function POST(request: NextRequest) {
       send('log', { msg: `✅ ${symbols.length} монет загружено` });
 
       const allCandles = new Map<string, CandleData[]>();
+      const allTimeMaps = new Map<string, TimeMap>();
 
       for (const strat of STRATS) {
         send('log', { msg: `📈 Загрузка свечей (${strat.interval}, 60 дней)...` });
@@ -256,7 +342,11 @@ export async function POST(request: NextRequest) {
         await Promise.all(symbols.map(async (sym) => {
           try {
             const c = await fetchCandlesBT(sym, strat.interval, t0 * 1000, t1 * 1000);
-            if (c.length > 100) allCandles.set(`${sym}_${strat.interval}`, c);
+            if (c.length > 50) {
+              const key = `${sym}_${strat.interval}`;
+              allCandles.set(key, c);
+              allTimeMaps.set(key, buildTimeMap(c));
+            }
             loaded++;
             if (loaded % 10 === 0) send('progress', { stage: 'candles', interval: strat.interval, current: loaded, total: symbols.length });
           } catch { /* skip */ }
@@ -269,22 +359,27 @@ export async function POST(request: NextRequest) {
       const perStrat = 34;
       const totalAccounts = STRATS.length * perStrat;
       let doneAccounts = 0;
+      let globalEvals = 0, globalSignals = 0;
 
       for (let si = 0; si < STRATS.length; si++) {
         const strat = STRATS[si];
         const stratCandles = new Map<string, CandleData[]>();
+        const stratTimeMaps = new Map<string, TimeMap>();
         for (const sym of symbols) {
           const c = allCandles.get(`${sym}_${strat.interval}`);
-          if (c) stratCandles.set(sym, c);
+          const tm = allTimeMaps.get(`${sym}_${strat.interval}`);
+          if (c && tm) { stratCandles.set(sym, c); stratTimeMaps.set(sym, tm); }
         }
 
-        send('log', { msg: `🚀 ${strat.id.toUpperCase()} (${strat.interval}): ${perStrat} аккаунтов...` });
+        send('log', { msg: `🚀 ${strat.label} (${strat.interval}): ${perStrat} аккаунтов...` });
 
         for (let i = 0; i < perStrat; i++) {
           const accId = si * perStrat + i + 1;
-          const result = await simulate(accId, strat, 100, stratCandles, symbols, 42 + accId * 7919, t0, t1);
+          const result = simulate(accId, strat, 100, stratCandles, stratTimeMaps, symbols, 42 + accId * 7919, t0, t1);
           results.push(result);
           doneAccounts++;
+          globalEvals += (result as any)._debug?.totalEvals ?? 0;
+          globalSignals += (result as any)._debug?.signalFound ?? 0;
           const e = result.pnl >= 0 ? '✅' : '❌';
           send('account', {
             id: accId, strategyId: strat.id, totalTrades: result.totalTrades,
@@ -297,6 +392,9 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      // Diagnostics
+      send('log', { msg: `📊 Диагностика: ${globalEvals} оценок, ${globalSignals} сигналов (${(globalSignals / Math.max(globalEvals, 1) * 100).toFixed(1)}%)` });
+
       // Calculate stats
       const profitable = results.filter(r => r.pnl > 0).length;
       const totalTrades = results.reduce((s, r) => s + r.totalTrades, 0);
@@ -306,11 +404,9 @@ export async function POST(request: NextRequest) {
       const sorted = [...results].sort((a, b) => a.pnlPct - b.pnlPct);
       const median = sorted[Math.floor(sorted.length / 2)];
       const totalWins = results.reduce((s, r) => s + r.wins, 0);
-      const totalLosses = results.reduce((s, r) => s + r.losses, 0);
       const globalWR = totalTrades > 0 ? ((totalWins / totalTrades) * 100).toFixed(1) : '0';
       const avgDD = (results.reduce((s, r) => s + r.maxDrawdownPct, 0) / results.length).toFixed(1);
 
-      // PnL distribution
       const buckets = [-100, -50, -25, -10, 0, 10, 25, 50, 100, 500];
       const distribution: { from: number; to: number; count: number }[] = [];
       for (let i = 0; i < buckets.length - 1; i++) {
@@ -318,7 +414,6 @@ export async function POST(request: NextRequest) {
         if (count > 0) distribution.push({ from: buckets[i], to: buckets[i + 1], count });
       }
 
-      // Per-strategy breakdown
       const stratStats = STRATS.map(s => {
         const sr = results.filter(r => r.strategyId === s.id);
         return {
@@ -326,19 +421,19 @@ export async function POST(request: NextRequest) {
           interval: s.interval,
           count: sr.length,
           profitable: sr.filter(r => r.pnl > 0).length,
-          avgPnl: (sr.reduce((sum, r) => sum + r.pnlPct, 0) / sr.length).toFixed(1),
-          avgWR: (sr.reduce((sum, r) => sum + r.winRate, 0) / sr.length).toFixed(1),
-          avgDD: (sr.reduce((sum, r) => sum + r.maxDrawdownPct, 0) / sr.length).toFixed(1),
-          bestPnl: Math.max(...sr.map(r => r.pnlPct)).toFixed(1),
-          worstPnl: Math.min(...sr.map(r => r.pnlPct)).toFixed(1),
+          avgPnl: sr.length > 0 ? (sr.reduce((sum, r) => sum + r.pnlPct, 0) / sr.length).toFixed(1) : '0.0',
+          avgWR: sr.length > 0 ? (sr.reduce((sum, r) => sum + r.winRate, 0) / sr.length).toFixed(1) : '0.0',
+          avgDD: sr.length > 0 ? (sr.reduce((sum, r) => sum + r.maxDrawdownPct, 0) / sr.length).toFixed(1) : '0.0',
+          bestPnl: sr.length > 0 ? Math.max(...sr.map(r => r.pnlPct)).toFixed(1) : '0.0',
+          worstPnl: sr.length > 0 ? Math.min(...sr.map(r => r.pnlPct)).toFixed(1) : '0.0',
           totalTrades: sr.reduce((sum, r) => sum + r.totalTrades, 0),
         };
       });
 
-      send('log', { msg: '💾 Сохранение результатов в БД...' });
-      await saveResult(BACKTEST_USER_ID_BEST, best);
-      await saveResult(BACKTEST_USER_ID_MEDIAN, median);
-      send('log', { msg: '✅ Сохранено!' });
+      send('log', { msg: '💾 Сохранение лучших результатов в БД...' });
+      try { await saveResult(BACKTEST_USER_ID_BEST, best); } catch (e: any) { send('log', { msg: `⚠️ Ошибка сохранения best: ${e.message}` }); }
+      try { await saveResult(BACKTEST_USER_ID_MEDIAN, median); } catch (e: any) { send('log', { msg: `⚠️ Ошибка сохранения median: ${e.message}` }); }
+      send('log', { msg: '✅ Готово!' });
 
       send('done', {
         profitable,

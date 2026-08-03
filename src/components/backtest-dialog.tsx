@@ -9,7 +9,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import {
   Play, Loader2, CheckCircle2, XCircle, TrendingUp, TrendingDown, BarChart3,
-  Target, Activity, Users, Trophy, AlertTriangle, Zap, Clock,
+  Target, Activity, Users, Trophy, AlertTriangle, Zap, Clock, RotateCcw,
 } from 'lucide-react';
 
 interface BacktestDialogProps {
@@ -285,6 +285,16 @@ export default function BacktestDialog({ open, onClose }: BacktestDialogProps) {
               ) : (
                 <><Play className="h-3.5 w-3.5 mr-2" /> Запустить бэктест</>
               )}
+            </Button>
+          )}
+          {result && (
+            <Button
+              onClick={handleStart}
+              disabled={running}
+              className="flex-1 h-10 text-xs font-semibold rounded-lg bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-600/20 transition-all"
+            >
+              <RotateCcw className="h-3.5 w-3.5 mr-2" />
+              Запустить заново
             </Button>
           )}
           <Button

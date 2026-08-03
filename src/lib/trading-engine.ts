@@ -101,7 +101,7 @@ function calcBollingerBands(closes: number[], period: number = 20, stdDev: numbe
   return { upper, middle, lower, position: Math.max(0, Math.min(1, position)) };
 }
 
-function calcATR(candles: CandleData[], period: number = 14): number {
+export function calcATR(candles: CandleData[], period: number = 14): number {
   if (candles.length < period + 1) return 0;
   let sum = 0;
   for (let i = candles.length - period; i < candles.length; i++) {
