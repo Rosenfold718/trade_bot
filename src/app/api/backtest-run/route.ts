@@ -12,7 +12,7 @@ function checkAuth(request: NextRequest): boolean {
   return authHeader === `Bearer ${ADMIN_SETUP_KEY}`;
 }
 
-export const maxDuration = 600;
+export const maxDuration = 300;
 
 interface SimTrade {
   id: string;
