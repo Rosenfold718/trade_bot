@@ -632,7 +632,7 @@ export default function TradingTerminal() {
                     {totalClosedPnl >= 0 ? '+' : ''}${totalClosedPnl.toFixed(2)}
                   </span>
                   <span className={cn('text-[10px]', totalClosedPnl >= 0 ? 'text-green-400/60' : 'text-red-400/60')}>
-                    ({totalClosedPnl >= 0 ? '+' : ''}{totalClosedPnl.toFixed(1)}%)
+                    ({totalClosedPnl >= 0 ? '+' : ''}{(totalClosedPnl / (traderState.initial_balance || 100) * 100).toFixed(1)}%)
                   </span>
                 </div>
               )}
@@ -981,10 +981,10 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
         const results = await Promise.all(
           uniqueSymbols.map(async (sym) => {
             try {
-              const res = await fetch(`/api/price?symbol=${sym}`);
+              const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}`);
               if (res.ok) {
                 const data = await res.json();
-                return { symbol: sym, price: data.price ?? 0 };
+                return { symbol: sym, price: parseFloat(data.price) ?? 0 };
               }
             } catch { /* skip */ }
             return null;
@@ -1020,7 +1020,8 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
         ? (livePrice - trade.entry_price) / trade.entry_price
         : (trade.entry_price - livePrice) / trade.entry_price;
       const effectiveAmount = trade.remaining_amount ?? trade.amount;
-      total += effectiveAmount * priceChange * trade.leverage;
+      const lev = trade.leverage || 1;
+      total += effectiveAmount * priceChange * lev - effectiveAmount * 0.001 - (effectiveAmount / lev) * 0.001;
     }
     return total;
   }, [openTrades, getLivePrice]);

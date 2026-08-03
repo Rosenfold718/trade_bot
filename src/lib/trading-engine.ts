@@ -634,10 +634,10 @@ export function makeTradingDecision(
   const maxScore = Math.max(absLongScore, absShortScore);
 
   // ============================================================
-  // POINT 3: Confluence filter — require ≥5 indicators to agree
+  // POINT 3: Confluence filter — require ≥4 indicators to agree
   // ============================================================
   const bestCount = Math.max(longCount, shortCount);
-  if (bestCount < 5) {
+  if (bestCount < 4) {
     return {
       symbol,
       direction: 'none',
@@ -784,9 +784,9 @@ function makeMomentumDecision(
   const absShortScore = Math.abs(shortScore);
   const maxScore = Math.max(absLongScore, absShortScore);
 
-  // Confluence: require ≥5 of 10 indicators to agree
+  // Confluence: require ≥4 of 10 indicators to agree
   const bestCount = Math.max(longCount, shortCount);
-  if (bestCount < 5) {
+  if (bestCount < 4) {
     return { symbol, direction: 'none', score: maxScore, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
   }
 
