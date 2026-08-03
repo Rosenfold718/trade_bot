@@ -21,6 +21,7 @@ import { DEFAULT_INDICATORS, type IndicatorConfig } from '@/components/chart';
 import type { CandleData, TraderState, Trade, IndicatorWeight } from '@/lib/types';
 import AdminPanel from '@/components/admin-panel';
 import ManualDialog from '@/components/manual-dialog';
+import BacktestDialog from '@/components/backtest-dialog';
 import { fetchSettings, invalidateSettingsCache } from '@/lib/settings-cache';
 
 const MomentumReport = dynamic(() => import('@/components/momentum-report'), {
@@ -118,6 +119,7 @@ export default function TradingTerminal() {
   const [showMobilePanel, setShowMobilePanel] = useState<string | null>(null);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [showManual, setShowManual] = useState(false);
+  const [showBacktest, setShowBacktest] = useState(false);
 
   // Indicator state — all OFF by default (user can toggle manually)
   // Clear old cached indicators on first load to apply new defaults
@@ -664,6 +666,18 @@ export default function TradingTerminal() {
             <span className="text-[10px] font-medium tracking-wide hidden sm:inline">СПРАВКА</span>
           </button>
           <button
+            onClick={() => setShowBacktest(true)}
+            className={cn(
+              'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all duration-200',
+              'bg-rose-500/10 border-rose-500/20 text-rose-400/80',
+              'hover:bg-rose-500/20 hover:border-rose-500/30',
+            )}
+            title="Бэктест 100 аккаунтов"
+          >
+            <BarChart3 className="w-3.5 h-3.5" />
+            <span className="text-[10px] font-medium tracking-wide hidden lg:inline">БЭКТЕСТ</span>
+          </button>
+          <button
             onClick={() => setShowAdminPanel(true)}
             className={cn(
               'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all duration-200',
@@ -885,6 +899,9 @@ export default function TradingTerminal() {
 
         {/* Admin Panel */}
         <AdminPanel open={showAdminPanel} onClose={() => setShowAdminPanel(false)} />
+
+        {/* Backtest Dialog */}
+        <BacktestDialog open={showBacktest} onClose={() => setShowBacktest(false)} />
       </div>
     </div>
   );
