@@ -99,6 +99,8 @@ interface FinalResult {
     winRate: number; maxDrawdownPct: number; profitFactor: number;
   }[];
   bestAccount?: BestAccountReport;
+  usedRealData?: boolean;
+  dataSource?: string;
 }
 
 const STRAT_NAMES: Record<string, string> = {
@@ -355,6 +357,14 @@ function ResultsPanel({ result, onReport }: { result: FinalResult; onReport: () 
       )}
 
       {/* Hero stats */}
+      <div className="flex items-center gap-2 mb-3">
+        {result.usedRealData ? (
+          <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-emerald-500/30 text-emerald-400/70">Binance API</Badge>
+        ) : (
+          <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-amber-500/30 text-amber-400/70">Синтетические данные</Badge>
+        )}
+        <span className="text-[10px] text-white/20">{result.usedRealData ? 'Реальные свечи за 2 месяца' : 'Детерминированная симуляция'}</span>
+      </div>
       <div className="grid grid-cols-3 gap-2">
         <StatCard label="Прибыльных" value={`${result.profitable}/102`} icon={<Users className="h-3.5 w-3.5" />} color={result.profitable >= 50 ? 'emerald' : result.profitable >= 30 ? 'amber' : 'red'} />
         <StatCard label="Средний PnL" value={`${parseFloat(result.avgPnlPct) >= 0 ? '+' : ''}${result.avgPnlPct}%`} icon={<TrendingUp className="h-3.5 w-3.5" />} color={parseFloat(result.avgPnlPct) >= 0 ? 'emerald' : 'red'} />
