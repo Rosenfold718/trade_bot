@@ -239,6 +239,14 @@ export default function TradingTerminal() {
           volume: parseFloat(String(k[5])),
         }));
         setCandles(c);
+        // Seed coin price from last candle into store
+        const lastClose = c[c.length - 1]?.close;
+        if (lastClose && lastClose > 0) {
+          const existing = useTerminalStore.getState().coins.find(cc => cc.symbol === symbol);
+          if (!existing) {
+            useTerminalStore.getState().updateCoinPrice({ s: symbol, c: String(lastClose), P: '0', v: '0', h: '0', l: '0', o: '0' });
+          }
+        }
       }
     } catch (err) {
       console.error('Klines error:', err);
@@ -444,14 +452,9 @@ export default function TradingTerminal() {
         const stalenessMaxPct = (strategy as any).entryStalenessMaxPct ?? 0.005;
         for (const nt of (r.newTrades ?? [])) {
           try {
-            let livePrice = nt.price;
-            try {
-              const priceRes = await fetch(`/api/price?symbol=${nt.symbol}`);
-              if (priceRes.ok) {
-                const priceData = await priceRes.json();
-                livePrice = parseFloat(priceData.price);
-              }
-            } catch { /* fallback */ }
+            // Use WebSocket price from coins store (live) or fall back to trade price
+            const wsPrice = useTerminalStore.getState().coins.find(c => c.symbol === nt.symbol)?.price;
+            const livePrice = (wsPrice && wsPrice > 0) ? wsPrice : nt.price;
 
             const priceDrift = Math.abs(livePrice - nt.price) / nt.price;
             if (priceDrift > stalenessMaxPct) {
@@ -528,25 +531,14 @@ export default function TradingTerminal() {
   // Manual close trade handler
   const manualCloseTrade = useCallback(async (trade: Trade) => {
     try {
-      // Try Binance price first, fall back to coin list price
+      // Use WebSocket price from coins store
+      const coinPrice = useTerminalStore.getState().coins.find(c => c.symbol === trade.symbol)?.price;
       let exitPrice = 0;
-      try {
-        // Use server-side proxy to avoid CORS/network issues
-        const priceRes = await fetch(`/api/price?symbol=${trade.symbol}`);
-        if (priceRes.ok) {
-          const priceData = await priceRes.json();
-          exitPrice = priceData.price;
-        }
-      } catch { /* Proxy failed, try coin list */ }
-
-      if (!exitPrice || exitPrice <= 0) {
-        const coinPrice = useTerminalStore.getState().coins.find(c => c.symbol === trade.symbol)?.price;
-        if (coinPrice && coinPrice > 0) {
-          exitPrice = coinPrice;
-        } else {
-          addLog(`Не удалось получить цену для ${trade.symbol.replace('USDT', '')}`, 'error');
-          return;
-        }
+      if (coinPrice && coinPrice > 0) {
+        exitPrice = coinPrice;
+      } else {
+        addLog(`Не удалось получить цену для ${trade.symbol.replace('USDT', '')}`, 'error');
+        return;
       }
 
       console.log(`[ManualClose] Closing ${trade.symbol} @ $${exitPrice}, entry=$${trade.entry_price}`);
@@ -979,51 +971,16 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
 }) {
   const [closingTrade, setClosingTrade] = useState<Trade | null>(null);
   const [closingLoading, setClosingLoading] = useState(false);
-  const [extraPrices, setExtraPrices] = useState<Record<string, number>>({});
+
   const allTrades = useMemo(
     () => [...openTrades, ...recentTrades].slice(0, 30),
     [openTrades, recentTrades],
   );
 
-  // Fetch prices for open trade symbols not in WebSocket coins list (e.g. MKR not in top-50)
-  useEffect(() => {
-    const missingSymbols = openTrades
-      .filter(t => t.status === 'open' && !coins.find(c => c.symbol === t.symbol))
-      .map(t => t.symbol);
-    if (missingSymbols.length === 0) return;
-    const uniqueSymbols = [...new Set(missingSymbols)];
-    let active = true;
-    const fetchPrices = async () => {
-      try {
-        const results = await Promise.all(
-          uniqueSymbols.map(async (sym) => {
-            try {
-              const res = await fetch(`/api/price?symbol=${sym}`);
-              if (res.ok) {
-                const data = await res.json();
-                return { symbol: sym, price: parseFloat(data.price) ?? 0 };
-              }
-            } catch { /* skip */ }
-            return null;
-          })
-        );
-        if (!active) return;
-        const prices: Record<string, number> = {};
-        for (const r of results) {
-          if (r && r.price > 0) prices[r.symbol] = r.price;
-        }
-        setExtraPrices(prev => ({ ...prev, ...prices }));
-      } catch { /* skip */ }
-    };
-    fetchPrices();
-    const interval = setInterval(fetchPrices, 10000);
-    return () => { active = false; clearInterval(interval); };
-  }, [openTrades, coins]);
-
-  // Helper: get live price for any symbol (coins list or fallback fetch)
+  // Helper: get live price from WebSocket coins store
   const getLivePrice = useCallback((symbol: string): number | undefined => {
-    return coins.find(c => c.symbol === symbol)?.price ?? extraPrices[symbol];
-  }, [coins, extraPrices]);
+    return coins.find(c => c.symbol === symbol)?.price;
+  }, [coins]);
 
   // Calculate total unrealized PnL for open trades
   const totalOpenPnl = useMemo(() => {
