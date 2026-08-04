@@ -446,7 +446,7 @@ export default function TradingTerminal() {
           try {
             let livePrice = nt.price;
             try {
-              const priceRes = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${nt.symbol}`);
+              const priceRes = await fetch(`/api/price?symbol=${nt.symbol}`);
               if (priceRes.ok) {
                 const priceData = await priceRes.json();
                 livePrice = parseFloat(priceData.price);
@@ -998,7 +998,7 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
         const results = await Promise.all(
           uniqueSymbols.map(async (sym) => {
             try {
-              const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}`);
+              const res = await fetch(`/api/price?symbol=${sym}`);
               if (res.ok) {
                 const data = await res.json();
                 return { symbol: sym, price: parseFloat(data.price) ?? 0 };

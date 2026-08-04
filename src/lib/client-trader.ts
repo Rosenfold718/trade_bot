@@ -24,7 +24,7 @@ export async function fetchCandlesClient(symbol: string, interval: string = '1h'
 }
 
 export async function fetchCurrentPrice(symbol: string): Promise<number> {
-  const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`);
+  const res = await fetch(`/api/price?symbol=${symbol}`);
   if (!res.ok) throw new Error(`Failed to fetch price for ${symbol}`);
   const data = await res.json();
   return parseFloat(data.price);

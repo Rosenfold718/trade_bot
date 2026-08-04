@@ -84,29 +84,16 @@ async function fetchLivePrices(symbols: string[]): Promise<Record<string, number
   if (symbols.length === 0) return prices;
   const unique = [...new Set(symbols)];
   try {
-    // Fetch all prices in one request
-    const res = await fetch('https://api.binance.com/api/v3/ticker/price');
-    if (!res.ok) return prices;
-    const data = await res.json();
-    if (!Array.isArray(data)) return prices;
-    for (const item of data) {
-      const sym = item.symbol as string;
-      if (unique.includes(sym)) {
-        prices[sym] = parseFloat(item.price);
+    // Batch fetch through our cached API (max 20 per request)
+    for (let i = 0; i < unique.length; i += 20) {
+      const batch = unique.slice(i, i + 20);
+      const res = await fetch(`/api/prices?symbols=${batch.join(',')}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.prices) Object.assign(prices, data.prices);
       }
     }
-  } catch {
-    // Fallback: individual requests
-    for (const sym of unique.slice(0, 15)) {
-      try {
-        const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}`);
-        if (res.ok) {
-          const d = await res.json();
-          prices[sym] = parseFloat(d.price);
-        }
-      } catch { /* skip */ }
-    }
-  }
+  } catch { /* skip */ }
   return prices;
 }
 
