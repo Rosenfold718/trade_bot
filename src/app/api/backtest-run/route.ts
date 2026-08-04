@@ -459,8 +459,8 @@ export async function POST(request: NextRequest) {
 
   const enc = new TextEncoder();
   let ctrl: ReadableStreamDefaultController | null = null;
-  const send = (ev: string, d: any) => { if (!ctrl) return; ctrl.enqueue(enc.encode(`event: ${ev}\ndata: ${JSON.stringify(d)}\n\n`)); };
-  const stream = new ReadableStream({ async start(c) { ctrl = c; }, async cancel() { ctrl = null; } });
+  const send = (ev: string, d: any) => { if (!ctrl) return; try { ctrl.enqueue(enc.encode(`event: ${ev}\ndata: ${JSON.stringify(d)}\n\n`)); } catch { ctrl = null; } };
+  const stream = new ReadableStream({ start(c) { ctrl = c; }, cancel() { ctrl = null; } });
 
   (async () => {
     try {
@@ -583,22 +583,25 @@ export async function POST(request: NextRequest) {
       try { await saveResult(BACKTEST_USER_ID_MEDIAN, median); send('log', { msg: '  ✅ Медиана сохранена' }); } catch (e: any) { send('log', { msg: `⚠️ ${e.message}` }); }
       send('log', { msg: '✅ Готово!' });
 
+      // Send summary first (small payload — guaranteed to arrive)
       send('done', {
         profitable, totalTrades, avgPnlPct: avgPnl.toFixed(1),
         bestPnl: best.pnlPct, worstPnl: worst.pnlPct, medianPnl: median.pnlPct,
         globalWR: gWR, avgDD: aDD, stratStats: sSt, distribution: dist,
         bestUserId: BACKTEST_USER_ID_BEST, medianUserId: BACKTEST_USER_ID_MEDIAN,
         allResults: results.map(r => ({ id: r.id, strategyId: r.strategyId, pnlPct: r.pnlPct, totalTrades: r.totalTrades, winRate: r.winRate, maxDrawdownPct: r.maxDrawdownPct, profitFactor: r.profitFactor })),
-        bestAccount: {
-          id: best.id, strategyId: best.strategyId, strategyLabel: STRATS.find(s => s.id === best.strategyId)?.label ?? best.strategyId,
-          startBalance: best.startBalance, endBalance: best.endBalance, pnl: best.pnl, pnlPct: best.pnlPct,
-          totalTrades: best.totalTrades, wins: best.wins, losses: best.losses, winRate: best.winRate, maxDrawdownPct: best.maxDrawdownPct,
-          avgWin: best.avgWin, avgLoss: best.avgLoss, profitFactor: best.profitFactor,
-          longTrades: bestLongs.length, shortTrades: bestShorts.length, longWinRate: bestLongWR, shortWinRate: bestShortWR,
-          largestWin: bestLargestWin, largestLoss: bestLargestLoss,
-          trades: bestTrades, equityCurve: bestEquity, symbolPerformance: symPerf,
-        },
         usedRealData, dataSource: usedRealData ? 'binance' : 'synthetic',
+      });
+
+      // Send best account report separately (large payload — trades + equity)
+      send('report', {
+        id: best.id, strategyId: best.strategyId, strategyLabel: STRATS.find(s => s.id === best.strategyId)?.label ?? best.strategyId,
+        startBalance: best.startBalance, endBalance: best.endBalance, pnl: best.pnl, pnlPct: best.pnlPct,
+        totalTrades: best.totalTrades, wins: best.wins, losses: best.losses, winRate: best.winRate, maxDrawdownPct: best.maxDrawdownPct,
+        avgWin: best.avgWin, avgLoss: best.avgLoss, profitFactor: best.profitFactor,
+        longTrades: bestLongs.length, shortTrades: bestShorts.length, longWinRate: bestLongWR, shortWinRate: bestShortWR,
+        largestWin: bestLargestWin, largestLoss: bestLargestLoss,
+        trades: bestTrades, equityCurve: bestEquity, symbolPerformance: symPerf,
       });
     } catch (err: any) { send('error', { msg: err.message }); } finally { ctrl?.close(); }
   })();

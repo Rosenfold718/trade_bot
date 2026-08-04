@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, Component, type ReactNode } from 'react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
@@ -151,9 +151,10 @@ export default function BacktestDialog({ open, onClose }: BacktestDialogProps) {
               if (currentEvent === 'log') setLogs(prev => [...prev, data.msg]);
               else if (currentEvent === 'progress') setProgress(data);
               else if (currentEvent === 'account') setAccounts(prev => [...prev, data]);
-              else if (currentEvent === 'done') { setResult(data); setRunning(false); }
+              else if (currentEvent === 'done') { setResult(prev => ({ ...data, bestAccount: prev?.bestAccount })); setRunning(false); }
+              else if (currentEvent === 'report') { setResult(prev => prev ? { ...prev, bestAccount: data } : null); }
               else if (currentEvent === 'error') { setError(data.msg); setRunning(false); }
-            } catch { /* partial chunk */ }
+            } catch { /* partial chunk — buffer re-assembles on next read */ }
             currentEvent = '';
           }
         }
@@ -281,8 +282,12 @@ export default function BacktestDialog({ open, onClose }: BacktestDialogProps) {
             </div>
           )}
 
-          {result && view === 'results' && <ResultsPanel result={result} onReport={() => setView('report')} />}
-          {result && view === 'report' && result.bestAccount && <ReportPanel account={result.bestAccount} />}
+          {result && view === 'results' && (
+            <DialogSafe><ResultsPanel result={result} onReport={() => setView('report')} /></DialogSafe>
+          )}
+          {result && view === 'report' && result.bestAccount && (
+            <DialogSafe><ReportPanel account={result.bestAccount} /></DialogSafe>
+          )}
         </div>
 
         <div className="px-6 py-4 shrink-0 border-t border-white/[0.04] bg-white/[0.01] flex items-center gap-2.5">
@@ -452,13 +457,16 @@ function ResultsPanel({ result, onReport }: { result: FinalResult; onReport: () 
 
 function EquityCurveCanvas({ data, startBalance, isPositive }: { data: { time: number; equity: number }[]; startBalance: number; isPositive: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
+  const drawRef = useRef<() => void>();
+
+  const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas || data.length < 2) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const dpr = window.devicePixelRatio || 1;
     const rect = canvas.getBoundingClientRect();
+    if (rect.width < 10 || rect.height < 10) return; // not laid out yet
     canvas.width = rect.width * dpr; canvas.height = rect.height * dpr;
     ctx.scale(dpr, dpr);
     const W = rect.width, H = rect.height;
@@ -521,6 +529,20 @@ function EquityCurveCanvas({ data, startBalance, isPositive }: { data: { time: n
     ctx.beginPath(); ctx.arc(lx, ly, 3, 0, Math.PI * 2);
     ctx.fillStyle = color; ctx.fill();
   }, [data, startBalance, isPositive]);
+
+  useEffect(() => { drawRef.current = draw; });
+
+  useEffect(() => {
+    // Initial draw + redraw on resize
+    const timer = setTimeout(() => drawRef.current?.(), 50);
+    let ro: ResizeObserver | undefined;
+    if (canvasRef.current) {
+      ro = new ResizeObserver(() => drawRef.current?.());
+      ro.observe(canvasRef.current);
+    }
+    return () => { clearTimeout(timer); ro?.disconnect(); };
+  }, []);
+
   return <canvas ref={canvasRef} className="w-full h-full" style={{ display: 'block' }} />;
 }
 
@@ -641,6 +663,31 @@ function ReportPanel({ account }: { account: BestAccountReport }) {
       )}
     </ScrollArea>
   );
+}
+
+// ============================================================
+// Inline Error Boundary (prevents dialog crash)
+// ============================================================
+
+class DialogSafe extends Component<{ children: ReactNode }, { error: string | null }> {
+  state = { error: null };
+  static getDerivedStateFromError(e: any) { return { error: e?.message ?? String(e) }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="h-full flex flex-col items-center justify-center gap-3 p-6">
+          <div className="w-10 h-10 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+            <XCircle className="h-5 w-5 text-red-400" />
+          </div>
+          <p className="text-xs text-white/40 text-center max-w-xs">Ошибка рендеринга: {this.state.error}</p>
+          <button onClick={() => this.setState({ error: null })} className="px-3 py-1.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.08] text-white/50 text-[10px] transition-colors">
+            Попробовать снова
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 // ============================================================

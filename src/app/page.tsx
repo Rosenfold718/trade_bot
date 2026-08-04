@@ -26,9 +26,10 @@ const TradingTerminal = dynamic(() => import('@/components/trading-terminal'), {
 type AppView = 'auth' | 'payment' | 'warning' | 'activity' | 'terminal';
 
 // ── Global Error Boundary ──
-class TerminalErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
-  state = { hasError: false };
+class TerminalErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; errorMsg: string | null }> {
+  state = { hasError: false, errorMsg: null };
   static getDerivedStateFromError() { return { hasError: true }; }
+  componentDidCatch(e: any) { console.error('[TerminalErrorBoundary]', e); this.setState({ errorMsg: e?.message ?? String(e) }); }
   render() {
     if (this.state.hasError) {
       return (
@@ -39,6 +40,7 @@ class TerminalErrorBoundary extends Component<{ children: ReactNode }, { hasErro
           <div className="text-center">
             <p className="text-sm font-semibold text-white/80">Ошибка загрузки терминала</p>
             <p className="text-xs text-white/30 mt-1 max-w-xs">Произошла ошибка. Попробуйте перезагрузить страницу.</p>
+            {this.state.errorMsg && <p className="text-[10px] text-red-400/50 font-mono mt-1 max-w-sm break-all">{this.state.errorMsg}</p>}
           </div>
           <button
             onClick={() => { window.location.reload(); }}
