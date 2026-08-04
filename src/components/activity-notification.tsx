@@ -52,9 +52,9 @@ interface ActivityNotificationProps {
 }
 
 const STRATEGY_NAMES: Record<string, string> = {
-  'momentum': 'Импульс Pro',
-  'scalper': 'Scalp Hunter',
-  'position-alpha': 'Position Alpha',
+  'momentum': 'Трендовая торговля',
+  'scalper': 'Паттерны',
+  'position-alpha': 'Инвестиции',
 };
 
 const STRATEGY_COLORS: Record<string, string> = {

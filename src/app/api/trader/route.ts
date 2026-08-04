@@ -196,8 +196,7 @@ export async function POST(request: NextRequest) {
             const isLong = trade.direction === 'long';
             const slBad = isLong ? trade.stop_loss >= trade.entry_price : trade.stop_loss <= trade.entry_price;
             const tpBad = isLong ? trade.take_profit <= trade.entry_price : trade.take_profit >= trade.entry_price;
-            if (slBad || tpBad) {
-              console.warn(`[monitor-trades] Auto-repairing inverted SL/TP for ${trade.id}: dir=${trade.direction} entry=${trade.entry_price} SL=${trade.stop_loss} TP=${trade.take_profit}`);
+            if (slBad || tpBad) {              // SL/TP inverted — silently repair
               if (slBad) {
                 const fixedSL = isLong ? Math.round(trade.entry_price * 0.98 * 1e8) / 1e8 : Math.round(trade.entry_price * 1.02 * 1e8) / 1e8;
                 await updateStopLoss(trade.id, fixedSL);

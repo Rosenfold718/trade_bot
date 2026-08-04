@@ -42,10 +42,10 @@ export interface StrategyConfig {
 }
 
 export const STRATEGIES: StrategyConfig[] = [
-  // Strategy 1: Momentum Pro — Trend following
+  // Strategy 1: Трендовая торговля — Trend following
   {
     id: 'momentum',
-    name: 'Momentum Pro',
+    name: 'Трендовая торговля',
     description: 'Trend following: ADX>20, ≥5/10 indicators agree, score>0.20. SL 3×ATR, TP 1:3 R:R. Trailing stop after 1R.',
     color: 'text-amber-400',
     bgColor: 'bg-amber-500/10',
@@ -78,10 +78,10 @@ export const STRATEGIES: StrategyConfig[] = [
     maxDailyTrades: 5,
   },
 
-  // Strategy 2: Pattern Pro — Candlestick pattern recognition
+  // Strategy 2: Паттерны — Candlestick pattern recognition
   {
     id: 'scalper',
-    name: 'Pattern Pro',
+    name: 'Паттерны',
     description: 'Candlestick patterns: Morning/Evening Star, Flags, Wedges, Double Bottom. SL 2×ATR, TP 2-3R, partial TP, trailing.',
     color: 'text-violet-400',
     bgColor: 'bg-violet-500/10',
@@ -115,10 +115,10 @@ export const STRATEGIES: StrategyConfig[] = [
     maxDailyTrades: 8,
   },
 
-  // Strategy 3: Position Alpha — Long-term position trading
+  // Strategy 3: Инвестиции — Long-term position trading
   {
     id: 'position-alpha',
-    name: 'Position Alpha',
+    name: 'Инвестиции',
     description: 'Position trading: EMA50/200 crossover, MACD, OBV. SL 4×ATR, TP 1:5 R:R. Hold days-weeks.',
     color: 'text-blue-400',
     bgColor: 'bg-blue-500/10',

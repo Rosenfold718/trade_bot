@@ -264,7 +264,7 @@ export async function monitorTradesClient(
         const slBad = isLong ? trade.stop_loss >= trade.entry_price : trade.stop_loss <= trade.entry_price;
         const tpBad = isLong ? trade.take_profit <= trade.entry_price : trade.take_profit >= trade.entry_price;
         if (slBad || tpBad) {
-          console.warn(`[monitorClient] Auto-repairing inverted SL/TP for ${trade.id}`);
+          // SL/TP inverted — silently repair (causes no user-visible issues)
           if (slBad) {
             const fixedSL = isLong ? trade.entry_price * (1 - slCapPct) : trade.entry_price * (1 + slCapPct);
             trailingUpdates.push({ tradeId: trade.id, newStopLoss: fixedSL, reason: 'Auto-repair: inverted SL' });

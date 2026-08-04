@@ -278,9 +278,9 @@ function calcATRLocal(candles: CandleData[], period = 14): number {
 // ============================================================
 
 const STRATS = [
-  { id: 'momentum', label: 'Momentum Pro', interval: '1h', maxOpen: 4, cd: 3, maxD: 4, maxH: 12, rr: 2.5, warmup: 60 },
-  { id: 'scalper', label: 'Pattern Pro', interval: '15m', maxOpen: 4, cd: 4, maxD: 6, maxH: 6, rr: 2.0, warmup: 55 },
-  { id: 'position-alpha', label: 'Position Alpha', interval: '4h', maxOpen: 2, cd: 2, maxD: 2, maxH: 120, rr: 3.0, warmup: 60 },
+  { id: 'momentum', label: 'Трендовая торговля', interval: '1h', maxOpen: 4, cd: 3, maxD: 4, maxH: 12, rr: 2.5, warmup: 60 },
+  { id: 'scalper', label: 'Паттерны', interval: '15m', maxOpen: 4, cd: 4, maxD: 6, maxH: 6, rr: 2.0, warmup: 55 },
+  { id: 'position-alpha', label: 'Инвестиции', interval: '4h', maxOpen: 2, cd: 2, maxD: 2, maxH: 120, rr: 3.0, warmup: 60 },
 ];
 
 // ============================================================
