@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { getTursoClient } from '@/lib/db';
-import { fetchTopSymbols, analyzeIndicators, calcATR, calcRSI, calcMACD, calcADX, ema } from '@/lib/trading-engine';
+import { fetchTopSymbols, calcATR } from '@/lib/trading-engine';
 import type { CandleData } from '@/lib/types';
 
 const ADMIN_SETUP_KEY = process.env.ADMIN_SETUP_KEY || 'trade-bot-admin-2024';
@@ -15,489 +15,384 @@ function checkAuth(request: NextRequest): boolean {
 export const maxDuration = 300;
 
 interface SimTrade {
-  id: string;
-  symbol: string;
-  strategyId: string;
-  direction: 'long' | 'short';
-  entryPrice: number;
-  amount: number;
-  leverage: number;
-  stopLoss: number;
-  takeProfit: number;
-  openTime: number;
-  closeTime?: number;
-  closePrice?: number;
-  pnl?: number;
-  reason?: string;
+  id: string; symbol: string; strategyId: string; direction: 'long' | 'short';
+  entryPrice: number; amount: number; leverage: number;
+  stopLoss: number; takeProfit: number; openTime: number;
+  closeTime?: number; closePrice?: number; pnl?: number; reason?: string;
 }
 
 interface AccountResult {
-  id: number;
-  strategyId: string;
-  startBalance: number;
-  endBalance: number;
-  pnl: number;
-  pnlPct: number;
-  totalTrades: number;
-  wins: number;
-  losses: number;
-  winRate: number;
-  maxDrawdownPct: number;
-  avgWin: number;
-  avgLoss: number;
-  profitFactor: number;
-  trades: SimTrade[];
+  id: number; strategyId: string; startBalance: number; endBalance: number;
+  pnl: number; pnlPct: number; totalTrades: number; wins: number; losses: number;
+  winRate: number; maxDrawdownPct: number; avgWin: number; avgLoss: number;
+  profitFactor: number; trades: SimTrade[];
 }
 
-async function fetchCandlesBT(symbol: string, interval: string, startTime: number, endTime: number): Promise<CandleData[]> {
+// Pre-computed indicators per symbol
+interface SymInd {
+  candles: CandleData[];
+  tm: Map<number, number>; // time → index
+  n: number;
+  // Per-candle: 1=bull, -1=bear, 0=neutral
+  rsiB: Int8Array;
+  macdB: Int8Array;
+  ema50B: Int8Array;
+  emaX: Int8Array;  // ema12 vs ema26
+  adxD: Int8Array;
+  canD: Int8Array; // last 3 candles direction
+  // Pre-computed scores
+  bScore: Float32Array;
+  sScore: Float32Array;
+  // Pre-computed confluence counts
+  bCount: Uint8Array;
+  sCount: Uint8Array;
+}
+
+async function fetchCandles(symbol: string, interval: string, st: number, et: number): Promise<CandleData[]> {
   const all: CandleData[] = [];
-  let cur = startTime;
-  while (cur < endTime) {
-    const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&startTime=${cur}&endTime=${endTime}&limit=1500`;
-    const res = await fetch(url);
+  let cur = st;
+  while (cur < et) {
+    const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&startTime=${cur}&endTime=${et}&limit=1500`);
     if (!res.ok) break;
     const data = await res.json();
     if (!Array.isArray(data) || data.length === 0) break;
-    for (const k of data) {
-      all.push({ time: Math.floor(Number(k[0]) / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5] });
-    }
-    cur = Number(data[data.length - 1][6]) + 1;
+    for (const k of data) all.push({ time: Math.floor(+k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5] });
+    cur = +data[data.length - 1][6] + 1;
     if (data.length < 1500) break;
   }
   return all;
 }
 
-function calcAmount(balance: number, freeBalance: number): number {
-  if (freeBalance < 5) return 0;
-  if (freeBalance < 50) return Math.min(Math.max(freeBalance * 0.10, 1.5), 8);
-  if (freeBalance < 200) return Math.min(Math.max(freeBalance * 0.06, 5), 30);
-  return Math.min(Math.max(freeBalance * 0.04, 10), 50);
+// Lightweight EMA computation
+function emaCalc(data: number[], p: number): number[] {
+  const r: number[] = [];
+  const m = 2 / (p + 1);
+  let prev: number | null = null;
+  for (let i = 0; i < data.length; i++) {
+    if (i < p - 1) { r.push(NaN); continue; }
+    if (prev === null) { let s = 0; for (let j = i - p + 1; j <= i; j++) s += data[j]; prev = s / p; }
+    else prev = (data[i] - prev) * m + prev;
+    r.push(prev);
+  }
+  return r;
+}
+
+// Lightweight RSI — inline, no external deps
+function rsiCalc(closes: number[], period = 14): number[] {
+  const n = closes.length;
+  const r = new Array(n).fill(50);
+  if (n < period + 1) return r;
+  let ag = 0, al = 0;
+  for (let i = 1; i <= period; i++) { const d = closes[i] - closes[i - 1]; if (d > 0) ag += d; else al += Math.abs(d); }
+  ag /= period; al /= period;
+  for (let i = period; i < n; i++) {
+    if (i > period) { const d = closes[i] - closes[i - 1]; ag = (ag * 13 + (d > 0 ? d : 0)) / 14; al = (al * 13 + (d < 0 ? Math.abs(d) : 0)) / 14; }
+    r[i] = al === 0 ? 100 : 100 - 100 / (1 + ag / al);
+  }
+  return r;
+}
+
+// Lightweight ADX at a single point
+function adxSingle(candles: CandleData[], endIdx: number, period = 14): { adx: number; pDI: number; mDI: number } {
+  const len = endIdx + 1;
+  if (len < period * 2) return { adx: 0, pDI: 0, mDI: 0 };
+  const tr: number[] = [], pdm: number[] = [], mdm: number[] = [];
+  for (let i = 1; i < len; i++) {
+    const h = candles[i].high, l = candles[i].low, pc = candles[i - 1].close;
+    tr.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+    const up = candles[i].high - candles[i - 1].high, dn = candles[i - 1].low - candles[i].low;
+    pdm.push(up > dn && up > 0 ? up : 0);
+    mdm.push(dn > up && dn > 0 ? dn : 0);
+  }
+  if (tr.length < period) return { adx: 0, pDI: 0, mDI: 0 };
+  let sTR = 0, sP = 0, sM = 0;
+  for (let i = 0; i < period; i++) { sTR += tr[i]; sP += pdm[i]; sM += mdm[i]; }
+  let pDI = sTR ? (sP / sTR) * 100 : 0, mDI = sTR ? (sM / sTR) * 100 : 0;
+  const dx: number[] = [];
+  for (let i = period; i < tr.length; i++) {
+    sTR = sTR - sTR / period + tr[i]; sP = sP - sP / period + pdm[i]; sM = sM - sM / period + mdm[i];
+    pDI = sTR ? (sP / sTR) * 100 : 0; mDI = sTR ? (sM / sTR) * 100 : 0;
+    const sum = pDI + mDI; dx.push(sum ? (Math.abs(pDI - mDI) / sum) * 100 : 0);
+  }
+  if (dx.length < period) return { adx: 0, pDI, mDI };
+  let adx = dx.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < dx.length; i++) adx = (adx * (period - 1) + dx[i]) / period;
+  return { adx, pDI, mDI };
+}
+
+// Pre-compute ALL indicators for one symbol — called ONCE per symbol per interval
+function precompute(candles: CandleData[]): SymInd {
+  const n = candles.length;
+  const s: SymInd = {
+    candles, tm: new Map(), n,
+    rsiB: new Int8Array(n), macdB: new Int8Array(n), ema50B: new Int8Array(n),
+    emaX: new Int8Array(n), adxD: new Int8Array(n), canD: new Int8Array(n),
+    bScore: new Float32Array(n), sScore: new Float32Array(n),
+    bCount: new Uint8Array(n), sCount: new Uint8Array(n),
+  };
+  for (let i = 0; i < n; i++) s.tm.set(candles[i].time, i);
+
+  const cl = candles.map(c => c.close);
+
+  // RSI (wide bands: <42 bull, >58 bear)
+  const rsi = rsiCalc(cl);
+  for (let i = 0; i < n; i++) s.rsiB[i] = rsi[i] < 42 ? 1 : rsi[i] > 58 ? -1 : 0;
+
+  // MACD + EMA cross
+  const e12 = emaCalc(cl, 12), e26 = emaCalc(cl, 26);
+  const ml: number[] = [];
+  for (let i = 0; i < n; i++) ml.push((e12[i] || 0) - (e26[i] || 0));
+  const sig = emaCalc(ml, 9);
+  for (let i = 0; i < n; i++) {
+    const h = (ml[i] || 0) - (sig[i] || 0);
+    s.macdB[i] = h > 0 ? 1 : h < 0 ? -1 : 0;
+    s.emaX[i] = (e12[i] || 0) > (e26[i] || 0) ? 1 : -1; // always directional
+  }
+
+  // EMA50
+  const e50 = emaCalc(cl, 50);
+  for (let i = 0; i < n; i++) { const v = e50[i]; s.ema50B[i] = isNaN(v) ? 0 : cl[i] > v ? 1 : -1; }
+
+  // ADX (every 3 candles)
+  for (let i = 28; i < n; i += 3) {
+    const a = adxSingle(candles, i);
+    const v = a.adx > 15 ? (a.pDI > a.mDI ? 1 : -1) : 0;
+    for (let j = i; j < Math.min(i + 3, n); j++) s.adxD[j] = v;
+  }
+
+  // Last 3 candles direction (always directional)
+  for (let i = 2; i < n; i++) {
+    const g = (cl[i] > candles[i].open ? 1 : 0) + (cl[i - 1] > candles[i - 1].open ? 1 : 0) + (cl[i - 2] > candles[i - 2].open ? 1 : 0);
+    s.canD[i] = g >= 2 ? 1 : -1;
+  }
+
+  // Pre-compute confluence counts and scores
+  for (let i = 0; i < n; i++) {
+    let bc = 0, sc = 0, bs = 0, ss = 0;
+    // RSI
+    if (s.rsiB[i] > 0) { bc++; bs += 0.5; } else if (s.rsiB[i] < 0) { sc++; ss += 0.5; }
+    // MACD
+    if (s.macdB[i] > 0) { bc++; bs += 0.5; } else if (s.macdB[i] < 0) { sc++; ss += 0.5; }
+    // EMA50
+    if (s.ema50B[i] > 0) { bc++; bs += 0.5; } else if (s.ema50B[i] < 0) { sc++; ss += 0.5; }
+    // EMA cross (always counts)
+    if (s.emaX[i] > 0) { bc++; bs += 0.5; } else { sc++; ss += 0.5; }
+    // ADX
+    if (s.adxD[i] > 0) { bc++; bs += 0.5; } else if (s.adxD[i] < 0) { sc++; ss += 0.5; }
+    // Candle dir (always counts)
+    if (s.canD[i] > 0) { bc++; bs += 0.3; } else { sc++; ss += 0.3; }
+    s.bCount[i] = bc; s.sCount[i] = sc;
+    s.bScore[i] = bs; s.sScore[i] = ss;
+  }
+
+  return s;
+}
+
+function fIdx(tm: Map<number, number>, t: number): number {
+  let i = tm.get(t);
+  if (i !== undefined) return i;
+  for (let d = 1; d <= 5; d++) { i = tm.get(t - d); if (i !== undefined) return i; }
+  return -1;
+}
+
+function calcAmt(free: number): number {
+  if (free < 5) return 0;
+  if (free < 50) return Math.min(Math.max(free * 0.10, 1.5), 8);
+  if (free < 200) return Math.min(Math.max(free * 0.06, 5), 30);
+  return Math.min(Math.max(free * 0.04, 10), 50);
 }
 
 const STRATS = [
-  { id: 'momentum', label: 'Momentum Pro', interval: '1h', maxOpen: 4, cooldownCandles: 3, maxDaily: 4, maxHoldHours: 12, rr: 2.5, warmup: 60 },
-  { id: 'scalper', label: 'Pattern Pro', interval: '15m', maxOpen: 4, cooldownCandles: 4, maxDaily: 6, maxHoldHours: 6, rr: 2.0, warmup: 50 },
-  { id: 'position-alpha', label: 'Position Alpha', interval: '4h', maxOpen: 2, cooldownCandles: 2, maxDaily: 2, maxHoldHours: 120, rr: 3.0, warmup: 60 },
+  { id: 'momentum', label: 'Momentum Pro', interval: '1h', maxOpen: 4, cd: 3, maxD: 4, maxH: 12, rr: 2.5, warmup: 60 },
+  { id: 'scalper', label: 'Pattern Pro', interval: '15m', maxOpen: 4, cd: 4, maxD: 6, maxH: 6, rr: 2.0, warmup: 55 },
+  { id: 'position-alpha', label: 'Position Alpha', interval: '4h', maxOpen: 2, cd: 2, maxD: 2, maxH: 120, rr: 3.0, warmup: 60 },
 ];
 
-type TimeMap = Map<number, number>;
-function buildTimeMap(candles: CandleData[]): TimeMap {
-  const m = new Map<number, number>();
-  for (let i = 0; i < candles.length; i++) m.set(candles[i].time, i);
-  return m;
-}
-
-function findCandleIdx(candles: CandleData[], tm: TimeMap, t: number): number {
-  let idx = tm.get(t);
-  if (idx !== undefined) return idx;
-  for (let d = 1; d <= 5; d++) {
-    idx = tm.get(t - d);
-    if (idx !== undefined) return idx;
-  }
-  let lo = 0, hi = candles.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (candles[mid].time < t) lo = mid + 1; else hi = mid;
-  }
-  return lo;
-}
-
-/*
- * Simple, aggressive backtest signal generator.
- * Does NOT use analyzeIndicators (too conservative with its tight thresholds).
- * Instead computes raw indicators directly and uses wider bands.
- *
- * 6 simple checks, confluence ≥3:
- * 1. RSI: oversold < 45 → bullish, overbought > 55 → bearish (wide band)
- * 2. MACD: histogram > 0 → bullish, < 0 → bearish (always directional)
- * 3. EMA 20 vs 50: price above EMA50 → bullish, below → bearish
- * 4. EMA 12 vs 26 (MACD lines): EMA12 > EMA26 → bullish
- * 5. ADX + DI: if ADX > 15, follow +DI vs -DI direction
- * 6. Candle body: green close > open → bullish, red → bearish (last 3 candles majority)
- */
-function btSignal(
-  candles: CandleData[],
-  idx: number,
-  atr: number,
-  price: number,
-  rr: number,
-): { direction: 'long' | 'short' | null; leverage: number; sl: number; tp: number } {
-  const minCandles = 55; // need enough for EMA50 + RSI14 + MACD
-  if (idx < minCandles || atr <= 0 || price <= 0) return { direction: null, leverage: 1, sl: 0, tp: 0 };
-
-  const slice = candles.slice(0, idx + 1);
-  const closes = slice.map(c => c.close);
-  let longCount = 0, shortCount = 0, longStr = 0, shortStr = 0;
-
-  // 1. RSI — wide bands: < 42 bullish, > 58 bearish
-  const rsi = calcRSI(closes);
-  if (rsi < 42) { longCount++; longStr += (42 - rsi) / 42; }
-  else if (rsi > 58) { shortCount++; shortStr += (rsi - 58) / 42; }
-
-  // 2. MACD histogram direction
-  const macd = calcMACD(closes);
-  if (macd.histogram > 0) { longCount++; longStr += Math.min(macd.histogram / (Math.abs(macd.signalLine) || 1), 1); }
-  else if (macd.histogram < 0) { shortCount++; shortStr += Math.min(Math.abs(macd.histogram) / (Math.abs(macd.signalLine) || 1), 1); }
-
-  // 3. Price vs EMA 50
-  const ema50Arr = ema(closes, 50);
-  const ema50 = ema50Arr[ema50Arr.length - 1];
-  if (!isNaN(ema50)) {
-    if (price > ema50) { longCount++; longStr += Math.min(Math.abs(price - ema50) / ema50 * 10, 1); }
-    else { shortCount++; shortStr += Math.min(Math.abs(price - ema50) / ema50 * 10, 1); }
-  }
-
-  // 4. EMA 12 vs 26
-  const ema12 = ema(closes, 12);
-  const ema26 = ema(closes, 26);
-  const e12 = ema12[ema12.length - 1];
-  const e26 = ema26[ema26.length - 1];
-  if (!isNaN(e12) && !isNaN(e26)) {
-    if (e12 > e26) { longCount++; longStr += 0.5; }
-    else { shortCount++; shortStr += 0.5; }
-  }
-
-  // 5. ADX + DI direction (lowered threshold: ADX > 15)
-  const adxResult = calcADX(slice);
-  if (adxResult.adx > 15) {
-    if (adxResult.plusDI > adxResult.minusDI) { longCount++; longStr += 0.5; }
-    else { shortCount++; shortStr += 0.5; }
-  }
-
-  // 6. Recent candle direction (last 3 candles majority)
-  const last3 = slice.slice(-3);
-  const greens = last3.filter(c => c.close > c.open).length;
-  if (greens >= 2) { longCount++; longStr += 0.3; }
-  else if (greens <= 1) { shortCount++; shortStr += 0.3; }
-
-  // Confluence: require ≥ 3 of 6
-  const bestCount = Math.max(longCount, shortCount);
-  if (bestCount < 3) return { direction: null, leverage: 1, sl: 0, tp: 0 };
-
-  const absLong = Math.abs(longStr);
-  const absShort = Math.abs(shortStr);
-  const score = Math.max(absLong, absShort);
-  if (score < 0.15) return { direction: null, leverage: 1, sl: 0, tp: 0 };
-
-  const direction: 'long' | 'short' = absLong >= absShort ? 'long' : 'short';
-  const leverage = Math.min(5, Math.max(2, Math.round(score * 3)));
-
-  const slPct = Math.max(0.008, Math.min(2.5 * atr / price, 0.08));
-  const tpPct = Math.min(slPct * rr, 0.15);
-
-  const sl = direction === 'long' ? price * (1 - slPct) : price * (1 + slPct);
-  const tp = direction === 'long' ? price * (1 + tpPct) : price * (1 - tpPct);
-
-  return { direction, leverage, sl, tp };
-}
-
 function simulate(
-  accId: number, strat: typeof STRATS[0], balance0: number,
-  candleData: Map<string, CandleData[]>, timeMaps: Map<string, TimeMap>,
-  symbols: string[], seed: number, t0: number, t1: number,
+  aid: number, strat: typeof STRATS[0], b0: number,
+  data: Map<string, SymInd>, syms: string[], seed: number, t0: number, t1: number,
 ): AccountResult {
   const trades: SimTrade[] = [];
-  let bal = balance0, maxDD = 0;
-  let wins = 0, losses = 0, winSum = 0, lossSum = 0;
+  let bal = b0, maxDD = 0, w = 0, l = 0, wS = 0, lS = 0;
   let rng = seed;
   const rand = () => { rng = (rng * 1664525 + 1013904223) & 0xFFFFFFFF; return (rng >>> 0) / 0xFFFFFFFF; };
-  const iSec = strat.interval === '15m' ? 900 : strat.interval === '4h' ? 14400 : 3600;
-  const cdMap = new Map<string, number>();
-  let dayTrades = 0, lastDay = -1;
-  let totalEvals = 0, signalFound = 0;
+  const iS = strat.interval === '15m' ? 900 : strat.interval === '4h' ? 14400 : 3600;
+  const cds = new Map<string, number>();
+  let dT = 0, lD = -1, ev = 0, sg = 0;
+  const valid = syms.filter(s => { const d = data.get(s); return d && d.n >= strat.warmup + 10; });
 
-  const validSymbols = symbols.filter(s => {
-    const cd = candleData.get(s);
-    return cd && cd.length >= strat.warmup + 10;
-  });
-
-  for (let t = t0 + strat.warmup * iSec; t <= t1; t += iSec) {
+  for (let t = t0 + strat.warmup * iS; t <= t1; t += iS) {
     const day = Math.floor(t / 86400);
-    if (day !== lastDay) { dayTrades = 0; lastDay = day; }
-    if (dayTrades >= strat.maxDaily) continue;
+    if (day !== lD) { dT = 0; lD = day; }
+    if (dT >= strat.maxD) continue;
 
-    // Close existing trades
+    // Close trades
     for (const tr of trades) {
       if (tr.closeTime) continue;
-      const sc = candleData.get(tr.symbol);
-      const tm = timeMaps.get(tr.symbol);
-      if (!sc || !tm) continue;
-      const ci = findCandleIdx(sc, tm, t);
-      if (ci < 1) continue;
-      const c = sc[ci];
-      let close = false, reason = '', exit = c.close;
+      const sd = data.get(tr.symbol); if (!sd) continue;
+      const ci = fIdx(sd.tm, t); if (ci < 1 || ci >= sd.n) continue;
+      const c = sd.candles[ci];
+      let cl = false, rsn = '', ex = c.close;
       if (tr.direction === 'long') {
-        if (c.low <= tr.stopLoss) { close = true; reason = 'SL'; exit = tr.stopLoss; }
-        else if (c.high >= tr.takeProfit) { close = true; reason = 'TP'; exit = tr.takeProfit; }
+        if (c.low <= tr.stopLoss) { cl = true; rsn = 'SL'; ex = tr.stopLoss; }
+        else if (c.high >= tr.takeProfit) { cl = true; rsn = 'TP'; ex = tr.takeProfit; }
       } else {
-        if (c.high >= tr.stopLoss) { close = true; reason = 'SL'; exit = tr.stopLoss; }
-        else if (c.low <= tr.takeProfit) { close = true; reason = 'TP'; exit = tr.takeProfit; }
+        if (c.high >= tr.stopLoss) { cl = true; rsn = 'SL'; ex = tr.stopLoss; }
+        else if (c.low <= tr.takeProfit) { cl = true; rsn = 'TP'; ex = tr.takeProfit; }
       }
-      if (!close && (t - tr.openTime) / 3600 > strat.maxHoldHours) { close = true; reason = 'Тайм'; exit = c.close; }
-      if (close) {
-        tr.closeTime = t; tr.closePrice = exit;
-        const pc = tr.direction === 'long' ? (exit - tr.entryPrice) / tr.entryPrice : (tr.entryPrice - exit) / tr.entryPrice;
+      if (!cl && (t - tr.openTime) / 3600 > strat.maxH) { cl = true; rsn = 'Тайм'; ex = c.close; }
+      if (cl) {
+        tr.closeTime = t; tr.closePrice = ex;
+        const pc = tr.direction === 'long' ? (ex - tr.entryPrice) / tr.entryPrice : (tr.entryPrice - ex) / tr.entryPrice;
         const fees = tr.amount * 0.001 + (tr.amount / tr.leverage) * 0.001;
-        tr.pnl = tr.amount * pc * tr.leverage - fees;
-        tr.reason = reason;
+        tr.pnl = tr.amount * pc * tr.leverage - fees; tr.reason = rsn;
         bal += tr.amount + tr.pnl;
-        if (tr.pnl >= 0) { wins++; winSum += tr.pnl; } else { losses++; lossSum += Math.abs(tr.pnl); }
-        if (reason === 'SL' || reason === 'Тайм') cdMap.set(tr.symbol, t + strat.cooldownCandles * iSec);
+        if (tr.pnl >= 0) { w++; wS += tr.pnl; } else { l++; lS += Math.abs(tr.pnl); }
+        if (rsn === 'SL' || rsn === 'Тайм') cds.set(tr.symbol, t + strat.cd * iS);
       }
     }
 
     const open = trades.filter(x => !x.closeTime);
     if (open.length >= strat.maxOpen || bal < 5) continue;
 
-    const shuffled = [...validSymbols].sort(() => rand() - 0.5).slice(0, 20);
-    const openSyms = new Set(open.map(x => x.symbol));
-    let bSym = '', bScore = 0, bDir: 'long' | 'short' | null = null, bLev = 1, bSL = 0, bTP = 0;
+    const shuffled = [...valid].sort(() => rand() - 0.5).slice(0, 20);
+    const oS = new Set(open.map(x => x.symbol));
+    let found = false;
 
     for (const sym of shuffled) {
-      if (openSyms.has(sym)) continue;
-      const cd = cdMap.get(sym); if (cd && t < cd) continue;
-      const sc = candleData.get(sym);
-      const tm = timeMaps.get(sym);
-      if (!sc || !tm) continue;
-      const ci = findCandleIdx(sc, tm, t);
-      if (ci < strat.warmup) continue;
+      if (found) break;
+      if (oS.has(sym)) continue;
+      const cd = cds.get(sym); if (cd && t < cd) continue;
+      const sd = data.get(sym); if (!sd) continue;
+      const ci = fIdx(sd.tm, t); if (ci < strat.warmup || ci >= sd.n) continue;
+      ev++;
 
-      totalEvals++;
-      const atr = calcATR(sc.slice(Math.max(0, ci - 20), ci + 1));
-      const price = sc[ci].close;
+      // O(1) signal check using pre-computed data
+      const bc = sd.bCount[ci], sc_ = sd.sCount[ci];
+      if (Math.max(bc, sc_) < 3) continue; // confluence ≥ 3
+      const score = Math.max(sd.bScore[ci], sd.sScore[ci]);
+      if (score < 0.15) continue;
+      sg++;
+
+      const dir: 'long' | 'short' = sd.bScore[ci] >= sd.sScore[ci] ? 'long' : 'short';
+      const lev = Math.min(5, Math.max(2, Math.round(score * 3)));
+      const price = sd.candles[ci].close;
+      const atr = calcATR(sd.candles.slice(Math.max(0, ci - 20), ci + 1));
       if (atr <= 0 || price <= 0) continue;
-
-      const sig = btSignal(sc, ci, atr, price, strat.rr);
-      if (!sig.direction) continue;
-
-      signalFound++;
-      bScore = 1; bSym = sym; bDir = sig.direction; bLev = sig.leverage; bSL = sig.sl; bTP = sig.tp;
-      break; // first valid signal per step
+      const slP = Math.max(0.008, Math.min(2.5 * atr / price, 0.08));
+      const tpP = Math.min(slP * strat.rr, 0.15);
+      const sl = dir === 'long' ? price * (1 - slP) : price * (1 + slP);
+      const tp = dir === 'long' ? price * (1 + tpP) : price * (1 - tpP);
+      const free = Math.max(0, bal - open.reduce((s, x) => s + x.amount, 0));
+      const amt = calcAmt(free); if (amt < 1) continue;
+      trades.push({ id: `bt_${aid}_${trades.length}`, symbol: sym, strategyId: strat.id, direction: dir, entryPrice: price, amount: amt, leverage: lev, stopLoss: sl, takeProfit: tp, openTime: t });
+      bal -= amt; dT++; found = true;
     }
-
-    if (!bDir || !bSym || bSL === 0 || bTP === 0) continue;
-    const sc = candleData.get(bSym)!;
-    const tm = timeMaps.get(bSym)!;
-    const ci = findCandleIdx(sc, tm, t);
-    const price = sc[ci].close;
-    const free = Math.max(0, bal - open.reduce((s, x) => s + x.amount, 0));
-    const amt = calcAmount(bal, free);
-    if (amt < 1) continue;
-
-    trades.push({ id: `bt_${accId}_t${trades.length}`, symbol: bSym, strategyId: strat.id, direction: bDir, entryPrice: price, amount: amt, leverage: bLev, stopLoss: bSL, takeProfit: bTP, openTime: t });
-    bal -= amt; dayTrades++;
   }
 
-  // Close remaining open trades at last price
+  // Close remaining
   for (const tr of trades) {
     if (tr.closeTime) continue;
-    const sc = candleData.get(tr.symbol); if (!sc) continue;
-    const lp = sc[sc.length - 1].close;
+    const sd = data.get(tr.symbol); if (!sd) continue;
+    const lp = sd.candles[sd.n - 1].close;
     const pc = tr.direction === 'long' ? (lp - tr.entryPrice) / tr.entryPrice : (tr.entryPrice - lp) / tr.entryPrice;
     const fees = tr.amount * 0.001 + (tr.amount / tr.leverage) * 0.001;
-    tr.pnl = tr.amount * pc * tr.leverage - fees;
-    tr.closeTime = t1; tr.closePrice = lp; tr.reason = 'конец';
+    tr.pnl = tr.amount * pc * tr.leverage - fees; tr.closeTime = t1; tr.closePrice = lp; tr.reason = 'конец';
     bal += tr.amount + tr.pnl;
-    if (tr.pnl >= 0) { wins++; winSum += tr.pnl; } else { losses++; lossSum += Math.abs(tr.pnl); }
+    if (tr.pnl >= 0) { w++; wS += tr.pnl; } else { l++; lS += Math.abs(tr.pnl); }
   }
 
-  // Max drawdown
-  let peak = balance0, run = balance0;
-  for (const tr of trades) {
-    if (!tr.closeTime) continue;
-    run += tr.amount + (tr.pnl ?? 0);
-    if (run > peak) peak = run;
-    const dd = peak > 0 ? ((peak - run) / peak) * 100 : 0;
-    if (dd > maxDD) maxDD = dd;
-  }
+  let peak = b0, run = b0;
+  for (const tr of trades) { if (!tr.closeTime) continue; run += tr.amount + (tr.pnl ?? 0); if (run > peak) peak = run; const dd = peak > 0 ? ((peak - run) / peak) * 100 : 0; if (dd > maxDD) maxDD = dd; }
 
-  return {
-    id: accId, strategyId: strat.id, startBalance: balance0,
-    endBalance: Math.round(bal * 100) / 100,
-    pnl: Math.round((bal - balance0) * 100) / 100,
-    pnlPct: Math.round(((bal - balance0) / balance0) * 10000) / 100,
-    totalTrades: trades.length, wins, losses,
-    winRate: trades.length > 0 ? Math.round((wins / trades.length) * 1000) / 10 : 0,
-    maxDrawdownPct: Math.round(maxDD * 10) / 10,
-    avgWin: wins > 0 ? Math.round((winSum / wins) * 100) / 100 : 0,
-    avgLoss: losses > 0 ? Math.round((lossSum / losses) * 100) / 100 : 0,
-    profitFactor: lossSum > 0 ? Math.round((winSum / lossSum) * 100) / 100 : wins > 0 ? 99.99 : 0,
-    trades,
-    _debug: { totalEvals, signalFound },
-  } as any;
+  return { id: aid, strategyId: strat.id, startBalance: b0, endBalance: Math.round(bal * 100) / 100, pnl: Math.round((bal - b0) * 100) / 100, pnlPct: Math.round(((bal - b0) / b0) * 10000) / 100, totalTrades: trades.length, wins: w, losses: l, winRate: trades.length > 0 ? Math.round((w / trades.length) * 1000) / 10 : 0, maxDrawdownPct: Math.round(maxDD * 10) / 10, avgWin: w > 0 ? Math.round((wS / w) * 100) / 100 : 0, avgLoss: l > 0 ? Math.round((lS / l) * 100) / 100 : 0, profitFactor: lS > 0 ? Math.round((wS / lS) * 100) / 100 : w > 0 ? 99.99 : 0, trades, _debug: { ev, sg } } as any;
 }
 
-async function saveResult(userId: string, result: AccountResult) {
+async function saveResult(uid: string, r: AccountResult) {
   const db = getTursoClient();
-  await db.execute({ sql: `DELETE FROM trades WHERE user_id = ?`, args: [userId] });
-  await db.execute({ sql: `DELETE FROM trader_state WHERE user_id = ?`, args: [userId] });
-  await db.execute({
-    sql: `INSERT INTO trader_state (id, user_id, strategy_id, balance, borrowed_funds, debt_to_repay, is_active, initial_balance, updated_at) VALUES (?, ?, ?, ?, 0, 0, 0, ?, datetime('now'))`,
-    args: [`bt_${userId}`, userId, result.strategyId, result.endBalance, result.startBalance],
-  });
-  const batchStmts = result.trades.map(tr => ({
-    sql: `INSERT INTO trades (id, user_id, symbol, strategy_id, entry_price, exit_price, amount, leverage, direction, pnl, status, stop_loss, take_profit, opened_at, closed_at, remaining_amount, entry_quality, partial_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'full')`,
-    args: [`${userId}_${tr.id}`, userId, tr.symbol, tr.strategyId, tr.entryPrice, tr.closePrice ?? null, tr.amount, tr.leverage, tr.direction, tr.pnl ?? null, 'closed', tr.stopLoss, tr.takeProfit, new Date(tr.openTime * 1000).toISOString(), tr.closeTime ? new Date(tr.closeTime * 1000).toISOString() : null, null] as any[],
-  }));
-  for (let i = 0; i < batchStmts.length; i += 50) {
-    await db.batch(batchStmts.slice(i, i + 50));
-  }
+  await db.execute({ sql: `DELETE FROM trades WHERE user_id = ?`, args: [uid] });
+  await db.execute({ sql: `DELETE FROM trader_state WHERE user_id = ?`, args: [uid] });
+  await db.execute({ sql: `INSERT INTO trader_state (id, user_id, strategy_id, balance, borrowed_funds, debt_to_repay, is_active, initial_balance, updated_at) VALUES (?, ?, ?, ?, 0, 0, 0, ?, datetime('now'))`, args: [`bt_${uid}`, uid, r.strategyId, r.endBalance, r.startBalance] });
+  const bs = r.trades.map(tr => ({ sql: `INSERT INTO trades (id, user_id, symbol, strategy_id, entry_price, exit_price, amount, leverage, direction, pnl, status, stop_loss, take_profit, opened_at, closed_at, remaining_amount, entry_quality, partial_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'full')`, args: [`${uid}_${tr.id}`, uid, tr.symbol, tr.strategyId, tr.entryPrice, tr.closePrice ?? null, tr.amount, tr.leverage, tr.direction, tr.pnl ?? null, 'closed', tr.stopLoss, tr.takeProfit, new Date(tr.openTime * 1000).toISOString(), tr.closeTime ? new Date(tr.closeTime * 1000).toISOString() : null, null] as any[] }));
+  for (let i = 0; i < bs.length; i += 50) await db.batch(bs.slice(i, i + 50));
 }
 
-// POST /api/backtest-run — SSE streaming (admin only)
 export async function POST(request: NextRequest) {
-  if (!checkAuth(request)) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
-  }
-  const encoder = new TextEncoder();
-  let controller: ReadableStreamDefaultController | null = null;
+  if (!checkAuth(request)) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+  const enc = new TextEncoder();
+  let ctrl: ReadableStreamDefaultController | null = null;
+  const send = (ev: string, d: any) => { if (!ctrl) return; ctrl.enqueue(enc.encode(`event: ${ev}\ndata: ${JSON.stringify(d)}\n\n`)); };
 
-  const send = (event: string, data: any) => {
-    if (!controller) return;
-    controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
-  };
-
-  const stream = new ReadableStream({
-    async start(ctrl) { controller = ctrl; },
-    async cancel() { controller = null; },
-  });
+  const stream = new ReadableStream({ async start(c) { ctrl = c; }, async cancel() { ctrl = null; } });
 
   (async () => {
     try {
-      const t1 = Math.floor(Date.now() / 1000);
-      const t0 = t1 - 60 * 86400;
-
-      send('log', { msg: '🔄 Загрузка топ-50 монет с Binance...' });
+      const t1 = Math.floor(Date.now() / 1000), t0 = t1 - 60 * 86400;
+      send('log', { msg: '🔄 Загрузка топ-50 монет...' });
       const symbols = await fetchTopSymbols();
-      send('log', { msg: `✅ ${symbols.length} монет загружено` });
+      send('log', { msg: `✅ ${symbols.length} монет` });
 
-      const allCandles = new Map<string, CandleData[]>();
-      const allTimeMaps = new Map<string, TimeMap>();
+      const allData = new Map<string, Map<string, SymInd>>();
 
       for (const strat of STRATS) {
-        send('log', { msg: `📈 Загрузка свечей (${strat.interval}, 60 дней)...` });
-        let loaded = 0;
-        await Promise.all(symbols.map(async (sym) => {
-          try {
-            const c = await fetchCandlesBT(sym, strat.interval, t0 * 1000, t1 * 1000);
-            if (c.length > 50) {
-              const key = `${sym}_${strat.interval}`;
-              allCandles.set(key, c);
-              allTimeMaps.set(key, buildTimeMap(c));
-            }
-            loaded++;
-            if (loaded % 10 === 0) send('progress', { stage: 'candles', interval: strat.interval, current: loaded, total: symbols.length });
-          } catch { /* skip */ }
-        }));
-        const count = [...allCandles.keys()].filter(k => k.endsWith(strat.interval)).length;
-        send('log', { msg: `  ✅ ${count} монет (${strat.interval})` });
+        send('log', { msg: `📈 ${strat.interval}: загрузка + расчёт...` });
+        const dm = new Map<string, SymInd>();
+        for (let b = 0; b < symbols.length; b += 10) {
+          const batch = symbols.slice(b, b + 10);
+          const res = await Promise.all(batch.map(async sym => {
+            try { const c = await fetchCandles(sym, strat.interval, t0 * 1000, t1 * 1000); if (c.length > 60) return { sym, sd: precompute(c) }; } catch { /* */ } return null;
+          }));
+          for (const r of res) if (r) dm.set(r.sym, r.sd);
+          send('progress', { stage: 'candles', interval: strat.interval, current: Math.min(b + 10, symbols.length), total: symbols.length });
+        }
+        allData.set(strat.interval, dm);
+        send('log', { msg: `  ✅ ${dm.size} монет (${strat.interval})` });
       }
 
       const results: AccountResult[] = [];
-      const perStrat = 34;
-      const totalAccounts = STRATS.length * perStrat;
-      let doneAccounts = 0;
-      let globalEvals = 0, globalSignals = 0;
+      const pS = 34, total = STRATS.length * pS;
+      let done = 0, gEv = 0, gSg = 0;
 
       for (let si = 0; si < STRATS.length; si++) {
         const strat = STRATS[si];
-        const stratCandles = new Map<string, CandleData[]>();
-        const stratTimeMaps = new Map<string, TimeMap>();
-        for (const sym of symbols) {
-          const c = allCandles.get(`${sym}_${strat.interval}`);
-          const tm = allTimeMaps.get(`${sym}_${strat.interval}`);
-          if (c && tm) { stratCandles.set(sym, c); stratTimeMaps.set(sym, tm); }
-        }
-
-        send('log', { msg: `🚀 ${strat.label} (${strat.interval}): ${perStrat} аккаунтов...` });
-
-        for (let i = 0; i < perStrat; i++) {
-          const accId = si * perStrat + i + 1;
-          const result = simulate(accId, strat, 100, stratCandles, stratTimeMaps, symbols, 42 + accId * 7919, t0, t1);
-          results.push(result);
-          doneAccounts++;
-          globalEvals += (result as any)._debug?.totalEvals ?? 0;
-          globalSignals += (result as any)._debug?.signalFound ?? 0;
-          const e = result.pnl >= 0 ? '✅' : '❌';
-          send('account', {
-            id: accId, strategyId: strat.id, totalTrades: result.totalTrades,
-            winRate: result.winRate, pnlPct: result.pnlPct, emoji: e,
-          });
-          send('progress', {
-            stage: 'simulate', strategyId: strat.id,
-            current: doneAccounts, total: totalAccounts,
-          });
+        const dm = allData.get(strat.interval) ?? new Map();
+        send('log', { msg: `🚀 ${strat.label}: ${pS} аккаунтов...` });
+        for (let i = 0; i < pS; i++) {
+          const aid = si * pS + i + 1;
+          const r = simulate(aid, strat, 100, dm, symbols, 42 + aid * 7919, t0, t1);
+          results.push(r); done++;
+          gEv += (r as any)._debug?.ev ?? 0; gSg += (r as any)._debug?.sg ?? 0;
+          send('account', { id: aid, strategyId: strat.id, totalTrades: r.totalTrades, winRate: r.winRate, pnlPct: r.pnlPct, emoji: r.pnl >= 0 ? '✅' : '❌' });
+          send('progress', { stage: 'simulate', strategyId: strat.id, current: done, total });
         }
       }
 
-      send('log', { msg: `📊 Диагностика: ${globalEvals} оценок, ${globalSignals} сигналов (${(globalSignals / Math.max(globalEvals, 1) * 100).toFixed(1)}%)` });
+      send('log', { msg: `📊 ${gEv} оценок, ${gSg} сигналов (${(gSg / Math.max(gEv, 1) * 100).toFixed(1)}%)` });
 
       const profitable = results.filter(r => r.pnl > 0).length;
       const totalTrades = results.reduce((s, r) => s + r.totalTrades, 0);
-      const avgPnlPct = results.reduce((s, r) => s + r.pnlPct, 0) / results.length;
+      const avgPnl = results.reduce((s, r) => s + r.pnlPct, 0) / results.length;
       const best = [...results].sort((a, b) => b.pnlPct - a.pnlPct)[0];
       const worst = [...results].sort((a, b) => a.pnlPct - b.pnlPct)[0];
       const sorted = [...results].sort((a, b) => a.pnlPct - b.pnlPct);
       const median = sorted[Math.floor(sorted.length / 2)];
-      const totalWins = results.reduce((s, r) => s + r.wins, 0);
-      const globalWR = totalTrades > 0 ? ((totalWins / totalTrades) * 100).toFixed(1) : '0';
-      const avgDD = (results.reduce((s, r) => s + r.maxDrawdownPct, 0) / results.length).toFixed(1);
+      const gWR = totalTrades > 0 ? ((results.reduce((s, r) => s + r.wins, 0) / totalTrades) * 100).toFixed(1) : '0';
+      const aDD = (results.reduce((s, r) => s + r.maxDrawdownPct, 0) / results.length).toFixed(1);
+      const bkts = [-100, -50, -25, -10, 0, 10, 25, 50, 100, 500];
+      const dist: { from: number; to: number; count: number }[] = [];
+      for (let i = 0; i < bkts.length - 1; i++) { const c = results.filter(r => r.pnlPct >= bkts[i] && r.pnlPct < bkts[i + 1]).length; if (c > 0) dist.push({ from: bkts[i], to: bkts[i + 1], count: c }); }
+      const sSt = STRATS.map(s => { const sr = results.filter(r => r.strategyId === s.id); return { id: s.id, interval: s.interval, count: sr.length, profitable: sr.filter(r => r.pnl > 0).length, avgPnl: sr.length ? (sr.reduce((a, r) => a + r.pnlPct, 0) / sr.length).toFixed(1) : '0.0', avgWR: sr.length ? (sr.reduce((a, r) => a + r.winRate, 0) / sr.length).toFixed(1) : '0.0', avgDD: sr.length ? (sr.reduce((a, r) => a + r.maxDrawdownPct, 0) / sr.length).toFixed(1) : '0.0', bestPnl: sr.length ? Math.max(...sr.map(r => r.pnlPct)).toFixed(1) : '0.0', worstPnl: sr.length ? Math.min(...sr.map(r => r.pnlPct)).toFixed(1) : '0.0', totalTrades: sr.reduce((a, r) => a + r.totalTrades, 0) }; });
 
-      const buckets = [-100, -50, -25, -10, 0, 10, 25, 50, 100, 500];
-      const distribution: { from: number; to: number; count: number }[] = [];
-      for (let i = 0; i < buckets.length - 1; i++) {
-        const count = results.filter(r => r.pnlPct >= buckets[i] && r.pnlPct < buckets[i + 1]).length;
-        if (count > 0) distribution.push({ from: buckets[i], to: buckets[i + 1], count });
-      }
-
-      const stratStats = STRATS.map(s => {
-        const sr = results.filter(r => r.strategyId === s.id);
-        return {
-          id: s.id, interval: s.interval, count: sr.length,
-          profitable: sr.filter(r => r.pnl > 0).length,
-          avgPnl: sr.length > 0 ? (sr.reduce((sum, r) => sum + r.pnlPct, 0) / sr.length).toFixed(1) : '0.0',
-          avgWR: sr.length > 0 ? (sr.reduce((sum, r) => sum + r.winRate, 0) / sr.length).toFixed(1) : '0.0',
-          avgDD: sr.length > 0 ? (sr.reduce((sum, r) => sum + r.maxDrawdownPct, 0) / sr.length).toFixed(1) : '0.0',
-          bestPnl: sr.length > 0 ? Math.max(...sr.map(r => r.pnlPct)).toFixed(1) : '0.0',
-          worstPnl: sr.length > 0 ? Math.min(...sr.map(r => r.pnlPct)).toFixed(1) : '0.0',
-          totalTrades: sr.reduce((sum, r) => sum + r.totalTrades, 0),
-        };
-      });
-
-      send('log', { msg: '💾 Сохранение лучших результатов в БД...' });
-      try { await saveResult(BACKTEST_USER_ID_BEST, best); } catch (e: any) { send('log', { msg: `⚠️ Ошибка сохранения best: ${e.message}` }); }
-      try { await saveResult(BACKTEST_USER_ID_MEDIAN, median); } catch (e: any) { send('log', { msg: `⚠️ Ошибка сохранения median: ${e.message}` }); }
+      send('log', { msg: '💾 Сохранение...' });
+      try { await saveResult(BACKTEST_USER_ID_BEST, best); } catch (e: any) { send('log', { msg: `⚠️ ${e.message}` }); }
+      try { await saveResult(BACKTEST_USER_ID_MEDIAN, median); } catch (e: any) { send('log', { msg: `⚠️ ${e.message}` }); }
       send('log', { msg: '✅ Готово!' });
 
-      send('done', {
-        profitable, totalTrades,
-        avgPnlPct: avgPnlPct.toFixed(1),
-        bestPnl: best.pnlPct, worstPnl: worst.pnlPct, medianPnl: median.pnlPct,
-        globalWR, avgDD, stratStats, distribution,
-        bestUserId: BACKTEST_USER_ID_BEST, medianUserId: BACKTEST_USER_ID_MEDIAN,
-        allResults: results.map(r => ({
-          id: r.id, strategyId: r.strategyId, pnlPct: r.pnlPct,
-          totalTrades: r.totalTrades, winRate: r.winRate, maxDrawdownPct: r.maxDrawdownPct,
-          profitFactor: r.profitFactor,
-        })),
-      });
-    } catch (err: any) {
-      send('error', { msg: err.message });
-    } finally {
-      controller?.close();
-    }
+      send('done', { profitable, totalTrades, avgPnlPct: avgPnl.toFixed(1), bestPnl: best.pnlPct, worstPnl: worst.pnlPct, medianPnl: median.pnlPct, globalWR: gWR, avgDD: aDD, stratStats: sSt, distribution: dist, bestUserId: BACKTEST_USER_ID_BEST, medianUserId: BACKTEST_USER_ID_MEDIAN, allResults: results.map(r => ({ id: r.id, strategyId: r.strategyId, pnlPct: r.pnlPct, totalTrades: r.totalTrades, winRate: r.winRate, maxDrawdownPct: r.maxDrawdownPct, profitFactor: r.profitFactor })) });
+    } catch (err: any) { send('error', { msg: err.message }); } finally { ctrl?.close(); }
   })();
 
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-    },
-  });
+  return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' } });
 }
 
-// GET /api/backtest-run — статус
-export async function GET() {
-  return Response.json({ status: 'ready' });
-}
+export async function GET() { return Response.json({ status: 'ready' }); }
