@@ -221,7 +221,9 @@ function simulate(
   let dT = 0, lD = -1, ev = 0, sg = 0;
   const valid = syms.filter(s => { const d = data.get(s); return d && d.n >= strat.warmup + 10; });
 
-  for (let t = t0 + strat.warmup * iS; t <= t1; t += iS) {
+  // CRITICAL: align t0 to interval boundary so it matches Binance candle timestamps
+  const alignedT0 = Math.floor(t0 / iS) * iS;
+  for (let t = alignedT0 + strat.warmup * iS; t <= t1; t += iS) {
     const day = Math.floor(t / 86400);
     if (day !== lD) { dT = 0; lD = day; }
     if (dT >= strat.maxD) continue;
@@ -346,7 +348,9 @@ export async function POST(request: NextRequest) {
           send('progress', { stage: 'candles', interval: strat.interval, current: Math.min(b + 10, symbols.length), total: symbols.length });
         }
         allData.set(strat.interval, dm);
-        send('log', { msg: `  ✅ ${dm.size} монет (${strat.interval})` });
+        const sampleSym = dm.keys().next().value;
+        const sampleCandles = sampleSym ? dm.get(sampleSym)?.n : 0;
+        send('log', { msg: `  ✅ ${dm.size} монет (${strat.interval}), пример: ${sampleSym ?? '—'} ${sampleCandles ?? 0} свечей` });
       }
 
       const results: AccountResult[] = [];
@@ -356,15 +360,18 @@ export async function POST(request: NextRequest) {
       for (let si = 0; si < STRATS.length; si++) {
         const strat = STRATS[si];
         const dm = allData.get(strat.interval) ?? new Map();
-        send('log', { msg: `🚀 ${strat.label}: ${pS} аккаунтов...` });
+        send('log', { msg: `🚀 ${strat.label}: ${dm.size} монет, ${pS} аккаунтов...` });
+        let sEv = 0, sSg = 0;
         for (let i = 0; i < pS; i++) {
           const aid = si * pS + i + 1;
           const r = simulate(aid, strat, 100, dm, symbols, 42 + aid * 7919, t0, t1);
           results.push(r); done++;
-          gEv += (r as any)._debug?.ev ?? 0; gSg += (r as any)._debug?.sg ?? 0;
+          const d = (r as any)._debug ?? {};
+          gEv += d.ev ?? 0; gSg += d.sg ?? 0; sEv += d.ev ?? 0; sSg += d.sg ?? 0;
           send('account', { id: aid, strategyId: strat.id, totalTrades: r.totalTrades, winRate: r.winRate, pnlPct: r.pnlPct, emoji: r.pnl >= 0 ? '✅' : '❌' });
           send('progress', { stage: 'simulate', strategyId: strat.id, current: done, total });
         }
+        send('log', { msg: `  📊 ${strat.label}: ${sEv} оценок, ${sSg} сигналов` });
       }
 
       send('log', { msg: `📊 ${gEv} оценок, ${gSg} сигналов (${(gSg / Math.max(gEv, 1) * 100).toFixed(1)}%)` });
