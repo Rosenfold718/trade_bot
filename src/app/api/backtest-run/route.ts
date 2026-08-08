@@ -406,21 +406,35 @@ function simulate(
 // ============================================================
 
 function buildEquityCurve(r: AccountResult, t0: number, t1: number): { time: number; equity: number }[] {
-  const points: { time: number; equity: number }[] = [];
-  const step = Math.max(86400, Math.floor((t1 - t0) / 60));
-  let eq = r.startBalance;
-  const tradeMap = new Map<number, SimTrade[]>();
+  // Build ordered list of all trade close events (including losses and time-exits)
+  const tradeEvents: { time: number; pnl: number }[] = [];
   for (const tr of r.trades) {
-    if (!tr.closeTime) continue;
-    const bucket = Math.floor(tr.closeTime / step) * step;
-    if (!tradeMap.has(bucket)) tradeMap.set(bucket, []);
-    tradeMap.get(bucket)!.push(tr);
+    if (!tr.closeTime || tr.pnl === undefined) continue;
+    tradeEvents.push({ time: tr.closeTime, pnl: tr.pnl });
   }
-  for (let t = t0; t <= t1; t += step) {
-    const trs = tradeMap.get(t);
-    if (trs) for (const tr of trs) eq += (tr.pnl ?? 0);
+  tradeEvents.sort((a, b) => a.time - b.time);
+
+  const step = Math.max(3600, Math.floor((t1 - t0) / 120)); // max ~120 points
+  const points: { time: number; equity: number }[] = [];
+  let eq = r.startBalance;
+  points.push({ time: t0, equity: Math.round(eq * 100) / 100 }); // starting point
+
+  let evtIdx = 0;
+  for (let t = t0 + step; t <= t1; t += step) {
+    // Apply all trades that closed before this time
+    while (evtIdx < tradeEvents.length && tradeEvents[evtIdx].time <= t) {
+      eq += tradeEvents[evtIdx].pnl;
+      evtIdx++;
+    }
     points.push({ time: t, equity: Math.round(eq * 100) / 100 });
   }
+
+  // Ensure final point matches end balance
+  if (points.length > 0) {
+    points[points.length - 1].equity = Math.round(r.endBalance * 100) / 100;
+    points[points.length - 1].time = t1;
+  }
+
   return points;
 }
 
@@ -556,7 +570,42 @@ export async function POST(request: NextRequest) {
         return { id: s.id, interval: s.interval, count: sr.length, profitable: sr.filter(r => r.pnl > 0).length, avgPnl: sr.length ? (sr.reduce((a, r) => a + r.pnlPct, 0) / sr.length).toFixed(1) : '0.0', avgWR: sr.length ? (sr.reduce((a, r) => a + r.winRate, 0) / sr.length).toFixed(1) : '0.0', avgDD: sr.length ? (sr.reduce((a, r) => a + r.maxDrawdownPct, 0) / sr.length).toFixed(1) : '0.0', bestPnl: sr.length ? Math.max(...sr.map(r => r.pnlPct)).toFixed(1) : '0.0', worstPnl: sr.length ? Math.min(...sr.map(r => r.pnlPct)).toFixed(1) : '0.0', totalTrades: sr.reduce((a, r) => a + r.totalTrades, 0) };
       });
 
-      // Best account report data
+      // Build per-strategy best reports (top account per strategy)
+      const strategyReports: { strategyId: string; strategyLabel: string; account: any }[] = [];
+      for (const strat of STRATS) {
+        const stratResults = results.filter(r => r.strategyId === strat.id);
+        if (stratResults.length === 0) continue;
+        const bestOfStrat = [...stratResults].sort((a, b) => b.pnlPct - a.pnlPct)[0];
+        const eq = buildEquityCurve(bestOfStrat, t0, t1);
+        const trs: TradeForReport[] = bestOfStrat.trades.map(tr => ({
+          symbol: tr.symbol, direction: tr.direction, entryPrice: tr.entryPrice, closePrice: tr.closePrice ?? null,
+          amount: tr.amount, leverage: tr.leverage, pnl: tr.pnl ?? null, reason: tr.reason ?? '',
+          openTime: new Date(tr.openTime * 1000).toISOString(), closeTime: tr.closeTime ? new Date(tr.closeTime * 1000).toISOString() : null,
+          stopLoss: tr.stopLoss, takeProfit: tr.takeProfit,
+        }));
+        const sLongs = bestOfStrat.trades.filter(t => t.direction === 'long');
+        const sShorts = bestOfStrat.trades.filter(t => t.direction === 'short');
+        const sLongWR = sLongs.length > 0 ? Math.round((sLongs.filter(t => (t.pnl ?? 0) >= 0).length / sLongs.length) * 1000) / 10 : 0;
+        const sShortWR = sShorts.length > 0 ? Math.round((sShorts.filter(t => (t.pnl ?? 0) >= 0).length / sShorts.length) * 1000) / 10 : 0;
+        const sLW = bestOfStrat.trades.length > 0 ? Math.max(...bestOfStrat.trades.map(t => t.pnl ?? 0)) : 0;
+        const sLL = bestOfStrat.trades.length > 0 ? Math.min(...bestOfStrat.trades.map(t => t.pnl ?? 0)) : 0;
+        const sp: Record<string, { count: number; wins: number; pnl: number }> = {};
+        for (const tr of bestOfStrat.trades) { if (!sp[tr.symbol]) sp[tr.symbol] = { count: 0, wins: 0, pnl: 0 }; sp[tr.symbol].count++; if ((tr.pnl ?? 0) >= 0) sp[tr.symbol].wins++; sp[tr.symbol].pnl += tr.pnl ?? 0; }
+        strategyReports.push({
+          strategyId: strat.id, strategyLabel: strat.label,
+          account: {
+            id: bestOfStrat.id, strategyId: strat.id, strategyLabel: strat.label,
+            startBalance: bestOfStrat.startBalance, endBalance: bestOfStrat.endBalance, pnl: bestOfStrat.pnl, pnlPct: bestOfStrat.pnlPct,
+            totalTrades: bestOfStrat.totalTrades, wins: bestOfStrat.wins, losses: bestOfStrat.losses, winRate: bestOfStrat.winRate, maxDrawdownPct: bestOfStrat.maxDrawdownPct,
+            avgWin: bestOfStrat.avgWin, avgLoss: bestOfStrat.avgLoss, profitFactor: bestOfStrat.profitFactor,
+            longTrades: sLongs.length, shortTrades: sShorts.length, longWinRate: sLongWR, shortWinRate: sShortWR,
+            largestWin: sLW, largestLoss: sLL,
+            trades: trs, equityCurve: eq, symbolPerformance: sp,
+          },
+        });
+      }
+
+      // Best account report data (global best)
       const bestEquity = buildEquityCurve(best, t0, t1);
       const bestTrades: TradeForReport[] = best.trades.map(tr => ({
         symbol: tr.symbol, direction: tr.direction, entryPrice: tr.entryPrice, closePrice: tr.closePrice ?? null,
@@ -590,6 +639,7 @@ export async function POST(request: NextRequest) {
         globalWR: gWR, avgDD: aDD, stratStats: sSt, distribution: dist,
         bestUserId: BACKTEST_USER_ID_BEST, medianUserId: BACKTEST_USER_ID_MEDIAN,
         allResults: results.map(r => ({ id: r.id, strategyId: r.strategyId, pnlPct: r.pnlPct, totalTrades: r.totalTrades, winRate: r.winRate, maxDrawdownPct: r.maxDrawdownPct, profitFactor: r.profitFactor })),
+        strategyReports,
         usedRealData, dataSource: usedRealData ? 'binance' : 'synthetic',
       });
 

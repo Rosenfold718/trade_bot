@@ -6,11 +6,10 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import {
   Play, Loader2, XCircle, TrendingUp, TrendingDown, BarChart3,
-  Target, Activity, Users, Trophy, Zap, Clock, RotateCcw, FileText, ArrowLeft,
+  Target, Activity, Users, Clock, RotateCcw, FileText, ArrowLeft,
   ArrowUpRight, ArrowDownRight, DollarSign, ChevronDown, ChevronUp,
   Sparkles, Terminal, Layers, Crown,
 } from 'lucide-react';
@@ -62,6 +61,10 @@ interface FinalResult {
     id: number; strategyId: string; pnlPct: number; totalTrades: number;
     winRate: number; maxDrawdownPct: number; profitFactor: number;
   }[];
+  strategyReports: {
+    strategyId: string; strategyLabel: string;
+    account: BestAccountReport;
+  }[];
   bestAccount?: BestAccountReport;
   usedRealData?: boolean; dataSource?: string;
 }
@@ -108,13 +111,14 @@ export default function BacktestDialog({ open, onClose }: BacktestDialogProps) {
   const [result, setResult] = useState<FinalResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<View>('results');
+  const [selectedReport, setSelectedReport] = useState<BestAccountReport | null>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [logs]);
 
   const reset = useCallback(() => {
-    setLogs([]); setAccounts([]); setProgress(null); setResult(null); setError(null); setView('results');
+    setLogs([]); setAccounts([]); setProgress(null); setResult(null); setError(null); setView('results'); setSelectedReport(null);
   }, []);
 
   const handleClose = useCallback(() => {
@@ -173,7 +177,7 @@ export default function BacktestDialog({ open, onClose }: BacktestDialogProps) {
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
       <DialogContent className={cn(
         'bg-[#0a0a16] border-white/[0.06] flex flex-col p-0 gap-0 overflow-hidden shadow-2xl shadow-black/50 backdrop-blur-xl',
-        view === 'report' ? 'max-w-4xl w-[98vw] max-h-[95vh]' : 'max-w-2xl w-[95vw] max-h-[92vh]'
+        view === 'report' ? 'max-w-5xl w-[96vw] h-[94vh]' : 'max-w-5xl w-[96vw] h-[92vh]'
       )}>
         <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-500/40 to-transparent" />
         <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-emerald-500/[0.03] to-transparent pointer-events-none" />
@@ -183,21 +187,21 @@ export default function BacktestDialog({ open, onClose }: BacktestDialogProps) {
             <div className="flex items-center justify-center h-7 w-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
               <BarChart3 className="h-3.5 w-3.5 text-emerald-400" />
             </div>
-            {view === 'report' && result?.bestAccount ? (
+            {view === 'report' && selectedReport ? (
               <div className="flex items-center gap-2">
-                <button onClick={() => setView('results')} className="flex items-center gap-1 text-white/30 hover:text-white/60 transition-colors rounded-md px-1.5 py-0.5 hover:bg-white/[0.04]">
+                <button onClick={() => { setView('results'); setSelectedReport(null); }} className="flex items-center gap-1 text-white/30 hover:text-white/60 transition-colors rounded-md px-1.5 py-0.5 hover:bg-white/[0.04]">
                   <ArrowLeft className="h-3.5 w-3.5" />
                 </button>
                 <span className="text-white/70">Отчет:</span>
-                <span className="text-amber-400">Аккаунт #{result.bestAccount.id}</span>
+                <span className={cn('font-medium', STRAT_COLORS[selectedReport.strategyId])}>#{selectedReport.id} {selectedReport.strategyLabel}</span>
               </div>
             ) : (
               <span className="text-white/90">Бэктест: 100 аккаунтов × 2 месяца</span>
             )}
           </DialogTitle>
           <DialogDescription className="text-[11px] text-white/30 ml-[38px]">
-            {view === 'report' && result?.bestAccount
-              ? `${result.bestAccount.strategyLabel} · ${result.bestAccount.totalTrades} сделок · 2 месяца`
+            {view === 'report' && selectedReport
+              ? `${selectedReport.strategyLabel} · ${selectedReport.totalTrades} сделок · 2 месяца`
               : 'Детерминированные данные · 3 стратегии · $100 начальный депозит каждый'
             }
           </DialogDescription>
@@ -283,10 +287,14 @@ export default function BacktestDialog({ open, onClose }: BacktestDialogProps) {
           )}
 
           {result && view === 'results' && (
-            <DialogSafe><ResultsPanel result={result} onReport={() => setView('report')} /></DialogSafe>
+            <DialogSafe><ResultsPanel result={result} onSelectAccount={(acct) => {
+              // Find strategy report for this account's strategy
+              const sr = result.strategyReports?.find(r => r.account.id === acct.id);
+              if (sr) { setSelectedReport(sr.account); setView('report'); }
+            }} /></DialogSafe>
           )}
-          {result && view === 'report' && result.bestAccount && (
-            <DialogSafe><ReportPanel account={result.bestAccount} /></DialogSafe>
+          {result && view === 'report' && selectedReport && (
+            <DialogSafe><ReportPanel account={selectedReport} /></DialogSafe>
           )}
         </div>
 
@@ -298,9 +306,9 @@ export default function BacktestDialog({ open, onClose }: BacktestDialogProps) {
           )}
           {result && view === 'results' && (
             <>
-              {result.bestAccount && (
-                <Button onClick={() => setView('report')} className="flex-1 h-11 text-xs font-semibold rounded-xl bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white shadow-lg shadow-blue-600/20 hover:shadow-blue-500/30 transition-all duration-300 hover:scale-[1.01] active:scale-[0.99]">
-                  <FileText className="h-3.5 w-3.5 mr-2" />Создать отчет
+              {result.strategyReports && result.strategyReports.length > 0 && (
+                <Button onClick={() => { if (result.strategyReports[0]) { setSelectedReport(result.strategyReports[0].account); setView('report'); } }} className="flex-1 h-11 text-xs font-semibold rounded-xl bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white shadow-lg shadow-blue-600/20 hover:shadow-blue-500/30 transition-all duration-300 hover:scale-[1.01] active:scale-[0.99]">
+                  <FileText className="h-3.5 w-3.5 mr-2" />Лучший по стратегии
                 </Button>
               )}
               <Button onClick={handleStart} disabled={running} className="h-11 text-xs font-semibold rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white shadow-lg shadow-amber-600/20 hover:shadow-amber-500/30 transition-all duration-300 hover:scale-[1.01] active:scale-[0.99]">
@@ -326,50 +334,13 @@ export default function BacktestDialog({ open, onClose }: BacktestDialogProps) {
 // Results Panel
 // ============================================================
 
-function ResultsPanel({ result, onReport }: { result: FinalResult; onReport: () => void }) {
-  const bestId = [...result.allResults].sort((a, b) => b.pnlPct - a.pnlPct)[0]?.id;
+function ResultsPanel({ result, onSelectAccount }: { result: FinalResult; onSelectAccount: (acct: { id: number; strategyId: string }) => void }) {
+  const sorted = [...result.allResults].sort((a, b) => b.pnlPct - a.pnlPct);
+  const bestId = sorted[0]?.id;
+  const worstId = sorted[sorted.length - 1]?.id;
+  const reportableIds = new Set(result.strategyReports?.map(r => r.account.id) ?? []);
   return (
-    <ScrollArea className="h-[420px] space-y-4 pr-1">
-      {result.bestAccount && (
-        <div className="relative rounded-2xl border border-amber-500/20 bg-gradient-to-br from-amber-500/[0.08] via-amber-500/[0.03] to-transparent p-5 overflow-hidden">
-          <div className="absolute -top-12 -right-12 h-32 w-32 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
-          <div className="relative">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-3">
-                <div className="flex items-center justify-center h-9 w-9 rounded-xl bg-amber-500/15 border border-amber-500/20">
-                  <Crown className="h-4 w-4 text-amber-400" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-bold text-amber-300">Лучший аккаунт #{result.bestAccount.id}</span>
-                    <Badge variant="outline" className="text-[9px] px-2 py-0 border-amber-500/25 text-amber-400/60 font-medium">{result.bestAccount.strategyLabel}</Badge>
-                  </div>
-                  <span className="text-[11px] text-white/25">{result.bestAccount.totalTrades} сделок · 2 месяца</span>
-                </div>
-              </div>
-              <div className={cn('text-2xl font-bold font-mono tabular-nums', result.bestAccount.pnlPct >= 0 ? 'text-emerald-400' : 'text-red-400')}>
-                {result.bestAccount.pnlPct >= 0 ? '+' : ''}{result.bestAccount.pnlPct}%
-              </div>
-            </div>
-            <div className="grid grid-cols-4 gap-3">
-              <MP label="Сделок" value={`${result.bestAccount.totalTrades}`} />
-              <MP label="Win Rate" value={`${result.bestAccount.winRate}%`} />
-              <MP label="Просадка" value={`${result.bestAccount.maxDrawdownPct}%`} negative />
-              <MP label="Баланс" value={`$${result.bestAccount.endBalance.toFixed(2)}`} positive />
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="flex items-center gap-2">
-        {result.usedRealData ? (
-          <Badge variant="outline" className="text-[9px] px-2 py-0.5 border-emerald-500/25 text-emerald-400/60 bg-emerald-500/[0.05]">Binance API</Badge>
-        ) : (
-          <Badge variant="outline" className="text-[9px] px-2 py-0.5 border-amber-500/25 text-amber-400/60 bg-amber-500/[0.05]">Синтетические данные</Badge>
-        )}
-        <span className="text-[10px] text-white/15">{result.usedRealData ? 'Реальные свечи за 2 месяца' : 'Детерминированная симуляция'}</span>
-      </div>
-
+    <ScrollArea className="h-[520px] space-y-4 pr-1">
       <div className="grid grid-cols-3 gap-2.5">
         <HS label="Прибыльных" value={`${result.profitable}/102`} icon={<Users className="h-3.5 w-3.5" />} color={result.profitable >= 50 ? 'emerald' : result.profitable >= 30 ? 'amber' : 'red'} />
         <HS label="Средний PnL" value={`${parseFloat(result.avgPnlPct) >= 0 ? '+' : ''}${result.avgPnlPct}%`} icon={<TrendingUp className="h-3.5 w-3.5" />} color={parseFloat(result.avgPnlPct) >= 0 ? 'emerald' : 'red'} />
@@ -385,68 +356,71 @@ function ResultsPanel({ result, onReport }: { result: FinalResult; onReport: () 
         <GS label="Ср. просадка" value={`${result.avgDD}%`} neutral />
       </div>
 
-      <SH title="По стратегиям" icon={<Layers className="h-3 w-3" />} />
-      <div className="space-y-2">
-        {result.stratStats.map(s => (
-          <div key={s.id} className={cn('rounded-xl border bg-gradient-to-r p-4 transition-all duration-200 hover:scale-[1.005]', STRAT_GRADIENT[s.id], STRAT_ACCENT[s.id])}>
-            <div className="flex items-center justify-between mb-3">
-              <span className={cn('text-xs font-bold', STRAT_COLORS[s.id])}>{STRAT_NAMES[s.id] ?? s.id}</span>
-              <span className="text-[10px] text-white/25 font-mono tabular-nums">{s.interval} · {s.totalTrades} сделок</span>
-            </div>
-            <div className="grid grid-cols-4 gap-3 text-center">
-              <div><div className="text-[9px] text-white/20 uppercase tracking-wider mb-1">Прибыльных</div><div className={cn('text-xs font-bold font-mono tabular-nums', s.profitable >= s.count / 2 ? 'text-emerald-400' : 'text-red-400')}>{s.profitable}/{s.count}</div></div>
-              <div><div className="text-[9px] text-white/20 uppercase tracking-wider mb-1">Ср. PnL</div><div className={cn('text-xs font-bold font-mono tabular-nums', parseFloat(s.avgPnl) >= 0 ? 'text-emerald-400' : 'text-red-400')}>{parseFloat(s.avgPnl) >= 0 ? '+' : ''}{s.avgPnl}%</div></div>
-              <div><div className="text-[9px] text-white/20 uppercase tracking-wider mb-1">Ср. WR</div><div className="text-xs font-bold font-mono tabular-nums text-white/50">{s.avgWR}%</div></div>
-              <div><div className="text-[9px] text-white/20 uppercase tracking-wider mb-1">Диапазон</div><div className="text-xs font-mono tabular-nums text-white/35">{s.worstPnl}% / +{s.bestPnl}%</div></div>
-            </div>
-          </div>
-        ))}
+      <SH title="По стратегиям (клик → отчёт лучшего аккаунта)" icon={<Layers className="h-3 w-3" />} />
+      <div className="grid grid-cols-3 gap-2.5">
+        {result.stratStats.map(s => {
+          const sr = result.strategyReports?.find(r => r.strategyId === s.id);
+          return (
+            <button key={s.id} onClick={() => sr && onSelectAccount({ id: sr.account.id, strategyId: s.id })}
+              className={cn('rounded-xl border bg-gradient-to-r p-4 transition-all duration-200 hover:scale-[1.01] text-left', STRAT_GRADIENT[s.id], STRAT_ACCENT[s.id], sr ? 'cursor-pointer hover:brightness-125' : 'opacity-60')}>
+              <div className="flex items-center justify-between mb-2">
+                <span className={cn('text-xs font-bold', STRAT_COLORS[s.id])}>{STRAT_NAMES[s.id] ?? s.id}</span>
+                {sr && <span className="text-[9px] text-white/20">#{sr.account.id}</span>}
+              </div>
+              <div className="text-[10px] text-white/25 font-mono mb-3">{s.interval} · {s.totalTrades} сделок</div>
+              <div className="grid grid-cols-2 gap-2">
+                <div><div className="text-[9px] text-white/20 uppercase mb-1">Прибыльных</div><div className={cn('text-xs font-bold font-mono', s.profitable >= s.count / 2 ? 'text-emerald-400' : 'text-red-400')}>{s.profitable}/{s.count}</div></div>
+                <div><div className="text-[9px] text-white/20 uppercase mb-1">Ср. PnL</div><div className={cn('text-xs font-bold font-mono', parseFloat(s.avgPnl) >= 0 ? 'text-emerald-400' : 'text-red-400')}>{parseFloat(s.avgPnl) >= 0 ? '+' : ''}{s.avgPnl}%</div></div>
+              </div>
+            </button>
+          );
+        })}
       </div>
 
-      {result.distribution.length > 0 && (
-        <>
-          <SH title="Распределение PnL" icon={<BarChart3 className="h-3 w-3" />} />
-          <div className="rounded-xl bg-white/[0.02] border border-white/[0.04] p-4 space-y-1.5">
-            {result.distribution.map((d, i) => {
-              const maxCount = Math.max(...result.distribution.map(x => x.count));
-              const w = maxCount > 0 ? (d.count / maxCount) * 100 : 0;
-              const isProfit = d.from >= 0;
-              return (
-                <div key={i} className="flex items-center gap-2.5 text-[10px] font-mono tabular-nums">
-                  <span className="text-white/25 w-28 text-right shrink-0">{d.from >= 0 ? '+' : ''}{d.from}% → {d.to >= 0 ? '+' : ''}{d.to}%</span>
-                  <div className="flex-1 h-5 bg-white/[0.03] rounded-md overflow-hidden">
-                    <div className={cn('h-full rounded-md transition-all duration-1000 ease-out', isProfit ? 'bg-gradient-to-r from-emerald-600/40 to-emerald-500/60' : 'bg-gradient-to-r from-red-600/40 to-red-500/60')} style={{ width: `${Math.max(w, 3)}%` }} />
-                  </div>
-                  <span className={cn('w-6 text-right shrink-0 font-semibold tabular-nums', isProfit ? 'text-emerald-400/60' : 'text-red-400/60')}>{d.count}</span>
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
+      <SH title="Все 102 аккаунта (зелёный=прибыль, красный=убыток)" icon={<Users className="h-3 w-3" />} />
+      <div className="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-12 xl:grid-cols-17 gap-1">
+        {sorted.map(a => {
+          const isBest = a.id === bestId;
+          const isWorst = a.id === worstId;
+          const hasReport = reportableIds.has(a.id);
+          const pct = a.pnlPct;
+          const intensity = Math.min(Math.abs(pct) / 50, 1);
+          const bg = pct >= 0 ? `background:rgba(16,185,129,${(0.06 + intensity * 0.4).toFixed(2)})` : `background:rgba(239,68,68,${(0.06 + intensity * 0.4).toFixed(2)})`;
+          return (
+            <button key={a.id} onClick={() => hasReport && onSelectAccount(a)}
+              title={`#${a.id} ${STRAT_NAMES[a.strategyId]?.split(' ')[0]} · ${a.totalTrades} trades · ${a.winRate}% WR · ${pct >= 0 ? '+' : ''}${pct}%`}
+              className={cn('rounded-lg border text-center py-2 px-1 transition-all duration-150 hover:scale-110 hover:z-10 relative',
+                hasReport ? 'cursor-pointer' : 'cursor-default opacity-50',
+                isBest && 'ring-1 ring-emerald-400/50 z-10 border-emerald-500/40',
+                isWorst && !isBest && 'ring-1 ring-red-400/50 z-10 border-red-500/40',
+                !isBest && !isWorst && 'border-white/[0.04]')} style={bg}>
+              <div className={cn('text-[10px] font-bold font-mono leading-none', pct >= 0 ? 'text-emerald-200' : 'text-red-200')}>{pct >= 0 ? '+' : ''}{pct.toFixed(0)}%</div>
+              <div className="text-[7px] text-white/20 font-mono mt-1 leading-none truncate">{STRAT_NAMES[a.strategyId]?.split(' ')[0]?.slice(0, 5)}</div>
+              {isBest && <div className="absolute -top-1 -right-1 text-[8px]">🏆</div>}
+              {isWorst && !isBest && <div className="absolute -top-1 -right-1 text-[8px]">💀</div>}
+            </button>
+          );
+        })}
+      </div>
 
-      <details className="group">
-        <summary className="cursor-pointer hover:text-white/40 transition-colors flex items-center gap-1.5 py-1 text-white/20">
-          <Users className="h-3 w-3" /><span className="text-[10px] uppercase tracking-[0.15em] font-semibold">Все 102 аккаунта</span>
-        </summary>
-        <div className="mt-2 rounded-xl bg-[#08080f] border border-white/[0.04] overflow-hidden">
-          <div className="grid grid-cols-6 gap-1 px-4 py-2 text-[9px] text-white/20 font-mono uppercase tracking-wider border-b border-white/[0.04] bg-white/[0.01]">
-            <span>#</span><span>Стратегия</span><span className="text-right">Сделок</span><span className="text-right">WR%</span><span className="text-right">PnL%</span><span className="text-right">DD%</span>
-          </div>
-          <ScrollArea className="max-h-56">
-            {[...result.allResults].sort((a, b) => b.pnlPct - a.pnlPct).map((a, idx) => (
-              <div key={a.id} className={cn('grid grid-cols-6 gap-1 px-4 py-2 text-[10px] font-mono tabular-nums border-b border-white/[0.02] transition-colors hover:bg-white/[0.02]', a.id === bestId && 'bg-amber-500/[0.04] border-l-2 border-l-amber-500/30', idx % 2 === 1 && a.id !== bestId && 'bg-white/[0.01]')}>
-                <span className="text-white/25">{a.id === bestId ? '🏆' : a.id}</span>
-                <span className={STRAT_COLORS[a.strategyId]}>{STRAT_NAMES[a.strategyId]?.split(' ')[0]}</span>
-                <span className="text-right text-white/35">{a.totalTrades}</span>
-                <span className="text-right text-white/45">{a.winRate}%</span>
-                <span className={cn('text-right font-semibold', a.pnlPct >= 0 ? 'text-emerald-400' : 'text-red-400')}>{a.pnlPct >= 0 ? '+' : ''}{a.pnlPct}%</span>
-                <span className="text-right text-white/25">{a.maxDrawdownPct}%</span>
-              </div>
-            ))}
-          </ScrollArea>
+      {result.distribution.length > 0 && (<>
+        <SH title="Распределение PnL" icon={<BarChart3 className="h-3 w-3" />} />
+        <div className="rounded-xl bg-white/[0.02] border border-white/[0.04] p-4 space-y-1.5">
+          {result.distribution.map((d, i) => {
+            const maxCount = Math.max(...result.distribution.map(x => x.count));
+            const w = maxCount > 0 ? (d.count / maxCount) * 100 : 0;
+            const isProfit = d.from >= 0;
+            return (
+              <div key={i} className="flex items-center gap-2.5 text-[10px] font-mono tabular-nums">
+                <span className="text-white/25 w-28 text-right shrink-0">{d.from >= 0 ? '+' : ''}{d.from}% → {d.to >= 0 ? '+' : ''}{d.to}%</span>
+                <div className="flex-1 h-5 bg-white/[0.03] rounded-md overflow-hidden">
+                  <div className={cn('h-full rounded-md transition-all duration-1000 ease-out', isProfit ? 'bg-gradient-to-r from-emerald-600/40 to-emerald-500/60' : 'bg-gradient-to-r from-red-600/40 to-red-500/60')} style={{ width: `${Math.max(w, 3)}%` }} />
+                </div>
+                <span className={cn('w-6 text-right shrink-0 font-semibold tabular-nums', isProfit ? 'text-emerald-400/60' : 'text-red-400/60')}>{d.count}</span>
+              </div>);
+          })}
         </div>
-      </details>
+      </>)}
     </ScrollArea>
   );
 }

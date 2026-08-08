@@ -254,6 +254,7 @@ export async function POST(request: NextRequest) {
 
           let shouldClose = false;
           let reason = '';
+          let exitPrice = 0;
 
           // TIME-BASED EXIT: close losing trades after maxHoldMinutes
           const openMs = Date.now() - new Date(trade.opened_at).getTime();
@@ -270,40 +271,66 @@ export async function POST(request: NextRequest) {
           }
 
           // Check TP using HIGH/LOW (wicks) on both completed and current candles
+          // For LONG: TP triggers if HIGH >= TP (not just close >= TP)
+          // For SHORT: TP triggers if LOW <= TP (not just close <= TP)
           const isLong = trade.direction === 'long';
           if (!shouldClose && trade.take_profit) {
             if (isLong) {
               if (candleHigh >= trade.take_profit || currentHigh >= trade.take_profit) {
-                shouldClose = true; reason = 'TP hit';
+                shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
               }
             } else {
               if (candleLow <= trade.take_profit || currentLow <= trade.take_profit) {
-                shouldClose = true; reason = 'TP hit';
+                shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
               }
             }
           }
 
           // Check SL using HIGH/LOW (wicks) on both completed and current candles
+          // For LONG: SL triggers if LOW <= SL (not just close <= SL)
+          // For SHORT: SL triggers if HIGH >= SL (not just close >= SL)
           if (!shouldClose && trade.stop_loss) {
             if (isLong) {
               if (candleLow <= trade.stop_loss || currentLow <= trade.stop_loss) {
-                shouldClose = true; reason = 'SL hit';
+                shouldClose = true; reason = 'SL hit'; exitPrice = trade.stop_loss;
               }
             } else {
               if (candleHigh >= trade.stop_loss || currentHigh >= trade.stop_loss) {
-                shouldClose = true; reason = 'SL hit';
+                shouldClose = true; reason = 'SL hit'; exitPrice = trade.stop_loss;
               }
             }
           }
 
+          // Live ticker price fallback — catches intra-candle moves between kline polls
+          if (!shouldClose) {
+            try {
+              const tickerRes = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${trade.symbol}`);
+              if (tickerRes.ok) {
+                const tickerData = await tickerRes.json();
+                const livePrice = parseFloat(tickerData.price);
+                if (isLong && trade.take_profit && livePrice >= trade.take_profit) {
+                  shouldClose = true; reason = 'TP hit (ticker)'; exitPrice = trade.take_profit;
+                } else if (!isLong && trade.take_profit && livePrice <= trade.take_profit) {
+                  shouldClose = true; reason = 'TP hit (ticker)'; exitPrice = trade.take_profit;
+                } else if (isLong && trade.stop_loss && livePrice <= trade.stop_loss) {
+                  shouldClose = true; reason = 'SL hit (ticker)'; exitPrice = trade.stop_loss;
+                } else if (!isLong && trade.stop_loss && livePrice >= trade.stop_loss) {
+                  shouldClose = true; reason = 'SL hit (ticker)'; exitPrice = trade.stop_loss;
+                }
+              }
+            } catch { /* ticker fallback is best-effort */ }
+          }
+
           if (shouldClose) {
+            // Use TP/SL level as exit price when hit, otherwise fall back to candle close
+            const effectiveExit = exitPrice > 0 ? exitPrice : candleClose;
             const priceChange = trade.direction === 'long'
-              ? (candleClose - trade.entry_price) / trade.entry_price
-              : (trade.entry_price - candleClose) / trade.entry_price;
+              ? (effectiveExit - trade.entry_price) / trade.entry_price
+              : (trade.entry_price - effectiveExit) / trade.entry_price;
             const effectiveAmt = trade.remaining_amount ?? trade.amount;
             const pnl = effectiveAmt * priceChange * trade.leverage - effectiveAmt * 0.001 - (effectiveAmt / trade.leverage) * 0.001;
 
-            await closeTrade(trade.id, candleClose, pnl);
+            await closeTrade(trade.id, effectiveExit, pnl);
 
             const state = await getTraderState(userId, strategyId);
             let newBalance = state.balance + effectiveAmt + pnl;
