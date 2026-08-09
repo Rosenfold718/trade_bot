@@ -638,7 +638,20 @@ export async function POST(request: NextRequest) {
         bestPnl: best.pnlPct, worstPnl: worst.pnlPct, medianPnl: median.pnlPct,
         globalWR: gWR, avgDD: aDD, stratStats: sSt, distribution: dist,
         bestUserId: BACKTEST_USER_ID_BEST, medianUserId: BACKTEST_USER_ID_MEDIAN,
-        allResults: results.map(r => ({ id: r.id, strategyId: r.strategyId, pnlPct: r.pnlPct, totalTrades: r.totalTrades, winRate: r.winRate, maxDrawdownPct: r.maxDrawdownPct, profitFactor: r.profitFactor })),
+        allResults: results.map(r => {
+          const trs: TradeForReport[] = r.trades.map(tr => ({
+            symbol: tr.symbol, direction: tr.direction, entryPrice: tr.entryPrice, closePrice: tr.closePrice ?? null,
+            amount: tr.amount, leverage: tr.leverage, pnl: tr.pnl ?? null, reason: tr.reason ?? '',
+            openTime: new Date(tr.openTime * 1000).toISOString(), closeTime: tr.closeTime ? new Date(tr.closeTime * 1000).toISOString() : null,
+            stopLoss: tr.stopLoss, takeProfit: tr.takeProfit,
+          }));
+          return {
+            id: r.id, strategyId: r.strategyId, pnlPct: r.pnlPct, totalTrades: r.totalTrades, winRate: r.winRate, maxDrawdownPct: r.maxDrawdownPct, profitFactor: r.profitFactor,
+            startBalance: r.startBalance, endBalance: r.endBalance, pnl: r.pnl,
+            wins: r.wins, losses: r.losses, avgWin: r.avgWin, avgLoss: r.avgLoss,
+            trades: trs,
+          };
+        }),
         strategyReports,
         usedRealData, dataSource: usedRealData ? 'binance' : 'synthetic',
       });

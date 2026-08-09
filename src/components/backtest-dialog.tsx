@@ -60,6 +60,9 @@ interface FinalResult {
   allResults: {
     id: number; strategyId: string; pnlPct: number; totalTrades: number;
     winRate: number; maxDrawdownPct: number; profitFactor: number;
+    startBalance: number; endBalance: number; pnl: number;
+    wins: number; losses: number; avgWin: number; avgLoss: number;
+    trades: TradeForReport[];
   }[];
   strategyReports: {
     strategyId: string; strategyLabel: string;
@@ -288,9 +291,16 @@ export default function BacktestDialog({ open, onClose }: BacktestDialogProps) {
 
           {result && view === 'results' && (
             <DialogSafe><ResultsPanel result={result} onSelectAccount={(acct) => {
-              // Find strategy report for this account's strategy
+              // Try to find pre-built strategy report first, otherwise build on-the-fly
               const sr = result.strategyReports?.find(r => r.account.id === acct.id);
-              if (sr) { setSelectedReport(sr.account); setView('report'); }
+              if (sr) {
+                setSelectedReport(sr.account); setView('report');
+              } else {
+                const accountData = result.allResults.find(a => a.id === acct.id);
+                if (accountData) {
+                  setSelectedReport(buildReportForAccount(accountData)); setView('report');
+                }
+              }
             }} /></DialogSafe>
           )}
           {result && view === 'report' && selectedReport && (
@@ -331,6 +341,68 @@ export default function BacktestDialog({ open, onClose }: BacktestDialogProps) {
 }
 
 // ============================================================
+// Build report for any account from its trades data
+// ============================================================
+
+function buildReportForAccount(a: FinalResult['allResults'][number]): BestAccountReport {
+  const trades = a.trades;
+  const longs = trades.filter(t => t.direction === 'long');
+  const shorts = trades.filter(t => t.direction === 'short');
+  const longWR = longs.length > 0 ? Math.round((longs.filter(t => (t.pnl ?? 0) >= 0).length / longs.length) * 1000) / 10 : 0;
+  const shortWR = shorts.length > 0 ? Math.round((shorts.filter(t => (t.pnl ?? 0) >= 0).length / shorts.length) * 1000) / 10 : 0;
+  const largestWin = trades.length > 0 ? Math.max(...trades.map(t => t.pnl ?? 0)) : 0;
+  const largestLoss = trades.length > 0 ? Math.min(...trades.map(t => t.pnl ?? 0)) : 0;
+
+  // Build equity curve from trades
+  const tradeEvents = trades
+    .filter(t => t.closeTime && t.pnl != null)
+    .map(t => ({ time: new Date(t.closeTime!).getTime() / 1000, pnl: t.pnl! }))
+    .sort((a, b) => a.time - b.time);
+
+  // Approximate time range from trades
+  const allTimes = trades.flatMap(t => [new Date(t.openTime).getTime() / 1000, ...(t.closeTime ? [new Date(t.closeTime).getTime() / 1000] : [])]);
+  const t0 = allTimes.length > 0 ? Math.min(...allTimes) : 0;
+  const t1 = allTimes.length > 0 ? Math.max(...allTimes) : 1;
+
+  const step = Math.max(3600, Math.floor((t1 - t0) / 120));
+  const eqCurve: { time: number; equity: number }[] = [];
+  let eq = a.startBalance;
+  eqCurve.push({ time: t0, equity: Math.round(eq * 100) / 100 });
+
+  let evtIdx = 0;
+  for (let t = t0 + step; t <= t1; t += step) {
+    while (evtIdx < tradeEvents.length && tradeEvents[evtIdx].time <= t) {
+      eq += tradeEvents[evtIdx].pnl;
+      evtIdx++;
+    }
+    eqCurve.push({ time: t, equity: Math.round(eq * 100) / 100 });
+  }
+  if (eqCurve.length > 0) {
+    eqCurve[eqCurve.length - 1].equity = Math.round(a.endBalance * 100) / 100;
+    eqCurve[eqCurve.length - 1].time = t1;
+  }
+
+  // Symbol performance
+  const symPerf: Record<string, { count: number; wins: number; pnl: number }> = {};
+  for (const tr of trades) {
+    if (!symPerf[tr.symbol]) symPerf[tr.symbol] = { count: 0, wins: 0, pnl: 0 };
+    symPerf[tr.symbol].count++;
+    if ((tr.pnl ?? 0) >= 0) symPerf[tr.symbol].wins++;
+    symPerf[tr.symbol].pnl += tr.pnl ?? 0;
+  }
+
+  return {
+    id: a.id, strategyId: a.strategyId, strategyLabel: STRAT_NAMES[a.strategyId] ?? a.strategyId,
+    startBalance: a.startBalance, endBalance: a.endBalance, pnl: a.pnl, pnlPct: a.pnlPct,
+    totalTrades: a.totalTrades, wins: a.wins, losses: a.losses, winRate: a.winRate, maxDrawdownPct: a.maxDrawdownPct,
+    avgWin: a.avgWin, avgLoss: a.avgLoss, profitFactor: a.profitFactor,
+    longTrades: longs.length, shortTrades: shorts.length, longWinRate: longWR, shortWinRate: shortWR,
+    largestWin, largestLoss,
+    trades, equityCurve: eqCurve, symbolPerformance: symPerf,
+  };
+}
+
+// ============================================================
 // Results Panel
 // ============================================================
 
@@ -338,7 +410,6 @@ function ResultsPanel({ result, onSelectAccount }: { result: FinalResult; onSele
   const sorted = [...result.allResults].sort((a, b) => b.pnlPct - a.pnlPct);
   const bestId = sorted[0]?.id;
   const worstId = sorted[sorted.length - 1]?.id;
-  const reportableIds = new Set(result.strategyReports?.map(r => r.account.id) ?? []);
   return (
     <ScrollArea className="h-[520px] space-y-4 pr-1">
       <div className="grid grid-cols-3 gap-2.5">
@@ -360,12 +431,13 @@ function ResultsPanel({ result, onSelectAccount }: { result: FinalResult; onSele
       <div className="grid grid-cols-3 gap-2.5">
         {result.stratStats.map(s => {
           const sr = result.strategyReports?.find(r => r.strategyId === s.id);
+          const bestAccountId = sr ? sr.account.id : [...result.allResults].filter(a => a.strategyId === s.id).sort((a, b) => b.pnlPct - a.pnlPct)[0]?.id;
           return (
-            <button key={s.id} onClick={() => sr && onSelectAccount({ id: sr.account.id, strategyId: s.id })}
-              className={cn('rounded-xl border bg-gradient-to-r p-4 transition-all duration-200 hover:scale-[1.01] text-left', STRAT_GRADIENT[s.id], STRAT_ACCENT[s.id], sr ? 'cursor-pointer hover:brightness-125' : 'opacity-60')}>
+            <button key={s.id} onClick={() => bestAccountId && onSelectAccount({ id: bestAccountId, strategyId: s.id })}
+              className={cn('rounded-xl border bg-gradient-to-r p-4 transition-all duration-200 hover:scale-[1.01] text-left cursor-pointer hover:brightness-125', STRAT_GRADIENT[s.id], STRAT_ACCENT[s.id])}>
               <div className="flex items-center justify-between mb-2">
                 <span className={cn('text-xs font-bold', STRAT_COLORS[s.id])}>{STRAT_NAMES[s.id] ?? s.id}</span>
-                {sr && <span className="text-[9px] text-white/20">#{sr.account.id}</span>}
+                {bestAccountId && <span className="text-[9px] text-white/20">#{bestAccountId}</span>}
               </div>
               <div className="text-[10px] text-white/25 font-mono mb-3">{s.interval} · {s.totalTrades} сделок</div>
               <div className="grid grid-cols-2 gap-2">
@@ -382,14 +454,12 @@ function ResultsPanel({ result, onSelectAccount }: { result: FinalResult; onSele
         {sorted.map(a => {
           const isBest = a.id === bestId;
           const isWorst = a.id === worstId;
-          const hasReport = reportableIds.has(a.id);
           const pct = a.pnlPct;
           const intensity = Math.min(Math.abs(pct) / 50, 1);
           return (
-            <button key={a.id} onClick={() => hasReport && onSelectAccount(a)}
+            <button key={a.id} onClick={() => onSelectAccount(a)}
               title={`#${a.id} ${STRAT_NAMES[a.strategyId]?.split(' ')[0]} · ${a.totalTrades} trades · ${a.winRate}% WR · ${pct >= 0 ? '+' : ''}${pct}%`}
-              className={cn('rounded-lg border text-center py-2 px-1 transition-all duration-150 hover:scale-110 hover:z-10 relative',
-                hasReport ? 'cursor-pointer' : 'cursor-default opacity-50',
+              className={cn('rounded-lg border text-center py-2 px-1 transition-all duration-150 hover:scale-110 hover:z-10 relative cursor-pointer hover:brightness-125',
                 isBest && 'ring-1 ring-emerald-400/50 z-10 border-emerald-500/40',
                 isWorst && !isBest && 'ring-1 ring-red-400/50 z-10 border-red-500/40',
                 !isBest && !isWorst && 'border-white/[0.04]')} style={{ background: pct >= 0 ? `rgba(16,185,129,${(0.06 + intensity * 0.4).toFixed(2)})` : `rgba(239,68,68,${(0.06 + intensity * 0.4).toFixed(2)})` }}>
