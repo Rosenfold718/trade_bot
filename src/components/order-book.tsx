@@ -208,6 +208,10 @@ export default function OrderBook() {
   }, [effectiveSymbol, processDepth, stopAll]);
 
   useEffect(() => {
+    // Reset state on symbol change to prevent stale data display
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: reset on dep change
+    setOrderBook(null); setMode('ws'); setErrorDetail(''); prevDataRef.current.clear(); failCountRef.current = 0;
+
     let active = true;
     let wsConnected = false;
     let dataReceived = false;

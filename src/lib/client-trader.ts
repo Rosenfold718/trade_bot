@@ -387,71 +387,33 @@ export async function monitorTradesClient(
         }
       }
 
-      // ── TP/SL CHECK using candle HIGH/LOW ──
-      // SL always applies (even for partially closed trades).
-      // TP full close only for trades NOT in partial states ('full'/'tp1_hit')
-      // or when partial_state is 'tp2_hit' (TP3 = full close of remaining).
+      // ── SL CHECK — always applies regardless of partial state ──
+      if (!shouldClose) {
+        const isLong = trade.direction === 'long';
+        if (isLong && trade.stop_loss) {
+          if (completed.low <= trade.stop_loss || completed.close <= trade.stop_loss || current.low <= trade.stop_loss) {
+            shouldClose = true; reason = 'SL hit'; exitPrice = trade.stop_loss;
+          }
+        } else if (!isLong && trade.stop_loss) {
+          if (completed.high >= trade.stop_loss || completed.close >= trade.stop_loss || current.high >= trade.stop_loss) {
+            shouldClose = true; reason = 'SL hit'; exitPrice = trade.stop_loss;
+          }
+        }
+      }
+
+      // ── TP FULL CLOSE CHECK ──
+      // Skip TP full close if partial TP is managing this trade ('full'/'tp1_hit').
+      // For 'tp2_hit' or undefined, full TP closes remaining (TP3).
       if (!shouldClose && !didPartialClose) {
         const isLong = trade.direction === 'long';
-
-        // Full TP close — skip if partial TP is managing this trade
         const skipTP = (partialState === 'full' || partialState === 'tp1_hit');
 
-        if (!skipTP) {
-          // Check TP on COMPLETED candle (HIGH/LOW + CLOSE)
-          if (isLong && trade.take_profit) {
-            if (completed.high >= trade.take_profit) {
-              shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
-            } else if (completed.close >= trade.take_profit) {
-              shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
-            }
-          } else if (!isLong && trade.take_profit) {
-            if (completed.low <= trade.take_profit) {
-              shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
-            } else if (completed.close <= trade.take_profit) {
-              shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
-            }
-          }
-
-          // Check TP on CURRENT (in-progress) candle
-          if (!shouldClose) {
-            if (isLong && trade.take_profit) {
-              if (current.high >= trade.take_profit) {
-                shouldClose = true; reason = 'TP hit (live)'; exitPrice = trade.take_profit;
-              }
-            } else if (!isLong && trade.take_profit) {
-              if (current.low <= trade.take_profit) {
-                shouldClose = true; reason = 'TP hit (live)'; exitPrice = trade.take_profit;
-              }
-            }
-          }
-        }
-
-        // Check SL on COMPLETED candle (HIGH/LOW + CLOSE)
-        if (!shouldClose && isLong && trade.stop_loss) {
-          if (completed.low <= trade.stop_loss) {
-            shouldClose = true; reason = 'SL hit'; exitPrice = trade.stop_loss;
-          } else if (completed.close <= trade.stop_loss) {
-            shouldClose = true; reason = 'SL hit'; exitPrice = trade.stop_loss;
-          }
-        } else if (!shouldClose && !isLong && trade.stop_loss) {
-          if (completed.high >= trade.stop_loss) {
-            shouldClose = true; reason = 'SL hit'; exitPrice = trade.stop_loss;
-          } else if (completed.close >= trade.stop_loss) {
-            shouldClose = true; reason = 'SL hit'; exitPrice = trade.stop_loss;
-          }
-        }
-
-        // Check SL on CURRENT (in-progress) candle
-        if (!shouldClose) {
-          if (isLong && trade.stop_loss) {
-            if (current.low <= trade.stop_loss) {
-              shouldClose = true; reason = 'SL hit (live)'; exitPrice = trade.stop_loss;
-            }
-          } else if (!isLong && trade.stop_loss) {
-            if (current.high >= trade.stop_loss) {
-              shouldClose = true; reason = 'SL hit (live)'; exitPrice = trade.stop_loss;
-            }
+        if (!skipTP && trade.take_profit) {
+          const tpHit = isLong
+            ? (completed.high >= trade.take_profit || completed.close >= trade.take_profit || current.high >= trade.take_profit)
+            : (completed.low <= trade.take_profit || completed.close <= trade.take_profit || current.low <= trade.take_profit);
+          if (tpHit) {
+            shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
           }
         }
       }
