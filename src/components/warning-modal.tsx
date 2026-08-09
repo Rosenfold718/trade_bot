@@ -99,7 +99,10 @@ export default function WarningModal({ onComplete }: WarningModalProps) {
   useEffect(() => {
     if (!userId) return;
     fetch(`/api/warning-dismissed?userId=${userId}`)
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
       .then(data => {
         if (data.dismissed) {
           onComplete();

@@ -148,12 +148,27 @@ export default function ActivityNotification({ onComplete }: ActivityNotificatio
   // Step 1: fetch activity data from our API
   useEffect(() => {
     fetch('/api/activity-since')
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
       .then(d => {
-        setData(d);
+        // Normalize: ensure all expected array fields exist
+        setData({
+          ...d,
+          openTrades: Array.isArray(d.openTrades) ? d.openTrades : [],
+          closedTrades: Array.isArray(d.closedTrades) ? d.closedTrades : [],
+          strategies: Array.isArray(d.strategies) ? d.strategies : [],
+          totalBalance: typeof d.totalBalance === 'number' ? d.totalBalance : 0,
+          totalLocked: typeof d.totalLocked === 'number' ? d.totalLocked : 0,
+          totalClosedPnl: typeof d.totalClosedPnl === 'number' ? d.totalClosedPnl : 0,
+        });
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch(() => {
+        setLoading(false);
+        onComplete(); // Skip activity notification on API error
+      });
   }, []);
 
   // Step 2: fetch live prices once we have open trades
@@ -195,7 +210,7 @@ export default function ActivityNotification({ onComplete }: ActivityNotificatio
   const isFirstTime = data?.lastLogin === null;
 
   // Calculate derived values — only after prices are loaded
-  const openWithPnl = (pricesReady ? data?.openTrades : []).map(t => {
+  const openWithPnl = (pricesReady ? (data?.openTrades ?? []) : []).map(t => {
     const currentPrice = prices[t.symbol] ?? t.entry_price;
     const unrealizedPnl = calcUnrealizedPnl(t, currentPrice);
     return { ...t, currentPrice, unrealizedPnl };
@@ -220,8 +235,8 @@ export default function ActivityNotification({ onComplete }: ActivityNotificatio
 
   if (!data.hasChanges) return null;
 
-  const winningClosed = data.closedTrades.filter(t => t.pnl > 0).length;
-  const losingClosed = data.closedTrades.filter(t => t.pnl <= 0).length;
+  const winningClosed = (data.closedTrades ?? []).filter(t => t.pnl > 0).length;
+  const losingClosed = (data.closedTrades ?? []).filter(t => t.pnl <= 0).length;
   const sortedOpen = [...openWithPnl].sort((a, b) => Math.abs(b.unrealizedPnl) - Math.abs(a.unrealizedPnl));
   const visibleOpen = showAllOpen ? sortedOpen : sortedOpen.slice(0, 8);
 
