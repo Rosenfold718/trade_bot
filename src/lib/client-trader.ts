@@ -518,6 +518,7 @@ export async function runAutoTradeCycle(
     closedTrades: MonitorResult['closedTrades'];
     trailingUpdates: MonitorResult['trailingUpdates'];
     tpRepairs: MonitorResult['tpRepairs'];
+    partialCloses: MonitorResult['partialCloses'];
     newTrades?: NewTradeInfo[];
     message: string;
     scannedCount: number;
@@ -543,14 +544,14 @@ export async function runAutoTradeCycle(
   const dailyLossLimit = balance * dailyLossLimitPct;
   if (recentPnl24h < -dailyLossLimit) {
     return {
-      action: 'idle', closedTrades: [], trailingUpdates: [], tpRepairs: [],
+      action: 'idle', closedTrades: [], trailingUpdates: [], tpRepairs: [], partialCloses: [],
       message: `Дневной лимит: -$${Math.abs(recentPnl24h).toFixed(2)} (>${dailyLossLimitPct * 100}%). Пауза до завтра.`,
       scannedCount: 0, bestScore: 0, newCandleHour: currentSlot,
     };
   }
 
   // Step 1: Monitor open trades (pass system settings for caps + trailing)
-  const { closedTrades, trailingUpdates, tpRepairs } = await monitorTradesClient(openTrades, lastCandleSlot, monitorInterval, maxHoldMinutes, settings);
+  const { closedTrades, trailingUpdates, tpRepairs, partialCloses } = await monitorTradesClient(openTrades, lastCandleSlot, monitorInterval, maxHoldMinutes, settings);
   const updatedOpenTrades = openTrades.filter(t => !closedTrades.some(c => c.tradeId === t.id));
 
   // Collect monitoring messages
@@ -558,6 +559,7 @@ export async function runAutoTradeCycle(
   if (closedTrades.length > 0) monitorParts.push(`Закрыто ${closedTrades.length}: ${closedTrades.map(c => `${c.symbol.replace('USDT', '')} (${c.reason})`).join(', ')}`);
   if (trailingUpdates.length > 0) monitorParts.push(`Trailing SL: ${trailingUpdates.length}`);
   if (tpRepairs.length > 0) monitorParts.push(`TP ремонт: ${tpRepairs.length}`);
+  if (partialCloses.length > 0) monitorParts.push(`Частичное закрытие: ${partialCloses.length}`);
 
   // CRITICAL FIX: Always proceed to find signals, even if monitoring found changes.
   // Previously, monitoring results blocked signal finding — now both run.
@@ -570,7 +572,7 @@ export async function runAutoTradeCycle(
     const msg = monitorParts.length > 0
       ? monitorParts.join(' | ') + ` | Лимит: ${updatedOpenTrades.length}/${maxTrades}`
       : `Лимит: ${updatedOpenTrades.length}/${maxTrades}, жду...`;
-    return { action: 'monitor', closedTrades, trailingUpdates, tpRepairs, message: msg, scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
+    return { action: 'monitor', closedTrades, trailingUpdates, tpRepairs, partialCloses, message: msg, scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
   }
 
   // ── FREE BALANCE: subtract amounts locked in open trades ──
@@ -581,7 +583,7 @@ export async function runAutoTradeCycle(
     const msg = monitorParts.length > 0
       ? monitorParts.join(' | ') + ' | Баланс исчерпан (<$1 free)'
       : 'Баланс исчерпан (<$1 free)';
-    return { action: 'monitor', closedTrades, trailingUpdates, tpRepairs, message: msg, scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
+    return { action: 'monitor', closedTrades, trailingUpdates, tpRepairs, partialCloses, message: msg, scannedCount: 0, bestScore: 0, newCandleHour: currentSlot };
   }
 
   const openSymbols = new Set(updatedOpenTrades.map(t => t.symbol));
@@ -596,7 +598,7 @@ export async function runAutoTradeCycle(
     const msg = monitorParts.length > 0
       ? monitorParts.join(' | ') + ' | Сигналов не найдено'
       : 'Сигналов не найдено, сканирую...';
-    return { action: 'idle', closedTrades, trailingUpdates, tpRepairs, message: msg, scannedCount: 30, bestScore: 0, newCandleHour: currentSlot };
+    return { action: 'idle', closedTrades, trailingUpdates, tpRepairs, partialCloses, message: msg, scannedCount: 30, bestScore: 0, newCandleHour: currentSlot };
   }
 
   // ============================================================
@@ -638,7 +640,7 @@ export async function runAutoTradeCycle(
   const coinName = best.symbol.replace('USDT', '');
   const signalMsg = `СИГНАЛ: ${best.decision.direction.toUpperCase()} ${coinName} @ $${best.price.toFixed(2)} | ${best.decision.leverage}x | $${amount.toFixed(2)} | TP ${strategy.riskRewardRatio}R`;
   return {
-    action: 'new-trade', closedTrades, trailingUpdates, tpRepairs, newTrades,
+    action: 'new-trade', closedTrades, trailingUpdates, tpRepairs, partialCloses, newTrades,
     message: monitorParts.length > 0 ? monitorParts.join(' | ') + ' | ' + signalMsg : signalMsg,
     scannedCount: 30, bestScore: Math.abs(best.decision.score), newCandleHour: currentSlot,
   };

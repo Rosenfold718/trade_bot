@@ -23,6 +23,7 @@ import AdminPanel from '@/components/admin-panel';
 import ManualDialog from '@/components/manual-dialog';
 import BacktestDialog from '@/components/backtest-dialog';
 import { fetchSettings, invalidateSettingsCache } from '@/lib/settings-cache';
+import { resolveSymbol, findCoinPrice } from '@/lib/symbol-alias';
 
 const MomentumReport = dynamic(() => import('@/components/momentum-report'), {
   ssr: false,
@@ -227,7 +228,35 @@ export default function TradingTerminal() {
   const fetchCandles = useCallback(async (symbol: string, tf: Timeframe) => {
     setChartLoading(true);
     try {
+      // Resolve symbol for Binance API (e.g., MATICUSDT → POLUSDT for orderbook, but klines still work for MATIC)
+      // Note: MATICUSDT klines still work on Binance, so we use the original symbol for chart data
+      // to preserve price continuity with the trade's entry price.
       const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${tf.interval}&limit=${tf.limit}`);
+      if (!res.ok) {
+        // If the symbol fails (e.g., delisted), try the resolved alias
+        const resolved = resolveSymbol(symbol);
+        if (resolved !== symbol) {
+          const retryRes = await fetch(`https://api.binance.com/api/v3/klines?symbol=${resolved}&interval=${tf.interval}&limit=${tf.limit}`);
+          if (retryRes.ok) {
+            const raw = await retryRes.json();
+            if (Array.isArray(raw) && raw.length > 0) {
+              const c: CandleData[] = raw.map((k: (string | number)[]) => ({
+                time: Math.floor(Number(k[0]) / 1000),
+                open: parseFloat(String(k[1])),
+                high: parseFloat(String(k[2])),
+                low: parseFloat(String(k[3])),
+                close: parseFloat(String(k[4])),
+                volume: parseFloat(String(k[5])),
+              }));
+              setCandles(c);
+              setChartLoading(false);
+              return;
+            }
+          }
+        }
+        setChartLoading(false);
+        return;
+      }
       const raw = await res.json();
       if (Array.isArray(raw) && raw.length > 0) {
         const c: CandleData[] = raw.map((k: (string | number)[]) => ({
@@ -982,12 +1011,18 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
   const pendingFetchesRef = useRef<Record<string, Promise<number | undefined>>>({});
 
   const getLivePrice = useCallback((symbol: string): number | undefined => {
-    // 1. Check WS data first
-    const wsPrice = coins.find(c => c.symbol === symbol)?.price;
+    // 1. Check WS data first (with alias resolution)
+    const wsPrice = findCoinPrice(coins, symbol);
     if (wsPrice && wsPrice > 0) return wsPrice;
     // 2. Check fallback cache
     const cached = fallbackPricesRef.current[symbol];
     if (cached && cached > 0) return cached;
+    // 3. Check resolved symbol in fallback (e.g., POL price for MATIC trade)
+    const resolved = resolveSymbol(symbol);
+    if (resolved !== symbol) {
+      const resolvedCached = fallbackPricesRef.current[resolved];
+      if (resolvedCached && resolvedCached > 0) return resolvedCached;
+    }
     return undefined;
   }, [coins]);
 

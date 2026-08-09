@@ -208,12 +208,6 @@ export default function OrderBook() {
   }, [effectiveSymbol, processDepth, stopAll]);
 
   useEffect(() => {
-    // Reset state on symbol change
-    setOrderBook(null);
-    setMode('ws');
-    setErrorDetail('');
-    prevDataRef.current.clear();
-
     let active = true;
     let wsConnected = false;
     let dataReceived = false;
