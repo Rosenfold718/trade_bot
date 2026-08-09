@@ -478,6 +478,8 @@ export async function runAutoTradeCycle(
   recentPnl24h: number = 0,
   sysSettings?: Record<string, string>,
   globalLockedSymbols?: Set<string>,
+  _cooldownSymbols?: Map<string, number>,
+  _recentForDrawdown?: Trade[],
 ): Promise<{
     action: 'monitor' | 'new-trade' | 'idle';
     closedTrades: MonitorResult['closedTrades'];
@@ -513,6 +515,20 @@ export async function runAutoTradeCycle(
       message: `Дневной лимит: -$${Math.abs(recentPnl24h).toFixed(2)} (>${dailyLossLimitPct * 100}%). Пауза до завтра.`,
       scannedCount: 0, bestScore: 0, newCandleHour: currentSlot,
     };
+  }
+
+  // Drawdown pause: if recent N trades are mostly losers, pause
+  const drawdownPct = (strategy as any).drawdownPausePct ?? 0;
+  if (drawdownPct > 0 && _recentForDrawdown && _recentForDrawdown.length >= 3) {
+    const losses = _recentForDrawdown.filter(t => (t.pnl ?? 0) < 0).length;
+    const lossRate = losses / _recentForDrawdown.length;
+    if (lossRate >= drawdownPct / 100) {
+      return {
+        action: 'idle', closedTrades: [], trailingUpdates: [], tpRepairs: [], partialCloses: [],
+        message: `Пауза по просадке: ${losses}/${_recentForDrawdown.length} убыточных (> ${(drawdownPct).toFixed(0)}%). Ждём...`,
+        scannedCount: 0, bestScore: 0, newCandleHour: currentSlot,
+      };
+    }
   }
 
   // Step 1: Monitor open trades (pass system settings for caps + trailing)

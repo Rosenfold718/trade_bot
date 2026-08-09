@@ -249,7 +249,7 @@ export default function MomentumReport({ onClose, strategyId = 'momentum' }: { o
       </div>
 
       {/* Content */}
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 pb-24">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 pb-24">
         {/* ====================== OVERVIEW TAB ====================== */}
         {activeTab === 'overview' && (
           <div className="space-y-0">

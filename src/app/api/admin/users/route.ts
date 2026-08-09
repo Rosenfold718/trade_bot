@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllUsers, deleteUserById, findUserById } from '@/lib/auth-db';
 import { initAuthTables } from '@/lib/init-auth-tables';
+import { initDB, tursoDb, getTraderState } from '@/lib/db';
+import { STRATEGIES } from '@/lib/strategies';
 
 const ADMIN_SETUP_KEY = process.env.ADMIN_SETUP_KEY || 'trade-bot-admin-2024';
 
@@ -9,11 +11,12 @@ function checkAuth(request: NextRequest): boolean {
   return authHeader === `Bearer ${ADMIN_SETUP_KEY}`;
 }
 
-// GET /api/admin/users — list all users
-// GET /api/admin/users?id=xxx — get single user details + payment history
+// GET /api/admin/users — list all users (with trading summary)
+// GET /api/admin/users?id=xxx — get single user details + payment history + trading state
 export async function GET(request: NextRequest) {
   try {
     await initAuthTables();
+    await initDB();
     if (!checkAuth(request)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -92,15 +95,146 @@ export async function GET(request: NextRequest) {
         createdAt: r.createdAt as string,
       }));
 
-      return NextResponse.json({ user, paymentHistory, pendingRequests });
+      // Trading state per strategy
+      const tradingStates: Array<{
+        strategyId: string;
+        strategyName: string;
+        balance: number;
+        initialBalance: number;
+        openTrades: number;
+        closedTrades: number;
+        totalPnl: number;
+        initialized: boolean;
+      }> = [];
+
+      for (const strategy of STRATEGIES) {
+        try {
+          const state = await getTraderState(userId, strategy.id);
+          // Count open and closed trades
+          const tradesRes = await tursoDb.execute(
+            `SELECT status, COUNT(*) as cnt, COALESCE(SUM(pnl), 0) as total_pnl FROM trades WHERE user_id = ? AND strategy_id = ? GROUP BY status`,
+            [userId, strategy.id]
+          );
+          let openCount = 0, closedCount = 0, totalPnl = 0;
+          for (const tr of tradesRes.rows) {
+            if (tr.status === 'open') openCount = Number(tr.cnt);
+            if (tr.status === 'closed') {
+              closedCount = Number(tr.cnt);
+              totalPnl = Number(tr.total_pnl);
+            }
+          }
+          tradingStates.push({
+            strategyId: strategy.id,
+            strategyName: strategy.name,
+            balance: state.balance,
+            initialBalance: state.initial_balance,
+            openTrades: openCount,
+            closedTrades: closedCount,
+            totalPnl,
+            initialized: true,
+          });
+        } catch {
+          tradingStates.push({
+            strategyId: strategy.id,
+            strategyName: strategy.name,
+            balance: 0, initialBalance: 0,
+            openTrades: 0, closedTrades: 0, totalPnl: 0,
+            initialized: false,
+          });
+        }
+      }
+
+      return NextResponse.json({ user, paymentHistory, pendingRequests, tradingStates });
     }
 
-    // All users list
+    // All users list — with trading summary
     const users = await getAllUsers();
-    return NextResponse.json({ users });
+
+    // Enrich users with trading summary
+    const enrichedUsers = await Promise.all(users.map(async (u) => {
+      let totalBalance = 0;
+      let totalOpen = 0;
+      let totalPnl = 0;
+      let initialized = false;
+      for (const s of STRATEGIES) {
+        try {
+          const st = await getTraderState(u.id, s.id);
+          totalBalance += st.balance;
+          initialized = true;
+        } catch { /* not initialized */ }
+      }
+      try {
+        const openRes = await tursoDb.execute(
+          `SELECT COUNT(*) as cnt FROM trades WHERE user_id = ? AND status = 'open'`,
+          [u.id]
+        );
+        totalOpen = Number(openRes.rows[0]?.cnt ?? 0);
+      } catch { /* ignore */ }
+      try {
+        const pnlRes = await tursoDb.execute(
+          `SELECT COALESCE(SUM(pnl), 0) as total FROM trades WHERE user_id = ? AND status = 'closed'`,
+          [u.id]
+        );
+        totalPnl = Number(pnlRes.rows[0]?.total ?? 0);
+      } catch { /* ignore */ }
+      return { ...u, tradingSummary: { totalBalance, totalOpen, totalPnl, initialized } };
+    }));
+
+    return NextResponse.json({ users: enrichedUsers });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     console.error('[admin/users GET] Error:', message);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+// POST /api/admin/users — initialize trading for a user
+export async function POST(request: NextRequest) {
+  try {
+    await initAuthTables();
+    await initDB();
+    if (!checkAuth(request)) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { userId, action } = await request.json();
+    if (!userId) {
+      return NextResponse.json({ error: 'userId required' }, { status: 400 });
+    }
+
+    if (action === 'init-trading') {
+      // Initialize trading state for all strategies for this user
+      const results: Array<{ strategyId: string; success: boolean; error?: string }> = [];
+      for (const strategy of STRATEGIES) {
+        try {
+          const id = `${userId}-${strategy.id}`;
+          // Check if already exists
+          const existing = await tursoDb.execute(
+            'SELECT id FROM trader_state WHERE id = ? AND user_id = ?',
+            [id, userId]
+          );
+          if (existing.rows.length > 0) {
+            results.push({ strategyId: strategy.id, success: true });
+            continue;
+          }
+          // Create new trader state
+          await tursoDb.execute(
+            `INSERT INTO trader_state (id, user_id, strategy_id, balance, borrowed_funds, debt_to_repay, initial_balance, is_active)
+             VALUES (?, ?, ?, 100, 0, 0, 100, 1)`,
+            [id, userId, strategy.id]
+          );
+          results.push({ strategyId: strategy.id, success: true });
+        } catch (err) {
+          results.push({ strategyId: strategy.id, success: false, error: String(err) });
+        }
+      }
+      return NextResponse.json({ success: true, results });
+    }
+
+    return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    console.error('[admin/users POST] Error:', message);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

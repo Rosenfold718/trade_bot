@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Loader2, Check, X, CreditCard, XCircle, RefreshCw, Trash2,
   Users, DollarSign, Clock, ExternalLink, ChevronLeft, Mail, UserIcon, Shield, Calendar,
-  UserCog, Copy, KeyRound,
+  UserCog, Copy, KeyRound, TrendingUp, Wallet, Zap,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -23,6 +23,13 @@ interface PaymentRequest {
   createdAt: string;
 }
 
+interface TradingSummary {
+  totalBalance: number;
+  totalOpen: number;
+  totalPnl: number;
+  initialized: boolean;
+}
+
 interface UserInfo {
   id: string;
   username: string;
@@ -33,6 +40,7 @@ interface UserInfo {
     isActive: number;
     expiresAt: string;
   } | null;
+  tradingSummary?: TradingSummary;
 }
 
 interface UserDetail {
@@ -68,6 +76,18 @@ interface DemoAccount {
     expiresAt: string;
   } | null;
 }
+
+interface TradingStateInfo {
+  strategyId: string;
+  strategyName: string;
+  balance: number;
+  initialBalance: number;
+  openTrades: number;
+  closedTrades: number;
+  totalPnl: number;
+  initialized: boolean;
+}
+
 
 interface Props {
   open: boolean;
@@ -115,6 +135,8 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
   const [demoActionLoading, setDemoActionLoading] = useState<string | null>(null);
   const [newDemoAccount, setNewDemoAccount] = useState<{ username: string; password: string; expiresAt: string } | null>(null);
   const [demoDeleteConfirm, setDemoDeleteConfirm] = useState<string | null>(null);
+  const [tradingStates, setTradingStates] = useState<TradingStateInfo[]>([]);
+  const [initLoading, setInitLoading] = useState(false);
 
   const fetchRequests = useCallback(async () => {
     setLoading(true);
@@ -151,6 +173,7 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
     setUserPayments([]);
     setUserPending([]);
     setNewPassword(null);
+    setTradingStates([]);
     try {
       const res = await fetch(`/api/admin/users?id=${userId}`, {
         headers: { Authorization: `Bearer ${ADMIN_KEY}` },
@@ -160,6 +183,7 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
         setUserDetail(data.user);
         setUserPayments(data.paymentHistory || []);
         setUserPending(data.pendingRequests || []);
+        setTradingStates(data.tradingStates || []);
       }
     } catch {}
     setDetailLoading(false);
@@ -171,7 +195,25 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
     setUserPayments([]);
     setUserPending([]);
     setNewPassword(null);
+    setTradingStates([]);
   }, []);
+
+  const handleInitTrading = async () => {
+    if (!selectedUserId) return;
+    setInitLoading(true);
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ADMIN_KEY}` },
+        body: JSON.stringify({ userId: selectedUserId, action: 'init-trading' }),
+      });
+      if (res.ok) {
+        await fetchUserDetail(selectedUserId);
+        await fetchUsers();
+      }
+    } catch {}
+    setInitLoading(false);
+  };
 
   const fetchDemoAccounts = useCallback(async () => {
     setDemoLoading(true);
@@ -481,6 +523,58 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
               </div>
             </div>
 
+            {/* Trading State */}
+            <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs font-medium text-white/60">
+                  <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
+                  Торговые стратегии
+                </div>
+                {tradingStates.length > 0 && tradingStates.every(s => s.initialized) && (
+                  <span className="text-[9px] text-emerald-400/60 font-mono">Все инициализированы</span>
+                )}
+              </div>
+              {tradingStates.length > 0 ? (
+                <div className="space-y-2">
+                  {tradingStates.map(ts => (
+                    <div key={ts.strategyId} className="flex items-center justify-between p-2.5 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-white/70 font-medium truncate">{ts.strategyName}</span>
+                          {!ts.initialized && (
+                            <span className="text-[8px] px-1 py-0.5 rounded bg-red-500/20 text-red-400">нет</span>
+                          )}
+                        </div>
+                        {ts.initialized && (
+                          <div className="flex items-center gap-2 text-[10px] text-white/30 mt-0.5">
+                            <span className="font-mono">${ts.balance.toFixed(2)}</span>
+                            <span>из ${ts.initialBalance.toFixed(0)}</span>
+                            <span>{ts.openTrades} откр.</span>
+                            <span>{ts.closedTrades} закр.</span>
+                            <span className={ts.totalPnl >= 0 ? 'text-emerald-400/60' : 'text-red-400/60'}>
+                              PnL: {ts.totalPnl >= 0 ? '+' : ''}{ts.totalPnl.toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-white/30">Загрузка...</p>
+              )}
+              {tradingStates.some(s => !s.initialized) && (
+                <button
+                  onClick={handleInitTrading}
+                  disabled={initLoading}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
+                >
+                  {initLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+                  Инициализировать торговлю
+                </button>
+              )}
+            </div>
+
             {/* Payment History */}
             {userPayments.length > 0 && (
               <div className="space-y-2">
@@ -727,7 +821,7 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <span className="text-sm font-medium text-white truncate">{user.username}</span>
                         <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
                           user.role === 'admin' ? 'bg-amber-500/20 text-amber-400' : 'bg-white/[0.06] text-white/30'
@@ -740,11 +834,30 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
                         {user.subscription?.isActive === 1 && new Date(user.subscription.expiresAt) > new Date() && (
                           <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-medium">Active</span>
                         )}
+                        {!user.tradingSummary?.initialized && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 font-medium">Не инициализирован</span>
+                        )}
                       </div>
-                      <span className="text-[10px] text-white/30 flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        {new Date(user.createdAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' })}
-                      </span>
+                      <div className="flex items-center gap-3 text-[10px] text-white/30">
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          {new Date(user.createdAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' })}
+                        </span>
+                        {user.tradingSummary?.initialized && (
+                          <>
+                            <span className="flex items-center gap-1">
+                              <Wallet className="w-3 h-3" />
+                              ${user.tradingSummary.totalBalance.toFixed(0)}
+                            </span>
+                            {user.tradingSummary.totalOpen > 0 && (
+                              <span className="text-emerald-400/60">{user.tradingSummary.totalOpen} откр.</span>
+                            )}
+                            <span className={user.tradingSummary.totalPnl >= 0 ? 'text-emerald-400/60' : 'text-red-400/60'}>
+                              {user.tradingSummary.totalPnl >= 0 ? '+' : ''}${user.tradingSummary.totalPnl.toFixed(2)}
+                            </span>
+                          </>
+                        )}
+                      </div>
                     </div>
                     <ChevronLeft className="w-3.5 h-3.5 text-white/20 rotate-180 shrink-0" />
                   </div>
