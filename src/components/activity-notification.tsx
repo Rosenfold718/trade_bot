@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useSession } from 'next-auth/react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Loader2, TrendingDown, ArrowUpCircle, ArrowDownCircle, Clock, Activity, ChevronDown, ChevronUp, Wallet, BarChart3 } from 'lucide-react';
@@ -106,6 +107,8 @@ function calcUnrealizedPnl(trade: OpenTrade, currentPrice: number): number {
 }
 
 export default function ActivityNotification({ onComplete }: ActivityNotificationProps) {
+  const { data: session } = useSession();
+  const userId = (session?.user as any)?.id;
   const [data, setData] = useState<ActivityData | null>(null);
   const [loading, setLoading] = useState(true);
   const [prices, setPrices] = useState<Record<string, number>>({});
@@ -129,11 +132,25 @@ export default function ActivityNotification({ onComplete }: ActivityNotificatio
     fetchLivePrices(symbols).then(setPrices);
   }, [data?.openTrades]);
 
-  const handleDismiss = () => onComplete();
+  // Mark session as seen: update last_login via warning-dismissed endpoint
+  const markSessionSeen = () => {
+    if (!userId) return;
+    fetch('/api/warning-dismissed', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId }),
+    }).catch(() => { /* non-critical */ });
+  };
+
+  const handleDismiss = () => {
+    markSessionSeen();
+    onComplete();
+  };
 
   // Auto-skip if no changes
   useEffect(() => {
     if (!loading && data && !data.hasChanges) {
+      markSessionSeen();
       onComplete();
     }
   }, [loading, data, onComplete]);

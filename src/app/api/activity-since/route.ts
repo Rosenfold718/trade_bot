@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initDB, tursoDb, getTraderState, getTotalClosedPnl } from '@/lib/db';
+import { initDB, tursoDb, getTraderState } from '@/lib/db';
 import { getAuthUserId } from '@/lib/auth-helpers';
-import { getSetting, setSetting } from '@/lib/db';
+import { getSetting } from '@/lib/db';
 
 export async function GET(request: NextRequest) {
   try {
@@ -69,7 +69,7 @@ export async function GET(request: NextRequest) {
       balance: number;          // available balance (cash not locked in trades)
       initial_balance: number; // starting deposit
       totalLocked: number;     // sum of amounts in open trades
-      closedPnlTotal: number;  // sum of PnL from all closed trades
+      closedPnlTotal: number;  // sum of PnL from closed trades since baseline only
       openTradeCount: number;
     }> = [];
 
@@ -78,13 +78,14 @@ export async function GET(request: NextRequest) {
         const state = await getTraderState(userId, sid);
         const strategyOpen = openTrades.filter(t => t.strategy_id === sid);
         const totalLocked = strategyOpen.reduce((s, t) => s + t.amount, 0);
-        const closedPnl = await getTotalClosedPnl(userId, sid);
+        // Calculate closed PnL from the already-fetched closedTrades (filtered by baseline)
+        const strategyClosedPnl = closedTrades.filter(t => t.strategy_id === sid).reduce((sum, t) => sum + t.pnl, 0);
         strategies.push({
           strategyId: sid,
           balance: state.balance,
           initial_balance: Number(state.initial_balance ?? 100),
           totalLocked,
-          closedPnlTotal: closedPnl,
+          closedPnlTotal: strategyClosedPnl,
           openTradeCount: strategyOpen.length,
         });
       } catch {
@@ -100,11 +101,9 @@ export async function GET(request: NextRequest) {
     // Determine if there are meaningful changes
     const hasChanges = closedTrades.length > 0 || openTrades.length > 0 || strategies.length > 0;
 
-    // Only update last_login if there ARE changes
-    const now = new Date().toISOString();
-    if (hasChanges || !lastLogin) {
-      await setSetting(`last_login_${userId}`, now, userId);
-    }
+    // NOTE: last_login is NOT updated here anymore.
+    // It is updated only when the user dismisses the activity notification panel
+    // (via POST /api/warning-dismissed), so the absence period is preserved on refresh.
 
     // Format time ago
     const referenceDate = lastLogin ? new Date(lastLoginStr) : new Date(baseline);

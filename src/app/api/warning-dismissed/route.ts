@@ -23,6 +23,8 @@ export async function POST(request: NextRequest) {
 
     await initDB();
     await setSetting(`warning_dismissed_${userId}`, '1', userId);
+    // Also update last_login so the absence period is measured from this point
+    await setSetting(`last_login_${userId}`, new Date().toISOString(), userId);
     return NextResponse.json({ success: true });
   } catch (err) {
     return NextResponse.json({ error: 'Failed to save' }, { status: 500 });
