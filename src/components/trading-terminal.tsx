@@ -1014,14 +1014,19 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
     // 1. Check WS data first (with alias resolution)
     const wsPrice = findCoinPrice(coins, symbol);
     if (wsPrice && wsPrice > 0) return wsPrice;
-    // 2. Check fallback cache
+    // 2. Check fallback cache for exact symbol
     const cached = fallbackPricesRef.current[symbol];
     if (cached && cached > 0) return cached;
-    // 3. Check resolved symbol in fallback (e.g., POL price for MATIC trade)
+    // 3. For old aliased symbols (e.g., MATICUSDT), check cache for original symbol
+    //    This ensures price scale matches the entry_price
     const resolved = resolveSymbol(symbol);
     if (resolved !== symbol) {
       const resolvedCached = fallbackPricesRef.current[resolved];
-      if (resolvedCached && resolvedCached > 0) return resolvedCached;
+      if (resolvedCached && resolvedCached > 0) {
+        // Only use resolved price if the trade's entry_price is in the new scale
+        // Otherwise, the old symbol's price is needed for correct PnL
+        return undefined; // Force REST fetch of original symbol
+      }
     }
     return undefined;
   }, [coins]);
@@ -1041,10 +1046,12 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
           if (price > 0) {
             fallbackPricesRef.current[sym] = price;
             // Also push into the store so it shows in the coin list
-            const existing = useTerminalStore.getState().coins.find(c => c.symbol === sym);
+            // Use resolved symbol to avoid polluting with old names (e.g., MATICUSDT)
+            const resolvedSym = resolveSymbol(sym);
+            const existing = useTerminalStore.getState().coins.find(c => c.symbol === resolvedSym);
             if (!existing) {
               useTerminalStore.getState().updateCoinPrice({
-                s: sym, c: String(price), P: '0', v: '0', h: String(price), l: String(price), o: String(price),
+                s: resolvedSym, c: String(price), P: '0', v: '0', h: String(price), l: String(price), o: String(price),
               });
             }
           }

@@ -66,14 +66,23 @@ export function getSymbolAliases(symbol: string): Set<string> {
 /**
  * Find the best matching coin price from the coins array.
  * Checks both the exact symbol and any aliases.
+ * IMPORTANT: Prefer exact match over alias to avoid POL/MATIC price confusion.
  */
 export function findCoinPrice(
   coins: Array<{ symbol: string; price: number }>,
   targetSymbol: string
 ): number | undefined {
+  const upper = targetSymbol.toUpperCase();
+  // 1. First, try exact symbol match (no alias)
+  for (const coin of coins) {
+    if (coin.symbol.toUpperCase() === upper && coin.price > 0) {
+      return coin.price;
+    }
+  }
+  // 2. If no exact match, try aliases (but skip the target itself to avoid loops)
   const aliases = getSymbolAliases(targetSymbol);
   for (const coin of coins) {
-    if (aliases.has(coin.symbol.toUpperCase()) && coin.price > 0) {
+    if (coin.symbol.toUpperCase() !== upper && aliases.has(coin.symbol.toUpperCase()) && coin.price > 0) {
       return coin.price;
     }
   }
