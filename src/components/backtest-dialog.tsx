@@ -180,7 +180,7 @@ export default function BacktestDialog({ open, onClose }: BacktestDialogProps) {
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
       <DialogContent className={cn(
         'bg-[#0a0a16] border-white/[0.06] flex flex-col p-0 gap-0 overflow-hidden shadow-2xl shadow-black/50 backdrop-blur-xl',
-        view === 'report' ? 'max-w-5xl w-[96vw] h-[94vh]' : 'max-w-5xl w-[96vw] h-[92vh]'
+        view === 'report' ? 'w-[96vw] h-[94vh]' : 'w-[96vw] h-[92vh]'
       )}>
         <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-500/40 to-transparent" />
         <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-emerald-500/[0.03] to-transparent pointer-events-none" />
