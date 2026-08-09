@@ -80,22 +80,52 @@ function formatCoin(symbol: string): string {
 }
 
 // Fetch live prices from Binance (client-side — browser can reach it)
+// Uses our server cache first, then falls back to direct Binance API
 async function fetchLivePrices(symbols: string[]): Promise<Record<string, number>> {
   const prices: Record<string, number> = {};
   if (symbols.length === 0) return prices;
   const unique = [...new Set(symbols)];
+  
+  // Try server cache first (faster, deduplicated)
   try {
-    // Batch fetch through our cached API (max 20 per request)
     for (let i = 0; i < unique.length; i += 20) {
       const batch = unique.slice(i, i + 20);
       const res = await fetch(`/api/prices?symbols=${batch.join(',')}`);
       if (res.ok) {
         const data = await res.json();
-        if (data.prices) Object.assign(prices, data.prices);
+        if (data.prices) {
+          for (const [sym, price] of Object.entries(data.prices)) {
+            if (typeof price === 'number' && price > 0) prices[sym] = price;
+          }
+        }
+        // Also get any that errored — we'll try direct Binance for those
+        if (data.errors && Array.isArray(data.errors)) {
+          const missing = data.errors.filter((e: string) => !prices[e]);
+          if (missing.length > 0) await fetchPricesDirect(missing, prices);
+        }
       }
     }
-  } catch { /* skip */ }
+  } catch { 
+    // Server cache failed entirely — fall back to direct
+    await fetchPricesDirect(unique, prices);
+  }
+  
   return prices;
+}
+
+// Direct Binance API fallback for individual symbols
+async function fetchPricesDirect(symbols: string[], prices: Record<string, number>): Promise<void> {
+  await Promise.all(symbols.map(async (sym) => {
+    if (prices[sym]) return; // already have price
+    try {
+      const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}`);
+      if (res.ok) {
+        const data = await res.json();
+        const price = parseFloat(data.price);
+        if (price > 0) prices[sym] = price;
+      }
+    } catch { /* skip */ }
+  }));
 }
 
 // Calculate unrealized PnL for a single trade

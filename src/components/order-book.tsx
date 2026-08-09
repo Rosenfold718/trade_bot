@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useTerminalStore } from '@/lib/store';
 import type { OrderBookLevel, OrderBookData } from '@/lib/types';
-import { RefreshCw, WifiOff } from 'lucide-react';
+import { resolveSymbol, hasAlias } from '@/lib/symbol-alias';
+import { RefreshCw, WifiOff, AlertTriangle } from 'lucide-react';
 
 function formatPrice(price: number, basePrice: number): string {
   if (basePrice >= 10000) return price.toFixed(1);
@@ -32,7 +33,7 @@ interface FlashMap {
   [priceKey: string]: 'up' | 'down' | null;
 }
 
-type ConnectionMode = 'ws' | 'rest' | 'error';
+type ConnectionMode = 'ws' | 'rest' | 'error' | 'empty';
 
 export default function OrderBook() {
   const { selectedSymbol } = useTerminalStore();
@@ -46,11 +47,16 @@ export default function OrderBook() {
   const containerRef = useRef<HTMLDivElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dataTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const failCountRef = useRef(0);
 
   // Keep asks/bids pinned to the center
   const asksContainerRef = useRef<HTMLDivElement>(null);
   const bidsContainerRef = useRef<HTMLDivElement>(null);
+
+  // Resolve symbol: use alias if available (e.g., MATICUSDT → POLUSDT for orderbook)
+  const effectiveSymbol = resolveSymbol(selectedSymbol);
+  const isAliased = hasAlias(selectedSymbol);
 
   const processDepth = useCallback((raw: {
     lastUpdateId?: number;
@@ -105,10 +111,17 @@ export default function OrderBook() {
 
     setOrderBook({ asks, bids, spread, spreadPercent, midPrice });
     setFlashes(newFlashes);
+    setMode('ws');
 
     // Clear flashes after 200ms
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
     flashTimerRef.current = setTimeout(() => setFlashes({}), 200);
+
+    // Clear data-received timeout on first real data
+    if (dataTimeoutRef.current && (asks.length > 0 || bids.length > 0)) {
+      clearTimeout(dataTimeoutRef.current);
+      dataTimeoutRef.current = null;
+    }
   }, []);
 
   // ── Cleanup helper (must be declared before startRestPolling) ──
@@ -120,6 +133,7 @@ export default function OrderBook() {
     }
     if (reconnectRef.current) { clearTimeout(reconnectRef.current); reconnectRef.current = null; }
     if (wsTimeoutRef.current) { clearTimeout(wsTimeoutRef.current); wsTimeoutRef.current = null; }
+    if (dataTimeoutRef.current) { clearTimeout(dataTimeoutRef.current); dataTimeoutRef.current = null; }
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
   }, []);
 
@@ -134,10 +148,10 @@ export default function OrderBook() {
 
     const poll = async () => {
       try {
-        // Try server API first
+        // Use resolved symbol for the API call
         let data: any = null;
         try {
-          const res = await fetch(`/api/orderbook?symbol=${selectedSymbol}`);
+          const res = await fetch(`/api/orderbook?symbol=${effectiveSymbol}`);
           if (res.ok) {
             data = await res.json();
           } else {
@@ -148,9 +162,9 @@ export default function OrderBook() {
         }
 
         // Fallback: direct Binance REST (CORS works from browsers)
-        if (!data?.bids || !data?.asks) {
+        if (!data?.bids?.length || !data?.asks?.length) {
           try {
-            const binanceRes = await fetch(`https://api.binance.com/api/v3/depth?symbol=${selectedSymbol}&limit=20`);
+            const binanceRes = await fetch(`https://api.binance.com/api/v3/depth?symbol=${effectiveSymbol}&limit=20`);
             if (binanceRes.ok) {
               data = await binanceRes.json();
             } else {
@@ -161,10 +175,21 @@ export default function OrderBook() {
           }
         }
 
-        if (data?.bids && data?.asks) {
+        if (data?.bids?.length > 0 && data?.asks?.length > 0) {
           processDepth(data);
           failCountRef.current = 0;
           setErrorDetail('');
+          return;
+        }
+
+        // Empty orderbook (e.g., delisted/renamed symbol with no liquidity)
+        if (data?.bids !== undefined && data?.asks !== undefined) {
+          failCountRef.current++;
+          if (failCountRef.current >= 3) {
+            setMode('empty');
+            setOrderBook(null);
+            if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+          }
           return;
         }
         failCountRef.current++;
@@ -180,11 +205,18 @@ export default function OrderBook() {
 
     poll(); // immediate first fetch
     pollRef.current = setInterval(poll, 2000);
-  }, [selectedSymbol, processDepth]);
+  }, [effectiveSymbol, processDepth, stopAll]);
 
   useEffect(() => {
+    // Reset state on symbol change
+    setOrderBook(null);
+    setMode('ws');
+    setErrorDetail('');
+    prevDataRef.current.clear();
+
     let active = true;
     let wsConnected = false;
+    let dataReceived = false;
 
     function connectWS() {
       if (!active) return;
@@ -192,7 +224,8 @@ export default function OrderBook() {
         return;
       }
 
-      const streamName = `${selectedSymbol.toLowerCase()}@depth20@100ms`;
+      // Use resolved symbol for WS stream
+      const streamName = `${effectiveSymbol.toLowerCase()}@depth20@100ms`;
       let ws: WebSocket;
       try {
         ws = new WebSocket(`wss://stream.binance.com:9443/ws/${streamName}`);
@@ -207,13 +240,27 @@ export default function OrderBook() {
         if (!active) return;
         wsConnected = true;
         if (wsTimeoutRef.current) { clearTimeout(wsTimeoutRef.current); wsTimeoutRef.current = null; }
-        console.log(`[OrderBook] WS Connected: ${selectedSymbol}`);
+        console.log(`[OrderBook] WS Connected: ${effectiveSymbol}${isAliased ? ` (alias for ${selectedSymbol})` : ''}`);
+
+        // Data-received timeout: if no depth data arrives within 5s of connection,
+        // the symbol likely has no orderbook (delisted/renamed). Fall back to REST
+        // which will detect the empty orderbook and show appropriate UI.
+        dataTimeoutRef.current = setTimeout(() => {
+          if (active && !dataReceived) {
+            console.log(`[OrderBook] No data received for ${effectiveSymbol} in 5s, falling back to REST`);
+            if (wsRef.current) { wsRef.current.onclose = null; wsRef.current.close(); wsRef.current = null; }
+            startRestPolling();
+          }
+        }, 5000);
       };
 
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
           if (data.bids && data.asks) {
+            if (data.bids.length > 0 || data.asks.length > 0) {
+              dataReceived = true;
+            }
             processDepth(data);
           }
         } catch {
@@ -224,8 +271,8 @@ export default function OrderBook() {
       ws.onclose = () => {
         if (!active) return;
         wsRef.current = null;
-        // If WS never connected, fall back to REST
-        if (!wsConnected) {
+        // If WS never received data, fall back to REST
+        if (!dataReceived) {
           startRestPolling();
           return;
         }
@@ -254,7 +301,7 @@ export default function OrderBook() {
       stopAll();
       if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
     };
-  }, [selectedSymbol, processDepth, startRestPolling, stopAll]);
+  }, [effectiveSymbol, selectedSymbol, isAliased, processDepth, startRestPolling, stopAll]);
 
   // Scroll asks to bottom, bids to top (pin to spread)
   useEffect(() => {
@@ -292,14 +339,19 @@ export default function OrderBook() {
           <span className="text-xs font-semibold text-white/50 uppercase tracking-wider">Стакан</span>
           <div className="flex items-center gap-1">
             <div className={
-              mode === 'error'
+              mode === 'error' || mode === 'empty'
                 ? 'w-1.5 h-1.5 rounded-full bg-red-400'
-                : 'w-1.5 h-1.5 rounded-full bg-green-400/80 animate-pulse'
+                : mode === 'rest'
+                  ? 'w-1.5 h-1.5 rounded-full bg-yellow-400/80'
+                  : 'w-1.5 h-1.5 rounded-full bg-green-400/80 animate-pulse'
             } />
             <span className="text-[9px] text-white/20 font-mono">
-              {mode === 'rest' ? 'POLL' : mode === 'error' ? 'OFF' : 'LIVE'}
+              {mode === 'rest' ? 'POLL' : mode === 'error' ? 'OFF' : mode === 'empty' ? 'EMPTY' : 'LIVE'}
             </span>
           </div>
+          {isAliased && (
+            <span className="text-[9px] text-amber-400/50 font-mono">{effectiveSymbol.replace('USDT','')}</span>
+          )}
         </div>
         {orderBook ? (
           <div className="flex items-center gap-2.5 text-[10px] font-mono">
@@ -308,7 +360,7 @@ export default function OrderBook() {
               <span className="text-yellow-400/60 font-medium">{orderBook.spreadPercent.toFixed(3)}%</span>
             </div>
           </div>
-        ) : mode === 'error' ? (
+        ) : mode === 'error' || mode === 'empty' ? (
           <button
             onClick={startRestPolling}
             className="text-white/30 hover:text-white/60 transition-colors"
@@ -341,6 +393,25 @@ export default function OrderBook() {
               >
                 <RefreshCw className="w-3 h-3" />
                 Повторить
+              </button>
+            </div>
+          </div>
+        ) : mode === 'empty' ? (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="flex flex-col items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-400/30" />
+              <span className="text-[10px] text-white/25">Стакан пуст</span>
+              {isAliased && (
+                <span className="text-[9px] text-amber-400/40 font-mono text-center px-4">
+                  {selectedSymbol.replace('USDT','')} перенесён на {effectiveSymbol.replace('USDT','')}
+                </span>
+              )}
+              <button
+                onClick={startRestPolling}
+                className="text-[10px] text-yellow-400/60 hover:text-yellow-400/90 transition-colors flex items-center gap-1"
+              >
+                <RefreshCw className="w-3 h-3" />
+                Обновить
               </button>
             </div>
           </div>
