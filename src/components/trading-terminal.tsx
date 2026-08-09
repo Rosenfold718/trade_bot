@@ -977,10 +977,78 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
     [openTrades, recentTrades],
   );
 
-  // Helper: get live price from WebSocket coins store
+  // Helper: get live price from WebSocket coins store, with REST fallback
+  const fallbackPricesRef = useRef<Record<string, number>>({});
+  const pendingFetchesRef = useRef<Record<string, Promise<number | undefined>>>({});
+
   const getLivePrice = useCallback((symbol: string): number | undefined => {
-    return coins.find(c => c.symbol === symbol)?.price;
+    // 1. Check WS data first
+    const wsPrice = coins.find(c => c.symbol === symbol)?.price;
+    if (wsPrice && wsPrice > 0) return wsPrice;
+    // 2. Check fallback cache
+    const cached = fallbackPricesRef.current[symbol];
+    if (cached && cached > 0) return cached;
+    return undefined;
   }, [coins]);
+
+  // Fetch missing prices from Binance REST for open trades
+  useEffect(() => {
+    const openSymbols = [...new Set(openTrades.filter(t => t.status === 'open').map(t => t.symbol))];
+    let cancelled = false;
+    for (const sym of openSymbols) {
+      if (getLivePrice(sym)) continue; // already have price
+      if (pendingFetchesRef.current[sym]) continue; // already fetching
+      const p = fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}`)
+        .then(r => r.json())
+        .then(d => {
+          if (cancelled) return undefined;
+          const price = parseFloat(d.price);
+          if (price > 0) {
+            fallbackPricesRef.current[sym] = price;
+            // Also push into the store so it shows in the coin list
+            const existing = useTerminalStore.getState().coins.find(c => c.symbol === sym);
+            if (!existing) {
+              useTerminalStore.getState().updateCoinPrice({
+                s: sym, c: String(price), P: '0', v: '0', h: String(price), l: String(price), o: String(price),
+              });
+            }
+          }
+          return price > 0 ? price : undefined;
+        })
+        .catch(() => undefined)
+        .finally(() => { delete pendingFetchesRef.current[sym]; });
+      pendingFetchesRef.current[sym] = p;
+    }
+    return () => { cancelled = true; };
+  }, [openTrades, getLivePrice]);
+
+  // Periodically refresh fallback prices every 30s
+  useEffect(() => {
+    const interval = setInterval(() => {
+      for (const sym of Object.keys(fallbackPricesRef.current)) {
+        // If WS now has this price, remove from fallback
+        const wsPrice = useTerminalStore.getState().coins.find(c => c.symbol === sym)?.price;
+        if (wsPrice && wsPrice > 0) {
+          delete fallbackPricesRef.current[sym];
+          continue;
+        }
+        // Refresh from REST and update store
+        fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}`)
+          .then(r => r.json())
+          .then(d => {
+            const price = parseFloat(d.price);
+            if (price > 0) {
+              fallbackPricesRef.current[sym] = price;
+              useTerminalStore.getState().updateCoinPrice({
+                s: sym, c: String(price), P: '0', v: '0', h: String(price), l: String(price), o: String(price),
+              });
+            }
+          })
+          .catch(() => {});
+      }
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Calculate total unrealized PnL for open trades
   const totalOpenPnl = useMemo(() => {
@@ -1020,14 +1088,14 @@ function TradesTable({ openTrades, recentTrades, totalClosedPnl, closedTradeCoun
   // Calculate PnL preview for closing trade
   const closingPnl = useMemo(() => {
     if (!closingTrade) return null;
-    const livePrice = coins.find(c => c.symbol === closingTrade.symbol)?.price;
+    const livePrice = getLivePrice(closingTrade.symbol);
     if (!livePrice || livePrice <= 0) return null;
     const isLong = closingTrade.direction === 'long';
     const priceChange = isLong
       ? (livePrice - closingTrade.entry_price) / closingTrade.entry_price
       : (closingTrade.entry_price - livePrice) / closingTrade.entry_price;
     return (closingTrade.remaining_amount ?? closingTrade.amount) * priceChange * closingTrade.leverage;
-  }, [closingTrade, coins]);
+  }, [closingTrade, getLivePrice]);
 
   if (allTrades.length === 0 && openTrades.length === 0) {
     return (

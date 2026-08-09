@@ -253,13 +253,10 @@ export default function ActivityNotification({ onComplete }: ActivityNotificatio
                     {data.strategies.map(st => {
                       const netValue = st.balance + st.totalLocked; // available + locked in trades
                       const unrealized = strategyUnrealized[st.strategyId] ?? 0;
-                      const totalPnl = st.closedPnlTotal + unrealized;
-                      // True return: (netValue + unrealized - initial) / initial
-                      // Actually netValue already = initial + closedPnl, so:
-                      // totalEquity = netValue + unrealized = initial + closedPnl + unrealized
-                      // return% = totalEquity - initial / initial = (closedPnl + unrealized) / initial
+                      const totalEquity = netValue + unrealized;
+                      // Return% based on actual equity vs initial deposit (all-time accurate)
                       const returnPct = st.initial_balance > 0
-                        ? (totalPnl / st.initial_balance) * 100
+                        ? ((totalEquity - st.initial_balance) / st.initial_balance) * 100
                         : 0;
 
                       return (

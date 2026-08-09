@@ -385,7 +385,6 @@ function ResultsPanel({ result, onSelectAccount }: { result: FinalResult; onSele
           const hasReport = reportableIds.has(a.id);
           const pct = a.pnlPct;
           const intensity = Math.min(Math.abs(pct) / 50, 1);
-          const bg = pct >= 0 ? `background:rgba(16,185,129,${(0.06 + intensity * 0.4).toFixed(2)})` : `background:rgba(239,68,68,${(0.06 + intensity * 0.4).toFixed(2)})`;
           return (
             <button key={a.id} onClick={() => hasReport && onSelectAccount(a)}
               title={`#${a.id} ${STRAT_NAMES[a.strategyId]?.split(' ')[0]} · ${a.totalTrades} trades · ${a.winRate}% WR · ${pct >= 0 ? '+' : ''}${pct}%`}
@@ -393,7 +392,7 @@ function ResultsPanel({ result, onSelectAccount }: { result: FinalResult; onSele
                 hasReport ? 'cursor-pointer' : 'cursor-default opacity-50',
                 isBest && 'ring-1 ring-emerald-400/50 z-10 border-emerald-500/40',
                 isWorst && !isBest && 'ring-1 ring-red-400/50 z-10 border-red-500/40',
-                !isBest && !isWorst && 'border-white/[0.04]')} style={bg}>
+                !isBest && !isWorst && 'border-white/[0.04]')} style={{ background: pct >= 0 ? `rgba(16,185,129,${(0.06 + intensity * 0.4).toFixed(2)})` : `rgba(239,68,68,${(0.06 + intensity * 0.4).toFixed(2)})` }}>
               <div className={cn('text-[10px] font-bold font-mono leading-none', pct >= 0 ? 'text-emerald-200' : 'text-red-200')}>{pct >= 0 ? '+' : ''}{pct.toFixed(0)}%</div>
               <div className="text-[7px] text-white/20 font-mono mt-1 leading-none truncate">{STRAT_NAMES[a.strategyId]?.split(' ')[0]?.slice(0, 5)}</div>
               {isBest && <div className="absolute -top-1 -right-1 text-[8px]">🏆</div>}
@@ -431,7 +430,7 @@ function ResultsPanel({ result, onSelectAccount }: { result: FinalResult; onSele
 
 function EquityCurveCanvas({ data, startBalance, isPositive }: { data: { time: number; equity: number }[]; startBalance: number; isPositive: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const drawRef = useRef<() => void>();
+  const drawRef = useRef<(() => void) | null>(null);
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;

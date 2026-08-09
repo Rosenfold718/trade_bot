@@ -26,10 +26,13 @@ const TradingTerminal = dynamic(() => import('@/components/trading-terminal'), {
 type AppView = 'auth' | 'payment' | 'warning' | 'activity' | 'terminal';
 
 // ── Global Error Boundary ──
-class TerminalErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; errorMsg: string | null }> {
-  state = { hasError: false, errorMsg: null };
+class TerminalErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; errorMsg: string | null; errorStack: string | null }> {
+  state = { hasError: false, errorMsg: null, errorStack: null };
   static getDerivedStateFromError() { return { hasError: true }; }
-  componentDidCatch(e: any) { console.error('[TerminalErrorBoundary]', e); this.setState({ errorMsg: e?.message ?? String(e) }); }
+  componentDidCatch(e: any, info: any) {
+    console.error('[TerminalErrorBoundary]', e, info?.componentStack);
+    this.setState({ errorMsg: e?.message ?? String(e), errorStack: info?.componentStack ?? null });
+  }
   render() {
     if (this.state.hasError) {
       return (
@@ -41,6 +44,7 @@ class TerminalErrorBoundary extends Component<{ children: ReactNode }, { hasErro
             <p className="text-sm font-semibold text-white/80">Ошибка загрузки терминала</p>
             <p className="text-xs text-white/30 mt-1 max-w-xs">Произошла ошибка. Попробуйте перезагрузить страницу.</p>
             {this.state.errorMsg && <p className="text-[10px] text-red-400/50 font-mono mt-1 max-w-sm break-all">{this.state.errorMsg}</p>}
+            {this.state.errorStack && <details className="mt-2 w-full max-w-sm"><summary className="text-[9px] text-white/20 cursor-pointer hover:text-white/30">Stack trace</summary><pre className="text-[8px] text-red-400/30 font-mono mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all">{this.state.errorStack}</pre></details>}
           </div>
           <button
             onClick={() => { window.location.reload(); }}

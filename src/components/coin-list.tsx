@@ -38,6 +38,12 @@ export default function CoinList() {
       ws.onmessage = (event) => {
         try {
           const parsed = JSON.parse(event.data);
+          // Binance sends error response if any stream is invalid
+          if (parsed.error) {
+            console.error('[CoinList] Binance WS error:', parsed.error);
+            ws.close();
+            return;
+          }
           if (parsed.data) {
             const d = parsed.data;
             updateCoinPrice({
@@ -51,7 +57,7 @@ export default function CoinList() {
             });
           }
         } catch {
-          // ignore
+          // ignore parse errors
         }
       };
 
@@ -62,7 +68,8 @@ export default function CoinList() {
         reconnectTimerRef.current = setTimeout(connect, 3000);
       };
 
-      ws.onerror = () => {
+      ws.onerror = (err) => {
+        console.error('[CoinList] WS error, closing');
         ws.close();
       };
     }
