@@ -142,6 +142,7 @@ export default function ActivityNotification({ onComplete }: ActivityNotificatio
   const [data, setData] = useState<ActivityData | null>(null);
   const [loading, setLoading] = useState(true);
   const [prices, setPrices] = useState<Record<string, number>>({});
+  const [pricesFetched, setPricesFetched] = useState(false);
   const [showAllOpen, setShowAllOpen] = useState(false);
 
   // Step 1: fetch activity data from our API
@@ -159,8 +160,14 @@ export default function ActivityNotification({ onComplete }: ActivityNotificatio
   useEffect(() => {
     if (!data?.openTrades?.length) return;
     const symbols = data.openTrades.map(t => t.symbol);
-    fetchLivePrices(symbols).then(setPrices);
+    fetchLivePrices(symbols).then(p => {
+      setPrices(p);
+      setPricesFetched(true);
+    });
   }, [data?.openTrades]);
+
+  // Prices are loaded if: no open trades (nothing to fetch) or fetch completed
+  const pricesReady = !data?.openTrades?.length || pricesFetched;
 
   // Mark session as seen: update last_login via warning-dismissed endpoint
   const markSessionSeen = () => {
@@ -187,8 +194,8 @@ export default function ActivityNotification({ onComplete }: ActivityNotificatio
 
   const isFirstTime = data?.lastLogin === null;
 
-  // Calculate derived values
-  const openWithPnl = data?.openTrades?.map(t => {
+  // Calculate derived values — only after prices are loaded
+  const openWithPnl = (pricesReady ? data?.openTrades : []).map(t => {
     const currentPrice = prices[t.symbol] ?? t.entry_price;
     const unrealizedPnl = calcUnrealizedPnl(t, currentPrice);
     return { ...t, currentPrice, unrealizedPnl };
@@ -203,7 +210,7 @@ export default function ActivityNotification({ onComplete }: ActivityNotificatio
   // Totals
   const totalUnrealized = openWithPnl.reduce((s, t) => s + t.unrealizedPnl, 0);
 
-  if (loading || !data) {
+  if (loading || !data || !pricesReady) {
     return (
       <div className="fixed inset-0 z-[300] bg-[#0a0a0f]/95 backdrop-blur-sm flex items-center justify-center">
         <Loader2 className="h-8 w-8 text-emerald-400 animate-spin" />

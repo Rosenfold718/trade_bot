@@ -253,7 +253,7 @@ export async function monitorTradesClient(
   const trailing3x = sysSettings ? getSys(sysSettings, 'system.trailing3x', true) : true;
 
   if (currentSlot <= lastCandleSlot) {
-    return { closedTrades: [], trailingUpdates: [], tpRepairs: [] };
+    return { closedTrades: [], trailingUpdates: [], tpRepairs: [], partialCloses: [] };
   }
 
   for (const trade of openTrades) {
@@ -319,41 +319,110 @@ export async function monitorTradesClient(
         }
       }
 
-      // ── TP/SL CHECK using candle HIGH/LOW ──
-      // Previously only the CLOSE of the last completed candle was checked.
-      // This missed any wick that pierced the TP/SL during the candle.
-      // Now we check BOTH the completed and current candle's HIGH/LOW.
-      // For LONG: TP triggers if HIGH >= TP, SL triggers if LOW <= SL
-      // For SHORT: TP triggers if LOW <= TP, SL triggers if HIGH >= SL
-      // We also check the current candle's CLOSE as a fallback.
+      // ── PARTIAL TP CLOSE LOGIC (must run BEFORE full TP check) ──
+      // When TP is hit, close 50% and move SL to breakeven (TP1).
+      // When 1.5× TP distance hit, close 50% of remaining (TP2).
+      // After TP2, trailing SL manages the rest.
+      // Partial states: 'full' → 'tp1_hit' → 'tp2_hit'
+      const partialState = trade.partial_state ?? 'full';
+      const remainingAmt = trade.remaining_amount ?? trade.amount;
+      let didPartialClose = false;
 
-      if (!shouldClose) {
+      if (!shouldClose && trade.take_profit && trade.entry_price) {
         const isLong = trade.direction === 'long';
+        const tpDistance = Math.abs(trade.take_profit - trade.entry_price);
+        const tp1Price = isLong ? trade.entry_price + tpDistance : trade.entry_price - tpDistance;
+        const tp2Price = isLong ? trade.entry_price + tpDistance * 1.5 : trade.entry_price - tpDistance * 1.5;
 
-        // Check TP on COMPLETED candle (HIGH/LOW + CLOSE)
-        if (isLong && trade.take_profit) {
-          if (completed.high >= trade.take_profit) {
-            shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
-          } else if (completed.close >= trade.take_profit) {
-            shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
-          }
-        } else if (!isLong && trade.take_profit) {
-          if (completed.low <= trade.take_profit) {
-            shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
-          } else if (completed.close <= trade.take_profit) {
-            shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
+        // TP1: first TP hit → close 50%, move SL to breakeven
+        if (partialState === 'full') {
+          const tp1Hit = isLong
+            ? (completed.high >= tp1Price || current.high >= tp1Price || completed.close >= tp1Price || current.close >= tp1Price)
+            : (completed.low <= tp1Price || current.low <= tp1Price || completed.close <= tp1Price || current.close <= tp1Price);
+          if (tp1Hit) {
+            const closeAmount = remainingAmt * 0.5;
+            const priceChange = isLong
+              ? (tp1Price - trade.entry_price) / trade.entry_price
+              : (trade.entry_price - tp1Price) / trade.entry_price;
+            const pnl = closeAmount * priceChange * trade.leverage - closeAmount * 0.001 - (closeAmount / trade.leverage) * 0.001;
+            const newRemaining = remainingAmt - closeAmount;
+            const breakevenSL = isLong ? trade.entry_price * 1.001 : trade.entry_price * 0.999;
+            partialCloses.push({
+              tradeId: trade.id, symbol: trade.symbol, closedAmount: closeAmount,
+              pnl, reason: 'TP1 hit (50%)', exitPrice: tp1Price,
+              newRemainingAmount: newRemaining, newPartialState: 'tp1_hit', newStopLoss: breakevenSL,
+            });
+            trailingUpdates.push({ tradeId: trade.id, newStopLoss: breakevenSL, reason: 'TP1: SL → breakeven' });
+            didPartialClose = true;
           }
         }
 
-        // Check TP on CURRENT (in-progress) candle
-        if (!shouldClose) {
+        // TP2: 1.5× TP distance hit → close 50% of remaining (or full if < $1)
+        if (!didPartialClose && partialState === 'tp1_hit') {
+          const tp2Hit = isLong
+            ? (completed.high >= tp2Price || current.high >= tp2Price || completed.close >= tp2Price || current.close >= tp2Price)
+            : (completed.low <= tp2Price || current.low <= tp2Price || completed.close <= tp2Price || current.close <= tp2Price);
+          if (tp2Hit) {
+            const closeAmount = remainingAmt * 0.5;
+            const priceChange = isLong
+              ? (tp2Price - trade.entry_price) / trade.entry_price
+              : (trade.entry_price - tp2Price) / trade.entry_price;
+            const pnl = closeAmount * priceChange * trade.leverage - closeAmount * 0.001 - (closeAmount / trade.leverage) * 0.001;
+            const newRemaining = remainingAmt - closeAmount;
+            if (newRemaining < 1) {
+              // Remaining too small → full close
+              closedTrades.push({ tradeId: trade.id, symbol: trade.symbol, direction: trade.direction, pnl, reason: 'TP2 hit (full)', exitPrice: tp2Price });
+              shouldClose = true; reason = 'TP2 hit (full)'; exitPrice = tp2Price;
+            } else {
+              const trailingSL = isLong ? trade.entry_price + tpDistance * 0.5 : trade.entry_price - tpDistance * 0.5;
+              partialCloses.push({
+                tradeId: trade.id, symbol: trade.symbol, closedAmount: closeAmount,
+                pnl, reason: 'TP2 hit (50%)', exitPrice: tp2Price,
+                newRemainingAmount: newRemaining, newPartialState: 'tp2_hit', newStopLoss: trailingSL,
+              });
+              trailingUpdates.push({ tradeId: trade.id, newStopLoss: trailingSL, reason: 'TP2: trailing SL' });
+              didPartialClose = true;
+            }
+          }
+        }
+      }
+
+      // ── TP/SL CHECK using candle HIGH/LOW ──
+      // SL always applies (even for partially closed trades).
+      // TP full close only for trades NOT in partial states ('full'/'tp1_hit')
+      // or when partial_state is 'tp2_hit' (TP3 = full close of remaining).
+      if (!shouldClose && !didPartialClose) {
+        const isLong = trade.direction === 'long';
+
+        // Full TP close — skip if partial TP is managing this trade
+        const skipTP = (partialState === 'full' || partialState === 'tp1_hit');
+
+        if (!skipTP) {
+          // Check TP on COMPLETED candle (HIGH/LOW + CLOSE)
           if (isLong && trade.take_profit) {
-            if (current.high >= trade.take_profit) {
-              shouldClose = true; reason = 'TP hit (live)'; exitPrice = trade.take_profit;
+            if (completed.high >= trade.take_profit) {
+              shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
+            } else if (completed.close >= trade.take_profit) {
+              shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
             }
           } else if (!isLong && trade.take_profit) {
-            if (current.low <= trade.take_profit) {
-              shouldClose = true; reason = 'TP hit (live)'; exitPrice = trade.take_profit;
+            if (completed.low <= trade.take_profit) {
+              shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
+            } else if (completed.close <= trade.take_profit) {
+              shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
+            }
+          }
+
+          // Check TP on CURRENT (in-progress) candle
+          if (!shouldClose) {
+            if (isLong && trade.take_profit) {
+              if (current.high >= trade.take_profit) {
+                shouldClose = true; reason = 'TP hit (live)'; exitPrice = trade.take_profit;
+              }
+            } else if (!isLong && trade.take_profit) {
+              if (current.low <= trade.take_profit) {
+                shouldClose = true; reason = 'TP hit (live)'; exitPrice = trade.take_profit;
+              }
             }
           }
         }
@@ -407,72 +476,6 @@ export async function monitorTradesClient(
           const breakevenSL = isLong ? trade.entry_price * 1.001 : trade.entry_price * 0.999;
           if ((isLong && breakevenSL > (trade.stop_loss ?? 0)) || (!isLong && breakevenSL < (trade.stop_loss ?? Infinity))) {
             trailingUpdates.push({ tradeId: trade.id, newStopLoss: breakevenSL, reason: 'Trailing to breakeven' });
-          }
-        }
-      }
-
-      // ── PARTIAL TP CLOSE LOGIC ──
-      // When TP is hit, close 50% and move SL to breakeven (TP1).
-      // When TP is hit again, close another 50% of remaining (TP2).
-      // Third TP hit: full close of remaining.
-      if (!shouldClose && reason === '' && trade.take_profit && trade.entry_price) {
-        const isLong = trade.direction === 'long';
-        const partialState = trade.partial_state ?? 'full';
-        const remainingAmt = trade.remaining_amount ?? trade.amount;
-
-        // Calculate TP1 and TP2 prices based on the trade's TP distance
-        const tpDistance = Math.abs(trade.take_profit - trade.entry_price);
-        const tp1Price = isLong ? trade.entry_price + tpDistance : trade.entry_price - tpDistance;
-        const tp2Price = isLong ? trade.entry_price + tpDistance * 1.5 : trade.entry_price - tpDistance * 1.5;
-
-        // Check if TP1 is hit and we haven't partially closed yet
-        if (partialState === 'full') {
-          const tp1Hit = isLong
-            ? (completed.high >= tp1Price || current.high >= tp1Price || completed.close >= tp1Price || current.close >= tp1Price)
-            : (completed.low <= tp1Price || current.low <= tp1Price || completed.close <= tp1Price || current.close <= tp1Price);
-          if (tp1Hit) {
-            const closeAmount = remainingAmt * 0.5;
-            const priceChange = isLong
-              ? (tp1Price - trade.entry_price) / trade.entry_price
-              : (trade.entry_price - tp1Price) / trade.entry_price;
-            const pnl = closeAmount * priceChange * trade.leverage - closeAmount * 0.001 - (closeAmount / trade.leverage) * 0.001;
-            const newRemaining = remainingAmt - closeAmount;
-            const breakevenSL = isLong ? trade.entry_price * 1.001 : trade.entry_price * 0.999;
-            partialCloses.push({
-              tradeId: trade.id, symbol: trade.symbol, closedAmount: closeAmount,
-              pnl, reason: 'TP1 hit (50%)', exitPrice: tp1Price,
-              newRemainingAmount: newRemaining, newPartialState: 'tp1_hit', newStopLoss: breakevenSL,
-            });
-            // Move SL to breakeven
-            trailingUpdates.push({ tradeId: trade.id, newStopLoss: breakevenSL, reason: 'TP1: SL → breakeven' });
-            continue; // skip full close logic for this trade
-          }
-        }
-
-        // Check if TP2 is hit and we already closed TP1
-        if (partialState === 'tp1_hit') {
-          const tp2Hit = isLong
-            ? (completed.high >= tp2Price || current.high >= tp2Price || completed.close >= tp2Price || current.close >= tp2Price)
-            : (completed.low <= tp2Price || current.low <= tp2Price || completed.close <= tp2Price || current.close <= tp2Price);
-          if (tp2Hit) {
-            const closeAmount = remainingAmt * 0.5;
-            const priceChange = isLong
-              ? (tp2Price - trade.entry_price) / trade.entry_price
-              : (trade.entry_price - tp2Price) / trade.entry_price;
-            const pnl = closeAmount * priceChange * trade.leverage - closeAmount * 0.001 - (closeAmount / trade.leverage) * 0.001;
-            const newRemaining = remainingAmt - closeAmount;
-            // If remaining is < $1, just close fully
-            if (newRemaining < 1) {
-              closedTrades.push({ tradeId: trade.id, symbol: trade.symbol, direction: trade.direction, pnl, reason: 'TP2 hit (full)', exitPrice: tp2Price });
-            } else {
-              const trailingSL = isLong ? trade.entry_price + tpDistance * 0.5 : trade.entry_price - tpDistance * 0.5;
-              partialCloses.push({
-                tradeId: trade.id, symbol: trade.symbol, closedAmount: closeAmount,
-                pnl, reason: 'TP2 hit (50%)', exitPrice: tp2Price,
-                newRemainingAmount: newRemaining, newPartialState: 'tp2_hit', newStopLoss: trailingSL,
-              });
-            }
-            continue;
           }
         }
       }
