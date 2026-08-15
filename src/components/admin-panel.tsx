@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { useSession } from 'next-auth/react';
 import { STRATEGIES, type StrategyConfig } from '@/lib/strategies';
 import { invalidateSettingsCache } from '@/lib/settings-cache';
 import { Slider } from '@/components/ui/slider';
@@ -28,17 +27,6 @@ import {
   Settings2,
   Loader2,
   Check,
-  Copy,
-  Plus,
-  Trash2,
-  Clock,
-  Users,
-  KeyRound,
-  RefreshCw,
-  AlertCircle,
-  Zap,
-  UserMinus,
-  UserPlus,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -69,10 +57,7 @@ const STRATEGY_SETTINGS: SettingDef[] = [
     label: 'Макс. открытых сделок',
     description: 'Лимит одновременных открытых позиций для стратегии',
     type: 'number',
-    min: 1,
-    max: 30,
-    step: 1,
-    unit: 'шт',
+    min: 1, max: 30, step: 1, unit: 'шт',
     getDefault: s => s.maxOpenTrades,
   },
   {
@@ -80,10 +65,7 @@ const STRATEGY_SETTINGS: SettingDef[] = [
     label: 'Макс. плечо',
     description: 'Максимальное плечо для сделок стратегии',
     type: 'number',
-    min: 1,
-    max: 20,
-    step: 1,
-    unit: 'x',
+    min: 1, max: 20, step: 1, unit: 'x',
     getDefault: s => s.maxLeverage,
   },
   {
@@ -91,10 +73,7 @@ const STRATEGY_SETTINGS: SettingDef[] = [
     label: 'Risk:Reward',
     description: 'Отношение риска к прибыли (TP = SL × это значение)',
     type: 'number',
-    min: 1,
-    max: 10,
-    step: 0.5,
-    unit: 'R',
+    min: 1, max: 10, step: 0.5, unit: 'R',
     getDefault: s => s.riskRewardRatio,
   },
   {
@@ -102,10 +81,7 @@ const STRATEGY_SETTINGS: SettingDef[] = [
     label: 'Размер сделки',
     description: '% от баланса на одну сделку',
     type: 'number',
-    min: 0.005,
-    max: 0.5,
-    step: 0.005,
-    unit: '%',
+    min: 0.005, max: 0.5, step: 0.005, unit: '%',
     getDefault: s => s.tradeSizePercent,
   },
 
@@ -115,9 +91,7 @@ const STRATEGY_SETTINGS: SettingDef[] = [
     label: 'Порог сигнала',
     description: 'Минимальный скор для входа в сделку (ниже = больше сделок)',
     type: 'number',
-    min: 0.01,
-    max: 0.8,
-    step: 0.01,
+    min: 0.01, max: 0.8, step: 0.01,
     getDefault: s => s.scoreThreshold,
   },
   {
@@ -125,9 +99,7 @@ const STRATEGY_SETTINGS: SettingDef[] = [
     label: 'Мин. ADX',
     description: 'Минимальная сила тренда (0 = без фильтра)',
     type: 'number',
-    min: 0,
-    max: 60,
-    step: 5,
+    min: 0, max: 60, step: 5,
     getDefault: s => s.adxMin ?? 0,
   },
   {
@@ -159,10 +131,7 @@ const STRATEGY_SETTINGS: SettingDef[] = [
     label: 'Лимит свечей',
     description: 'Количество свечей для запроса к API',
     type: 'number',
-    min: 100,
-    max: 2000,
-    step: 50,
-    unit: 'шт',
+    min: 100, max: 2000, step: 50, unit: 'шт',
     getDefault: s => s.candleLimit,
   },
   {
@@ -185,10 +154,7 @@ const STRATEGY_SETTINGS: SettingDef[] = [
     label: 'Макс. удержание',
     description: 'Макс. время в позиции (убывающие закроются)',
     type: 'number',
-    min: 5,
-    max: 20160,
-    step: 5,
-    unit: 'мин',
+    min: 5, max: 20160, step: 5, unit: 'мин',
     getDefault: s => s.maxHoldMinutes,
   },
   {
@@ -203,10 +169,7 @@ const STRATEGY_SETTINGS: SettingDef[] = [
     label: 'Начало торгов (МСК)',
     description: 'Час начала торгового окна',
     type: 'number',
-    min: 0,
-    max: 23,
-    step: 1,
-    unit: 'ч',
+    min: 0, max: 23, step: 1, unit: 'ч',
     getDefault: s => s.timeFilterStart,
   },
   {
@@ -214,10 +177,7 @@ const STRATEGY_SETTINGS: SettingDef[] = [
     label: 'Конец торгов (МСК)',
     description: 'Час окончания торгового окна',
     type: 'number',
-    min: 0,
-    max: 23,
-    step: 1,
-    unit: 'ч',
+    min: 0, max: 23, step: 1, unit: 'ч',
     getDefault: s => s.timeFilterEnd,
   },
 ];
@@ -240,10 +200,7 @@ const SYSTEM_SETTINGS: SystemSettingDef[] = [
     label: 'Дневной лимит убытков',
     description: 'При достижении убытка N% от баланса — остановить торговлю до следующего дня',
     type: 'number',
-    min: 1,
-    max: 30,
-    step: 1,
-    unit: '%',
+    min: 1, max: 30, step: 1, unit: '%',
     defaultValue: 5,
   },
   {
@@ -251,10 +208,7 @@ const SYSTEM_SETTINGS: SystemSettingDef[] = [
     label: 'Макс. дистанция TP',
     description: 'Ограничение максимальной дистанции тейк-профита от входа',
     type: 'number',
-    min: 1,
-    max: 30,
-    step: 1,
-    unit: '%',
+    min: 1, max: 30, step: 1, unit: '%',
     defaultValue: 8,
   },
   {
@@ -262,10 +216,7 @@ const SYSTEM_SETTINGS: SystemSettingDef[] = [
     label: 'Макс. дистанция SL',
     description: 'Ограничение максимальной дистанции стоп-лосса от входа',
     type: 'number',
-    min: 1,
-    max: 15,
-    step: 0.5,
-    unit: '%',
+    min: 1, max: 15, step: 0.5, unit: '%',
     defaultValue: 5,
   },
   {
@@ -273,10 +224,7 @@ const SYSTEM_SETTINGS: SystemSettingDef[] = [
     label: 'Auto-repair SL кап',
     description: 'Авто-ремонт: SL дальше N% будет обрезан',
     type: 'number',
-    min: 1,
-    max: 15,
-    step: 0.5,
-    unit: '%',
+    min: 1, max: 15, step: 0.5, unit: '%',
     defaultValue: 5,
   },
   {
@@ -284,10 +232,7 @@ const SYSTEM_SETTINGS: SystemSettingDef[] = [
     label: 'Auto-repair TP кап',
     description: 'Авто-ремонт: TP дальше N% будет обрезан',
     type: 'number',
-    min: 1,
-    max: 25,
-    step: 1,
-    unit: '%',
+    min: 1, max: 25, step: 1, unit: '%',
     defaultValue: 10,
   },
   {
@@ -316,10 +261,7 @@ const SYSTEM_SETTINGS: SystemSettingDef[] = [
     label: 'Символов за цикл',
     description: 'Сколько монет сканировать за один торговый цикл',
     type: 'number',
-    min: 5,
-    max: 50,
-    step: 5,
-    unit: 'шт',
+    min: 5, max: 50, step: 5, unit: 'шт',
     defaultValue: 20,
   },
   {
@@ -327,10 +269,7 @@ const SYSTEM_SETTINGS: SystemSettingDef[] = [
     label: 'Буст объёма',
     description: 'Множитель объёма для буста сигнала (1.0 = нет буста)',
     type: 'number',
-    min: 1.0,
-    max: 2.5,
-    step: 0.1,
-    unit: 'x',
+    min: 1.0, max: 2.5, step: 0.1, unit: 'x',
     defaultValue: 1.2,
   },
 ];
@@ -485,7 +424,6 @@ function StrategyTab({
   const getValue = useCallback(
     (def: SettingDef) => {
       const fullKey = prefix + def.key;
-      // 1) Check pending changes
       if (fullKey in pendingChanges) {
         return def.type === 'boolean'
           ? pendingChanges[fullKey] === 'true'
@@ -493,7 +431,6 @@ function StrategyTab({
             ? parseFloat(pendingChanges[fullKey])
             : pendingChanges[fullKey];
       }
-      // 2) Check DB overrides
       if (fullKey in dbSettings) {
         return def.type === 'boolean'
           ? dbSettings[fullKey] === 'true'
@@ -501,7 +438,6 @@ function StrategyTab({
             ? parseFloat(dbSettings[fullKey])
             : dbSettings[fullKey];
       }
-      // 3) Default from strategy config
       return def.getDefault(strategy);
     },
     [prefix, strategy, dbSettings, pendingChanges],
@@ -517,7 +453,6 @@ function StrategyTab({
       const fullKey = prefix + key;
       setPending(prev => {
         const strVal = String(value);
-        // If new value matches default, remove override
         const defaultVal = String(getDefaultValue(STRATEGY_SETTINGS.find(d => d.key === key)!));
         if (strVal === defaultVal) {
           const next = { ...prev };
@@ -530,7 +465,6 @@ function StrategyTab({
     [prefix, setPending, getDefaultValue],
   );
 
-  // Categorize settings
   const trading = STRATEGY_SETTINGS.filter(d => ['maxOpenTrades', 'maxLeverage', 'riskRewardRatio', 'tradeSizePercent'].includes(d.key));
   const engine = STRATEGY_SETTINGS.filter(d => ['scoreThreshold', 'adxMin', 'mtfEnabled'].includes(d.key));
   const timing = STRATEGY_SETTINGS.filter(d => ['defaultInterval', 'candleLimit', 'monitorInterval', 'maxHoldMinutes', 'timeFilterEnabled', 'timeFilterStart', 'timeFilterEnd'].includes(d.key));
@@ -538,7 +472,6 @@ function StrategyTab({
   return (
     <ScrollArea className="h-[calc(100vh-200px)] sm:h-[calc(100vh-160px)] pr-2">
       <div className="space-y-4 pb-8 max-w-xl mx-auto">
-        {/* Strategy header */}
         <div className={cn('rounded-xl border p-4', strategy.borderColor, strategy.bgColor)}>
           <div className="flex items-center gap-3">
             <div className={cn('w-10 h-10 rounded-lg flex items-center justify-center', strategy.bgColor, strategy.borderColor, 'border')}>
@@ -553,83 +486,33 @@ function StrategyTab({
           </div>
         </div>
 
-        {/* Trading section */}
         <div>
-          <div className="text-[10px] font-bold uppercase tracking-widest text-white/25 mb-2 px-1">
-            Торговые параметры
-          </div>
+          <div className="text-[10px] font-bold uppercase tracking-widest text-white/25 mb-2 px-1">Торговые параметры</div>
           <div className="space-y-2">
             {trading.map(def => (
-              <SliderRow
-                key={def.key}
-                label={def.label}
-                description={def.description}
-                value={getValue(def)}
-                defaultValue={getDefaultValue(def)}
-                onChange={v => handleChange(def.key, v)}
-                type={def.type}
-                min={def.min}
-                max={def.max}
-                step={def.step}
-                unit={def.unit}
-                options={def.options}
-                colorClass={strategy.color}
-              />
+              <SliderRow key={def.key} label={def.label} description={def.description} value={getValue(def)} defaultValue={getDefaultValue(def)} onChange={v => handleChange(def.key, v)} type={def.type} min={def.min} max={def.max} step={def.step} unit={def.unit} options={def.options} colorClass={strategy.color} />
             ))}
           </div>
         </div>
 
         <Separator className="bg-white/[0.04]" />
 
-        {/* Engine section */}
         <div>
-          <div className="text-[10px] font-bold uppercase tracking-widest text-white/25 mb-2 px-1">
-            Движок сигналов
-          </div>
+          <div className="text-[10px] font-bold uppercase tracking-widest text-white/25 mb-2 px-1">Движок сигналов</div>
           <div className="space-y-2">
             {engine.map(def => (
-              <SliderRow
-                key={def.key}
-                label={def.label}
-                description={def.description}
-                value={getValue(def)}
-                defaultValue={getDefaultValue(def)}
-                onChange={v => handleChange(def.key, v)}
-                type={def.type}
-                min={def.min}
-                max={def.max}
-                step={def.step}
-                unit={def.unit}
-                colorClass={strategy.color}
-              />
+              <SliderRow key={def.key} label={def.label} description={def.description} value={getValue(def)} defaultValue={getDefaultValue(def)} onChange={v => handleChange(def.key, v)} type={def.type} min={def.min} max={def.max} step={def.step} unit={def.unit} options={def.options} colorClass={strategy.color} />
             ))}
           </div>
         </div>
 
         <Separator className="bg-white/[0.04]" />
 
-        {/* Timing section */}
         <div>
-          <div className="text-[10px] font-bold uppercase tracking-widest text-white/25 mb-2 px-1">
-            Тайминг и мониторинг
-          </div>
+          <div className="text-[10px] font-bold uppercase tracking-widest text-white/25 mb-2 px-1">Тайминг и мониторинг</div>
           <div className="space-y-2">
             {timing.map(def => (
-              <SliderRow
-                key={def.key}
-                label={def.label}
-                description={def.description}
-                value={getValue(def)}
-                defaultValue={getDefaultValue(def)}
-                onChange={v => handleChange(def.key, v)}
-                type={def.type}
-                min={def.min}
-                max={def.max}
-                step={def.step}
-                unit={def.unit}
-                options={def.options}
-                colorClass={strategy.color}
-              />
+              <SliderRow key={def.key} label={def.label} description={def.description} value={getValue(def)} defaultValue={getDefaultValue(def)} onChange={v => handleChange(def.key, v)} type={def.type} min={def.min} max={def.max} step={def.step} unit={def.unit} options={def.options} colorClass={strategy.color} />
             ))}
           </div>
         </div>
@@ -653,7 +536,6 @@ function SystemTab({
 }) {
   const getValue = useCallback(
     (def: SystemSettingDef) => {
-      // 1) Pending
       if (def.key in pendingChanges) {
         return def.type === 'boolean'
           ? pendingChanges[def.key] === 'true'
@@ -661,7 +543,6 @@ function SystemTab({
             ? parseFloat(pendingChanges[def.key])
             : pendingChanges[def.key];
       }
-      // 2) DB
       if (def.key in dbSettings) {
         return def.type === 'boolean'
           ? dbSettings[def.key] === 'true'
@@ -669,7 +550,6 @@ function SystemTab({
             ? parseFloat(dbSettings[def.key])
             : dbSettings[def.key];
       }
-      // 3) Default
       return def.defaultValue;
     },
     [dbSettings, pendingChanges],
@@ -703,7 +583,6 @@ function SystemTab({
   return (
     <ScrollArea className="h-[calc(100vh-200px)] sm:h-[calc(100vh-160px)] pr-2">
       <div className="space-y-4 pb-8 max-w-xl mx-auto">
-        {/* System header */}
         <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-emerald-500/10 border border-emerald-500/20">
@@ -716,77 +595,33 @@ function SystemTab({
           </div>
         </div>
 
-        {/* Risk management */}
         <div>
-          <div className="text-[10px] font-bold uppercase tracking-widest text-white/25 mb-2 px-1">
-            Управление рисками
-          </div>
+          <div className="text-[10px] font-bold uppercase tracking-widest text-white/25 mb-2 px-1">Управление рисками</div>
           <div className="space-y-2">
             {risk.map(def => (
-              <SliderRow
-                key={def.key}
-                label={def.label}
-                description={def.description}
-                value={getValue(def)}
-                defaultValue={getDefaultValue(def)}
-                onChange={v => handleChange(def.key, def, v)}
-                type={def.type}
-                min={def.min}
-                max={def.max}
-                step={def.step}
-                unit={def.unit}
-                colorClass="text-emerald-400"
-              />
+              <SliderRow key={def.key} label={def.label} description={def.description} value={getValue(def)} defaultValue={getDefaultValue(def)} onChange={v => handleChange(def.key, def, v)} type={def.type} min={def.min} max={def.max} step={def.step} unit={def.unit} colorClass="text-emerald-400" />
             ))}
           </div>
         </div>
 
         <Separator className="bg-white/[0.04]" />
 
-        {/* Trailing stops */}
         <div>
-          <div className="text-[10px] font-bold uppercase tracking-widest text-white/25 mb-2 px-1">
-            Трейлинг-стопы
-          </div>
+          <div className="text-[10px] font-bold uppercase tracking-widest text-white/25 mb-2 px-1">Трейлинг-стопы</div>
           <div className="space-y-2">
             {trailing.map(def => (
-              <SliderRow
-                key={def.key}
-                label={def.label}
-                description={def.description}
-                value={getValue(def)}
-                defaultValue={getDefaultValue(def)}
-                onChange={v => handleChange(def.key, def, v)}
-                type={def.type}
-                colorClass="text-emerald-400"
-              />
+              <SliderRow key={def.key} label={def.label} description={def.description} value={getValue(def)} defaultValue={getDefaultValue(def)} onChange={v => handleChange(def.key, def, v)} type={def.type} colorClass="text-emerald-400" />
             ))}
           </div>
         </div>
 
         <Separator className="bg-white/[0.04]" />
 
-        {/* Scanning */}
         <div>
-          <div className="text-[10px] font-bold uppercase tracking-widest text-white/25 mb-2 px-1">
-            Сканирование рынка
-          </div>
+          <div className="text-[10px] font-bold uppercase tracking-widest text-white/25 mb-2 px-1">Сканирование рынка</div>
           <div className="space-y-2">
             {scan.map(def => (
-              <SliderRow
-                key={def.key}
-                label={def.label}
-                description={def.description}
-                value={getValue(def)}
-                defaultValue={getDefaultValue(def)}
-                onChange={v => handleChange(def.key, def, v)}
-                type={def.type}
-                min={def.min}
-                max={def.max}
-                step={def.step}
-                unit={def.unit}
-                colorClass="text-emerald-400"
-              />
+              <SliderRow key={def.key} label={def.label} description={def.description} value={getValue(def)} defaultValue={getDefaultValue(def)} onChange={v => handleChange(def.key, def, v)} type={def.type} min={def.min} max={def.max} step={def.step} unit={def.unit} colorClass="text-emerald-400" />
             ))}
           </div>
         </div>
@@ -796,885 +631,7 @@ function SystemTab({
 }
 
 // ============================================================
-// UsersTab — user management with password visibility + reset
-// ============================================================
-
-interface UserInfo {
-  id: string;
-  username: string;
-  password: string;
-  email: string;
-  role: string;
-  isDemo: string;
-  demoExpiresAt: string | null;
-  createdAt: string;
-  subscription: {
-    isActive: boolean;
-    expiresAt: string | null;
-  } | null;
-}
-
-interface UserStats {
-  userId: string;
-  email: string;
-  name: string;
-  totalPnl: number;
-  totalTrades: number;
-  winRate: number;
-  currentBalance: number;
-  activeStrategies: number;
-  createdAt: string;
-}
-
-const ADMIN_AUTH = 'Bearer trade-bot-admin-2024';
-const ADMIN_HEADERS: HeadersInit = {
-  'Authorization': ADMIN_AUTH,
-  'Content-Type': 'application/json',
-};
-
-function UsersTab() {
-  const [users, setUsers] = useState<UserInfo[]>([]);
-  const [userStats, setUserStats] = useState<Record<string, UserStats>>({});
-  const [loading, setLoading] = useState(false);
-  const [statsLoading, setStatsLoading] = useState(false);
-  const [resettingId, setResettingId] = useState<string | null>(null);
-  const [extendingSubId, setExtendingSubId] = useState<string | null>(null);
-  const [newPasswords, setNewPasswords] = useState<Record<string, string>>({});
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-
-  const fetchUsers = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch('/api/admin/users', { headers: { 'Authorization': ADMIN_AUTH } });
-      const data = await res.json();
-      // Filter: regular users only (not demo, not admin)
-      const filtered = (data.users ?? []).filter((u: UserInfo) => u.role !== 'admin' && u.isDemo !== '1');
-      setUsers(filtered);
-    } catch (err) {
-      console.error('Failed to load users:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const fetchStats = useCallback(async () => {
-    setStatsLoading(true);
-    try {
-      const res = await fetch('/api/admin/users-stats', { headers: { 'Authorization': ADMIN_AUTH } });
-      const data = await res.json();
-      const map: Record<string, UserStats> = {};
-      for (const s of (data.stats ?? [])) {
-        map[s.userId] = s;
-      }
-      setUserStats(map);
-    } catch (err) {
-      console.error('Failed to load user stats:', err);
-    } finally {
-      setStatsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchUsers();
-    fetchStats();
-    // Auto-refresh stats every 30 seconds
-    const interval = setInterval(() => {
-      fetchStats();
-    }, 30_000);
-    return () => clearInterval(interval);
-  }, [fetchUsers, fetchStats]);
-
-  const handleResetPassword = useCallback(async (userId: string) => {
-    setResettingId(userId);
-    try {
-      const res = await fetch('/api/admin/reset-password', {
-        method: 'POST',
-        headers: ADMIN_HEADERS,
-        body: JSON.stringify({ userId }),
-      });
-      const data = await res.json();
-      if (data.success && data.newPassword) {
-        setNewPasswords(prev => ({ ...prev, [userId]: data.newPassword }));
-      }
-    } catch (err) {
-      console.error('Failed to reset password:', err);
-    } finally {
-      setResettingId(null);
-    }
-  }, []);
-
-  const handleDelete = useCallback(async (userId: string) => {
-    setDeletingId(userId);
-    try {
-      await fetch(`/api/admin/users?id=${userId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': ADMIN_AUTH },
-      });
-      setUsers(prev => prev.filter(u => u.id !== userId));
-    } catch (err) {
-      console.error('Failed to delete user:', err);
-    } finally {
-      setDeletingId(null);
-    }
-  }, []);
-
-  const handleExtendSubscription = useCallback(async (userId: string) => {
-    setExtendingSubId(userId);
-    try {
-      await fetch('/api/admin/extend-subscription', {
-        method: 'POST',
-        headers: ADMIN_HEADERS,
-        body: JSON.stringify({ userId, days: 30 }),
-      });
-      fetchUsers();
-    } catch (err) {
-      console.error('Failed to extend subscription:', err);
-    } finally {
-      setExtendingSubId(null);
-    }
-  }, [fetchUsers]);
-
-  const handleCopy = useCallback(async (text: string, id: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 1500);
-    } catch {
-      // fallback
-    }
-  }, []);
-
-  const formatDate = (d: string) => {
-    if (!d) return '—';
-    try {
-      return new Date(d).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' });
-    } catch {
-      return d;
-    }
-  };
-
-  return (
-    <ScrollArea className="h-[calc(100vh-200px)] sm:h-[calc(100vh-160px)] pr-2">
-      <div className="space-y-4 pb-8 max-w-5xl mx-auto">
-        {/* Header */}
-        <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-blue-500/10 border border-blue-500/20">
-              <Users className="w-5 h-5 text-blue-400" />
-            </div>
-            <div>
-              <div className="text-base font-bold text-blue-400">Пользователи</div>
-              <div className="text-[11px] text-white/30 mt-0.5">Управление аккаунтами, просмотр паролей, подписок и PnL статистики</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Users count */}
-        <div className="flex items-center justify-between px-1">
-          <div className="flex items-center gap-3">
-            <span className="text-[11px] text-white/40 font-mono">
-              {loading ? 'Загрузка...' : `${users.length} пользователей`}
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-              </span>
-              <span className="text-[10px] text-emerald-400/70 font-mono">Live</span>
-            </span>
-            {statsLoading && <Loader2 className="w-3 h-3 text-white/20 animate-spin" />}
-          </div>
-          <button
-            onClick={() => { fetchUsers(); fetchStats(); }}
-            disabled={loading || statsLoading}
-            className="text-[11px] text-white/40 hover:text-white/60 transition-colors flex items-center gap-1"
-          >
-            <RefreshCw className={cn('w-3 h-3', (loading || statsLoading) && 'animate-spin')} />
-            Обновить
-          </button>
-        </div>
-
-        {/* Table */}
-        <div className="max-h-[500px] overflow-y-auto rounded-xl border border-white/[0.06]">
-          {users.length === 0 ? (
-            <div className="flex items-center justify-center py-16 text-white/20 text-sm">
-              {loading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : null}
-              {loading ? 'Загрузка...' : 'Нет пользователей'}
-            </div>
-          ) : (
-            <table className="w-full text-[11px] font-mono">
-              <thead>
-                <tr className="border-b border-white/[0.06] bg-white/[0.02]">
-                  <th className="text-left py-2.5 px-3 text-white/40 font-medium">Логин</th>
-                  <th className="text-left py-2.5 px-3 text-white/40 font-medium">Email</th>
-                  <th className="text-left py-2.5 px-3 text-white/40 font-medium">Роль</th>
-                  <th className="text-left py-2.5 px-3 text-white/40 font-medium">Подписка</th>
-                  <th className="text-right py-2.5 px-3 text-white/40 font-medium">PnL</th>
-                  <th className="text-right py-2.5 px-3 text-white/40 font-medium">Сделки</th>
-                  <th className="text-right py-2.5 px-3 text-white/40 font-medium">Win %</th>
-                  <th className="text-right py-2.5 px-3 text-white/40 font-medium">Баланс</th>
-                  <th className="text-left py-2.5 px-3 text-white/40 font-medium">Пароль</th>
-                  <th className="text-left py-2.5 px-3 text-white/40 font-medium">Создан</th>
-                  <th className="text-right py-2.5 px-3 text-white/40 font-medium"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map(user => {
-                  const isNewPassword = !!newPasswords[user.id];
-                  const isBcryptHash = user.password.startsWith('$2');
-                  const displayPassword = isNewPassword
-                    ? newPasswords[user.id]
-                    : isBcryptHash
-                      ? '—'
-                      : user.password;
-
-                  return (
-                    <tr key={user.id} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
-                      <td className="py-2.5 px-3 text-white/80 font-medium">{user.username}</td>
-                      <td className="py-2.5 px-3 text-white/50 max-w-[120px] truncate">{user.email || '—'}</td>
-                      <td className="py-2.5 px-3">
-                        <span className={cn(
-                          'px-2 py-0.5 rounded-full text-[10px] font-medium',
-                          user.role === 'admin'
-                            ? 'bg-red-500/15 text-red-400 border border-red-500/20'
-                            : user.isDemo === '1'
-                              ? 'bg-amber-500/15 text-amber-400 border border-amber-500/20'
-                              : 'bg-white/[0.06] text-white/50 border border-white/[0.08]',
-                        )}>
-                          {user.role === 'admin' ? 'admin' : user.isDemo === '1' ? 'demo' : 'user'}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3">
-                        <div className="flex items-center gap-1.5">
-                          {user.subscription?.isActive ? (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
-                              Активна
-                            </span>
-                          ) : (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-500/15 text-red-400 border border-red-500/20">
-                              Истекла
-                            </span>
-                          )}
-                          <button
-                            onClick={() => handleExtendSubscription(user.id)}
-                            disabled={extendingSubId === user.id}
-                            className="w-5 h-5 rounded flex items-center justify-center text-emerald-400/50 hover:text-emerald-400 transition-colors disabled:opacity-40"
-                            title="Продлить +30д"
-                          >
-                            {extendingSubId === user.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-                          </button>
-                        </div>
-                      </td>
-                      {/* PnL */}
-                      <td className="py-2.5 px-3 text-right">
-                        {(() => {
-                          const s = userStats[user.id];
-                          if (!s) return <span className="text-white/15">—</span>;
-                          return (
-                            <span className={cn('text-[11px] font-medium', s.totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400')}>
-                              {s.totalPnl >= 0 ? '+' : ''}{s.totalPnl.toFixed(2)}
-                            </span>
-                          );
-                        })()}
-                      </td>
-                      {/* Trades */}
-                      <td className="py-2.5 px-3 text-right text-white/40">
-                        {userStats[user.id]?.totalTrades ?? <span className="text-white/15">—</span>}
-                      </td>
-                      {/* Win Rate */}
-                      <td className="py-2.5 px-3 text-right">
-                        {(() => {
-                          const s = userStats[user.id];
-                          if (!s) return <span className="text-white/15">—</span>;
-                          const wr = s.winRate;
-                          return (
-                            <span className={cn('text-[11px] font-medium',
-                              wr >= 50 ? 'text-emerald-400/80' : wr > 0 ? 'text-amber-400/80' : 'text-white/30',
-                            )}>
-                              {wr.toFixed(1)}%
-                            </span>
-                          );
-                        })()}
-                      </td>
-                      {/* Balance */}
-                      <td className="py-2.5 px-3 text-right">
-                        {(() => {
-                          const s = userStats[user.id];
-                          if (!s) return <span className="text-white/15">—</span>;
-                          return (
-                            <span className="text-[11px] font-medium text-white/70">
-                              ${s.currentBalance.toFixed(2)}
-                            </span>
-                          );
-                        })()}
-                      </td>
-                      <td className="py-2.5 px-3">
-                        <div className="flex items-center gap-1.5">
-                          <span className={cn(
-                            'text-[10px] truncate max-w-[100px]',
-                            isNewPassword ? 'text-emerald-400 font-semibold' : 'text-white/20',
-                          )}>
-                            {displayPassword}
-                          </span>
-                          {isNewPassword && (
-                            <button
-                              onClick={() => handleCopy(newPasswords[user.id], user.id)}
-                              className="w-5 h-5 rounded flex items-center justify-center text-emerald-400/60 hover:text-emerald-400 transition-colors"
-                              title="Копировать"
-                            >
-                              {copiedId === user.id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                            </button>
-                          )}
-                          <button
-                            onClick={() => handleResetPassword(user.id)}
-                            disabled={resettingId === user.id}
-                            className="w-5 h-5 rounded flex items-center justify-center text-amber-400/60 hover:text-amber-400 transition-colors disabled:opacity-40"
-                            title="Пересоздать пароль"
-                          >
-                            {resettingId === user.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                          </button>
-                        </div>
-                      </td>
-                      <td className="py-2.5 px-3 text-white/40">{formatDate(user.createdAt)}</td>
-                      <td className="py-2.5 px-3 text-right">
-                        <button
-                          onClick={() => handleDelete(user.id)}
-                          disabled={deletingId === user.id}
-                          className="w-6 h-6 rounded-lg flex items-center justify-center ml-auto text-red-400/50 hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-40"
-                          title="Удалить"
-                        >
-                          {deletingId === user.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-    </ScrollArea>
-  );
-}
-
-// ============================================================
-// DemoTab — demo account management
-// ============================================================
-
-interface DemoAccount {
-  id: string;
-  username: string;
-  password: string;
-  createdAt: string;
-  demoExpiresAt: string | null;
-  subscription: {
-    isActive: boolean;
-    expiresAt: string | null;
-  } | null;
-}
-
-function formatCountdown(expiresAt: string | null): string {
-  if (!expiresAt) return '—';
-  const diff = new Date(expiresAt).getTime() - Date.now();
-  if (diff <= 0) return 'Истёк';
-  const totalSec = Math.floor(diff / 1000);
-  const hrs = Math.floor(totalSec / 3600);
-  const mins = Math.floor((totalSec % 3600) / 60);
-  return `${hrs}ч ${mins}мин`;
-}
-
-function isExpired(expiresAt: string | null): boolean {
-  if (!expiresAt) return true;
-  return new Date(expiresAt).getTime() <= Date.now();
-}
-
-function DemoTab() {
-  const [accounts, setAccounts] = useState<DemoAccount[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [copiedField, setCopiedField] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [newAccount, setNewAccount] = useState<{ username: string; password: string; expiresAt: string } | null>(null);
-  const [resettingId, setResettingId] = useState<string | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [, setTick] = useState(0);
-
-  const fetchAccounts = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch('/api/admin/demo', { headers: { 'Authorization': ADMIN_AUTH } });
-      const data = await res.json();
-      setAccounts(data.accounts ?? []);
-    } catch (err) {
-      console.error('Failed to load demo accounts:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  // Initial fetch + auto-refresh every 30s
-  useEffect(() => {
-    fetchAccounts();
-    const interval = setInterval(fetchAccounts, 30_000);
-    return () => clearInterval(interval);
-  }, [fetchAccounts]);
-
-  // Tick every minute for countdown timers
-  useEffect(() => {
-    const interval = setInterval(() => setTick(t => t + 1), 60_000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const handleCreate = useCallback(async () => {
-    setCreating(true);
-    try {
-      const res = await fetch('/api/admin/demo', {
-        method: 'POST',
-        headers: ADMIN_HEADERS,
-      });
-      const data = await res.json();
-      setNewAccount({ username: data.username, password: data.password, expiresAt: data.expiresAt });
-      fetchAccounts();
-      // Auto-hide card after 15s
-      setTimeout(() => setNewAccount(null), 15_000);
-    } catch (err) {
-      console.error('Failed to create demo account:', err);
-    } finally {
-      setCreating(false);
-    }
-  }, [fetchAccounts]);
-
-  const handleReset = useCallback(async (id: string) => {
-    setResettingId(id);
-    try {
-      await fetch('/api/admin/demo?action=reset&id=' + id, {
-        method: 'POST',
-        headers: ADMIN_HEADERS,
-      });
-      fetchAccounts();
-    } catch (err) {
-      console.error('Failed to reset demo account:', err);
-    } finally {
-      setResettingId(null);
-    }
-  }, [fetchAccounts]);
-
-  const handleDelete = useCallback(async (id: string) => {
-    setDeletingId(id);
-    try {
-      await fetch('/api/admin/demo?id=' + id, {
-        method: 'DELETE',
-        headers: { 'Authorization': ADMIN_AUTH },
-      });
-      setAccounts(prev => prev.filter(a => a.id !== id));
-    } catch (err) {
-      console.error('Failed to delete demo account:', err);
-    } finally {
-      setDeletingId(null);
-    }
-  }, []);
-
-  const handleCopy = useCallback(async (text: string, field: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedField(field);
-      setTimeout(() => setCopiedField(null), 1500);
-    } catch {
-      // fallback
-    }
-  }, []);
-
-  const formatDate = (d: string) => {
-    if (!d) return '—';
-    try {
-      return new Date(d).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-    } catch {
-      return d;
-    }
-  };
-
-  const activeCount = accounts.filter(a => !isExpired(a.demoExpiresAt)).length;
-  const expiredCount = accounts.filter(a => isExpired(a.demoExpiresAt)).length;
-
-  return (
-    <ScrollArea className="h-[calc(100vh-200px)] sm:h-[calc(100vh-160px)] pr-2">
-      <div className="space-y-4 pb-8 max-w-3xl mx-auto">
-        {/* Header */}
-        <div className="rounded-xl border border-amber-500/15 bg-amber-500/[0.03] p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-amber-500/10 border border-amber-500/20">
-                <KeyRound className="w-5 h-5 text-amber-400" />
-              </div>
-              <div>
-                <div className="text-base font-bold text-amber-400">Демо доступ</div>
-                <div className="text-[11px] text-white/30 mt-0.5">Управление тестовыми аккаунтами с ограниченным доступом</div>
-              </div>
-            </div>
-            <button
-              onClick={handleCreate}
-              disabled={creating}
-              className="h-8 px-3 rounded-lg bg-amber-500/15 border border-amber-500/25 text-amber-400 text-[11px] font-medium hover:bg-amber-500/25 transition-colors flex items-center gap-1.5 disabled:opacity-50"
-            >
-              {creating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-              Создать
-            </button>
-          </div>
-        </div>
-
-        {/* New account card */}
-        {newAccount && (
-          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.05] p-4 animate-in fade-in slide-in-from-top-2 duration-300">
-            <div className="flex items-center gap-2 mb-3">
-              <Check className="w-4 h-4 text-emerald-400" />
-              <span className="text-[12px] font-medium text-emerald-400">Новый демо аккаунт создан</span>
-            </div>
-            <div className="grid grid-cols-2 gap-3 text-[11px] font-mono">
-              <div className="rounded-lg bg-white/[0.04] border border-white/[0.06] p-2.5">
-                <div className="text-white/30 text-[10px] mb-1">Логин</div>
-                <div className="text-white/90 font-medium">{newAccount.username}</div>
-              </div>
-              <div className="rounded-lg bg-white/[0.04] border border-white/[0.06] p-2.5">
-                <div className="text-white/30 text-[10px] mb-1">Пароль</div>
-                <div className="flex items-center justify-between">
-                  <span className="text-emerald-400 font-medium">{newAccount.password}</span>
-                  <button
-                    onClick={() => handleCopy(newAccount.password, 'new-pw')}
-                    className="text-emerald-400/60 hover:text-emerald-400 transition-colors ml-2"
-                  >
-                    {copiedField === 'new-pw' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                  </button>
-                </div>
-              </div>
-            </div>
-            <div className="mt-2 text-[10px] text-white/25">Истекает: {formatDate(newAccount.expiresAt)}</div>
-          </div>
-        )}
-
-        {/* Stats */}
-        <div className="flex items-center gap-4 px-1">
-          <span className="text-[11px] text-white/40 font-mono">
-            {loading ? 'Загрузка...' : `${accounts.length} аккаунтов`}
-          </span>
-          {activeCount > 0 && (
-            <span className="text-[10px] text-emerald-400/60 font-mono">
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400/60 mr-1" />
-              {activeCount} активных
-            </span>
-          )}
-          {expiredCount > 0 && (
-            <span className="text-[10px] text-red-400/60 font-mono">
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-400/60 mr-1" />
-              {expiredCount} истёкших
-            </span>
-          )}
-          <button
-            onClick={fetchAccounts}
-            disabled={loading}
-            className="ml-auto text-[11px] text-white/40 hover:text-white/60 transition-colors flex items-center gap-1"
-          >
-            <RefreshCw className={cn('w-3 h-3', loading && 'animate-spin')} />
-            Обновить
-          </button>
-        </div>
-
-        {/* Demo accounts list */}
-        <div className="max-h-[500px] overflow-y-auto rounded-xl border border-amber-500/10">
-          {accounts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-white/20 text-sm gap-2">
-              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <AlertCircle className="w-5 h-5" />}
-              {loading ? 'Загрузка...' : 'Нет демо аккаунтов'}
-            </div>
-          ) : (
-            <table className="w-full text-[11px] font-mono">
-              <thead>
-                <tr className="border-b border-white/[0.06] bg-amber-500/[0.04]">
-                  <th className="text-left py-2.5 px-3 text-amber-400/50 font-medium">Логин</th>
-                  <th className="text-left py-2.5 px-3 text-amber-400/50 font-medium">Пароль</th>
-                  <th className="text-left py-2.5 px-3 text-amber-400/50 font-medium">Создан</th>
-                  <th className="text-left py-2.5 px-3 text-amber-400/50 font-medium">Осталось</th>
-                  <th className="text-left py-2.5 px-3 text-amber-400/50 font-medium">Статус</th>
-                  <th className="text-right py-2.5 px-3 text-amber-400/50 font-medium"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {accounts.map(account => {
-                  const expired = isExpired(account.demoExpiresAt);
-                  return (
-                    <tr key={account.id} className={cn(
-                      'border-b border-white/[0.04] transition-colors',
-                      expired ? 'opacity-50' : 'hover:bg-amber-500/[0.03]',
-                    )}>
-                      <td className="py-2.5 px-3 text-white/80 font-medium">{account.username}</td>
-                      <td className="py-2.5 px-3">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-white/40 truncate max-w-[80px]">{account.password}</span>
-                          <button
-                            onClick={() => handleCopy(account.password, account.id + '-pw')}
-                            className="w-5 h-5 rounded flex items-center justify-center text-white/20 hover:text-amber-400 transition-colors"
-                            title="Копировать"
-                          >
-                            {copiedField === account.id + '-pw' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                          </button>
-                        </div>
-                      </td>
-                      <td className="py-2.5 px-3 text-white/40">{formatDate(account.createdAt)}</td>
-                      <td className="py-2.5 px-3">
-                        <div className="flex items-center gap-1.5">
-                          <Clock className={cn('w-3 h-3', expired ? 'text-red-400/40' : 'text-amber-400/40')} />
-                          <span className={expired ? 'text-red-400/60' : 'text-amber-400'}>
-                            {formatCountdown(account.demoExpiresAt)}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="py-2.5 px-3">
-                        {expired ? (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-500/15 text-red-400 border border-red-500/20">
-                            Истёк
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
-                            Активен
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-3 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          {!expired && (
-                            <button
-                              onClick={() => handleReset(account.id)}
-                              disabled={resettingId === account.id}
-                              className="w-6 h-6 rounded-lg flex items-center justify-center text-amber-400/50 hover:text-amber-400 hover:bg-amber-500/10 transition-colors disabled:opacity-40"
-                              title="Продлить на 2ч"
-                            >
-                              {resettingId === account.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                            </button>
-                          )}
-                          <button
-                            onClick={() => handleDelete(account.id)}
-                            disabled={deletingId === account.id}
-                            className="w-6 h-6 rounded-lg flex items-center justify-center text-red-400/50 hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-40"
-                            title="Удалить"
-                          >
-                            {deletingId === account.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-    </ScrollArea>
-  );
-}
-
-// ============================================================
-// ActionsTab — bulk admin actions
-// ============================================================
-
-function ActionsTab() {
-  const [resetLoading, setResetLoading] = useState(false);
-  const [deleteDemosLoading, setDeleteDemosLoading] = useState(false);
-  const [createDemosLoading, setCreateDemosLoading] = useState(false);
-  const [resetResult, setResetResult] = useState<string | null>(null);
-  const [deleteResult, setDeleteResult] = useState<string | null>(null);
-  const [createResult, setCreateResult] = useState<string | null>(null);
-  const [confirmAction, setConfirmAction] = useState<string | null>(null);
-
-  const handleResetAll = useCallback(async () => {
-    setResetLoading(true);
-    setResetResult(null);
-    setConfirmAction(null);
-    try {
-      const res = await fetch('/api/admin/reset-all-accounts', {
-        method: 'POST',
-        headers: ADMIN_HEADERS,
-      });
-      const data = await res.json();
-      setResetResult(`Сброшено аккаунтов: ${data.resetCount ?? 'N/A'}`);
-    } catch {
-      setResetResult('Ошибка при сбросе');
-    } finally {
-      setResetLoading(false);
-    }
-  }, []);
-
-  const handleDeleteDemos = useCallback(async () => {
-    setDeleteDemosLoading(true);
-    setDeleteResult(null);
-    setConfirmAction(null);
-    try {
-      const res = await fetch('/api/admin/delete-demo-accounts', {
-        method: 'POST',
-        headers: ADMIN_HEADERS,
-      });
-      const data = await res.json();
-      setDeleteResult(`Удалено демо аккаунтов: ${data.deletedCount ?? 'N/A'}`);
-    } catch {
-      setDeleteResult('Ошибка при удалении');
-    } finally {
-      setDeleteDemosLoading(false);
-    }
-  }, []);
-
-  const handleCreateDemos = useCallback(async () => {
-    setCreateDemosLoading(true);
-    setCreateResult(null);
-    setConfirmAction(null);
-    try {
-      const res = await fetch('/api/admin/create-demo-accounts', {
-        method: 'POST',
-        headers: ADMIN_HEADERS,
-      });
-      const data = await res.json();
-      setCreateResult(`Создано аккаунтов: ${data.count ?? 'N/A'}`);
-    } catch {
-      setCreateResult('Ошибка при создании');
-    } finally {
-      setCreateDemosLoading(false);
-    }
-  }, []);
-
-  return (
-    <ScrollArea className="h-[calc(100vh-200px)] sm:h-[calc(100vh-160px)] pr-2">
-      <div className="space-y-4 pb-8 max-w-2xl mx-auto">
-        {/* Header */}
-        <div className="rounded-xl border border-red-500/15 bg-red-500/[0.03] p-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-red-500/10 border border-red-500/20">
-              <Zap className="w-5 h-5 text-red-400" />
-            </div>
-            <div>
-              <div className="text-base font-bold text-red-400">Массовые действия</div>
-              <div className="text-[11px] text-white/30 mt-0.5">Операции, влияющие на все аккаунты. Будьте осторожны.</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Confirm Dialog */}
-        {confirmAction && (
-          <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.05] p-4 animate-in fade-in">
-            <p className="text-[12px] text-amber-400 font-medium mb-3">
-              {confirmAction === 'reset' && 'Вы уверены? Все торговые данные будут сброшены, балансы установлены в $1000.'}
-              {confirmAction === 'delete-demos' && 'Вы уверены? Все демо аккаунты (demo*@tradepro.bot) будут удалены безвозвратно.'}
-              {confirmAction === 'create-demos' && 'Существующие демо аккаунты будут удалены и созданы 10 новых с балансом $1000.'}
-            </p>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => {
-                  if (confirmAction === 'reset') handleResetAll();
-                  else if (confirmAction === 'delete-demos') handleDeleteDemos();
-                  else if (confirmAction === 'create-demos') handleCreateDemos();
-                }}
-                className="px-3 py-1.5 rounded-lg bg-red-500/15 border border-red-500/25 text-red-400 text-[11px] font-medium hover:bg-red-500/25 transition-colors"
-              >
-                Подтвердить
-              </button>
-              <button
-                onClick={() => setConfirmAction(null)}
-                className="px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.08] text-white/50 text-[11px] font-medium hover:bg-white/[0.08] transition-colors"
-              >
-                Отмена
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Action 1: Reset all accounts */}
-        <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-amber-500/10 border border-amber-500/20">
-                <RotateCcw className="w-4 h-4 text-amber-400" />
-              </div>
-              <div>
-                <div className="text-[13px] font-semibold text-white/80">Перезапустить все аккаунты</div>
-                <div className="text-[11px] text-white/30 mt-0.5">Сбросить торги, установить баланс $1000 для каждого</div>
-              </div>
-            </div>
-            <button
-              onClick={() => setConfirmAction('reset')}
-              disabled={resetLoading}
-              className="h-8 px-3 rounded-lg bg-amber-500/15 border border-amber-500/25 text-amber-400 text-[11px] font-medium hover:bg-amber-500/25 transition-colors flex items-center gap-1.5 disabled:opacity-50"
-            >
-              {resetLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-              Выполнить
-            </button>
-          </div>
-          {resetResult && (
-            <div className="mt-2 px-3 py-1.5 rounded-lg bg-amber-500/[0.05] text-[11px] text-amber-400/80 font-mono">
-              {resetResult}
-            </div>
-          )}
-        </div>
-
-        {/* Action 2: Delete demo accounts */}
-        <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-red-500/10 border border-red-500/20">
-                <UserMinus className="w-4 h-4 text-red-400" />
-              </div>
-              <div>
-                <div className="text-[13px] font-semibold text-white/80">Удалить демо аккаунты</div>
-                <div className="text-[11px] text-white/30 mt-0.5">Удалить все demo*@tradepro.bot аккаунты и их данные</div>
-              </div>
-            </div>
-            <button
-              onClick={() => setConfirmAction('delete-demos')}
-              disabled={deleteDemosLoading}
-              className="h-8 px-3 rounded-lg bg-red-500/15 border border-red-500/25 text-red-400 text-[11px] font-medium hover:bg-red-500/25 transition-colors flex items-center gap-1.5 disabled:opacity-50"
-            >
-              {deleteDemosLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-              Выполнить
-            </button>
-          </div>
-          {deleteResult && (
-            <div className="mt-2 px-3 py-1.5 rounded-lg bg-red-500/[0.05] text-[11px] text-red-400/80 font-mono">
-              {deleteResult}
-            </div>
-          )}
-        </div>
-
-        {/* Action 3: Create 10 demo accounts */}
-        <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-emerald-500/10 border border-emerald-500/20">
-                <UserPlus className="w-4 h-4 text-emerald-400" />
-              </div>
-              <div>
-                <div className="text-[13px] font-semibold text-white/80">Создать 10 демо + начать торговлю</div>
-                <div className="text-[11px] text-white/30 mt-0.5">Удалить старые демо, создать 10 новых с подпиской 30д и балансом $1000</div>
-              </div>
-            </div>
-            <button
-              onClick={() => setConfirmAction('create-demos')}
-              disabled={createDemosLoading}
-              className="h-8 px-3 rounded-lg bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 text-[11px] font-medium hover:bg-emerald-500/25 transition-colors flex items-center gap-1.5 disabled:opacity-50"
-            >
-              {createDemosLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-              Выполнить
-            </button>
-          </div>
-          {createResult && (
-            <div className="mt-2 px-3 py-1.5 rounded-lg bg-emerald-500/[0.05] text-[11px] text-emerald-400/80 font-mono">
-              {createResult}
-            </div>
-          )}
-        </div>
-      </div>
-    </ScrollArea>
-  );
-}
-
-// ============================================================
-// Main AdminPanel component
+// Main AdminPanel component — System + Strategy settings only
 // ============================================================
 
 interface AdminPanelProps {
@@ -1683,8 +640,6 @@ interface AdminPanelProps {
 }
 
 export default function AdminPanel({ open, onClose }: AdminPanelProps) {
-  const { data: session } = useSession();
-  const isAdmin = (session?.user as any)?.username === 'admin';
   const [dbSettings, setDbSettings] = useState<Record<string, string>>({});
   const [pendingChanges, setPendingChanges] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -1716,16 +671,8 @@ export default function AdminPanel({ open, onClose }: AdminPanelProps) {
     setSaving(true);
     setSaved(false);
     try {
-      // Find keys that were reset to default — need to delete them
+      const updates: Record<string, string> = { ...pendingChanges };
       const deletes: string[] = [];
-      const updates: Record<string, string> = {};
-
-      for (const [key, value] of Object.entries(pendingChanges)) {
-        updates[key] = value;
-      }
-
-      // Also: find DB keys that are no longer in pending but were in DB with non-default values
-      // (handled by the delete flow when user resets to default)
 
       const res = await fetch('/api/settings', {
         method: 'PUT',
@@ -1736,7 +683,6 @@ export default function AdminPanel({ open, onClose }: AdminPanelProps) {
       setDbSettings(data.settings ?? {});
       setPendingChanges({});
       setSaved(true);
-      // Invalidate client-side cache so next trade cycle picks up new values
       invalidateSettingsCache();
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
@@ -1770,13 +716,7 @@ export default function AdminPanel({ open, onClose }: AdminPanelProps) {
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200"
-        onClick={onClose}
-      />
-
-      {/* Panel */}
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose} />
       <div className="relative w-full h-full sm:h-[92vh] sm:max-h-[900px] sm:max-w-[700px] sm:rounded-2xl bg-[#0d0d14] border border-white/[0.08] shadow-2xl flex flex-col animate-in zoom-in-95 slide-in-from-bottom-4 duration-300 overflow-hidden">
         {/* Header */}
         <div className="shrink-0 flex items-center justify-between px-4 sm:px-6 py-3.5 border-b border-white/[0.06] bg-[#0d0d14]">
@@ -1795,10 +735,7 @@ export default function AdminPanel({ open, onClose }: AdminPanelProps) {
                 {modifiedCount} изм.
               </span>
             )}
-            <button
-              onClick={onClose}
-              className="w-8 h-8 rounded-lg bg-white/[0.04] border border-white/[0.06] flex items-center justify-center hover:bg-white/[0.08] transition-colors"
-            >
+            <button onClick={onClose} className="w-8 h-8 rounded-lg bg-white/[0.04] border border-white/[0.06] flex items-center justify-center hover:bg-white/[0.08] transition-colors">
               <X className="w-4 h-4 text-white/60" />
             </button>
           </div>
@@ -1829,9 +766,7 @@ export default function AdminPanel({ open, onClose }: AdminPanelProps) {
                       'text-[11px] font-medium px-3 py-2 rounded-lg data-[state=active]:shadow-none',
                       `data-[state=active]:bg-${s.color.replace('text-', '')}/15`,
                     )}
-                    style={{
-                      '--tw-text-opacity': 1 as unknown as number,
-                    } as React.CSSProperties}
+                    style={{ '--tw-text-opacity': 1 as unknown as number } as React.CSSProperties}
                   >
                     {s.id === 'momentum' && <TrendingUp className="w-3 h-3 mr-1.5" />}
                     {s.id === 'scalper' && <Crosshair className="w-3 h-3 mr-1.5" />}
@@ -1839,72 +774,17 @@ export default function AdminPanel({ open, onClose }: AdminPanelProps) {
                     <span className={activeTab === s.id ? s.color : ''}>{s.name}</span>
                   </TabsTrigger>
                 ))}
-                {isAdmin && (
-                  <TabsTrigger
-                    value="users"
-                    className="text-[11px] font-medium px-3 py-2 rounded-lg data-[state=active]:bg-blue-500/15 data-[state=active]:text-blue-400 data-[state=active]:shadow-none"
-                  >
-                    <Users className="w-3 h-3 mr-1.5" />
-                    Пользователи
-                  </TabsTrigger>
-                )}
-                {isAdmin && (
-                  <TabsTrigger
-                    value="demo"
-                    className="text-[11px] font-medium px-3 py-2 rounded-lg data-[state=active]:bg-amber-500/15 data-[state=active]:text-amber-400 data-[state=active]:shadow-none"
-                  >
-                    <KeyRound className="w-3 h-3 mr-1.5" />
-                    Демо доступ
-                  </TabsTrigger>
-                )}
-                {isAdmin && (
-                  <TabsTrigger
-                    value="actions"
-                    className="text-[11px] font-medium px-3 py-2 rounded-lg data-[state=active]:bg-red-500/15 data-[state=active]:text-red-400 data-[state=active]:shadow-none"
-                  >
-                    <Zap className="w-3 h-3 mr-1.5" />
-                    Действия
-                  </TabsTrigger>
-                )}
               </TabsList>
 
-              {/* System tab */}
               <TabsContent value="system" className="flex-1 mt-0 px-4 sm:px-6 overflow-y-auto custom-scrollbar">
-                <SystemTab
-                  dbSettings={dbSettings}
-                  pendingChanges={pendingChanges}
-                  setPending={setPendingChanges}
-                />
+                <SystemTab dbSettings={dbSettings} pendingChanges={pendingChanges} setPending={setPendingChanges} />
               </TabsContent>
 
-              {/* Strategy tabs */}
               {STRATEGIES.map(s => (
                 <TabsContent key={s.id} value={s.id} className="flex-1 mt-0 px-4 sm:px-6 overflow-y-auto custom-scrollbar">
-                  <StrategyTab
-                    strategy={s}
-                    dbSettings={dbSettings}
-                    pendingChanges={pendingChanges}
-                    setPending={setPendingChanges}
-                  />
+                  <StrategyTab strategy={s} dbSettings={dbSettings} pendingChanges={pendingChanges} setPending={setPendingChanges} />
                 </TabsContent>
               ))}
-
-              {/* Admin-only tabs */}
-              {isAdmin && (
-                <TabsContent value="users" className="flex-1 mt-0 px-4 sm:px-6 overflow-y-auto custom-scrollbar">
-                  <UsersTab />
-                </TabsContent>
-              )}
-              {isAdmin && (
-                <TabsContent value="demo" className="flex-1 mt-0 px-4 sm:px-6 overflow-y-auto custom-scrollbar">
-                  <DemoTab />
-                </TabsContent>
-              )}
-              {isAdmin && (
-                <TabsContent value="actions" className="flex-1 mt-0 px-4 sm:px-6 overflow-y-auto custom-scrollbar">
-                  <ActionsTab />
-                </TabsContent>
-              )}
             </Tabs>
           </div>
         )}

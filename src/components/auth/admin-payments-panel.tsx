@@ -365,7 +365,7 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
   // ── User Detail View ──
   if (selectedUserId && detailLoading) {
     return (
-      <div className="fixed inset-0 z-50 flex items-start justify-center pt-10 sm:pt-16 bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div className="fixed inset-0 z-[60] flex items-start justify-center pt-10 sm:pt-16 bg-black/60 backdrop-blur-sm" onClick={onClose}>
         <div className="relative w-full max-w-3xl mx-4 bg-[#12121e] border border-white/10 rounded-2xl shadow-2xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
           <div className="flex items-center gap-3 p-4 border-b border-white/10 shrink-0">
             <button onClick={closeDetail} className="p-1.5 text-white/30 hover:text-white/60 transition-colors rounded-lg hover:bg-white/5">
@@ -391,7 +391,7 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
     const totalPaid = userPayments.filter(p => p.status === 'approved').reduce((s, p) => s + p.amountUSD, 0);
 
     return (
-      <div className="fixed inset-0 z-50 flex items-start justify-center pt-10 sm:pt-16 bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div className="fixed inset-0 z-[60] flex items-start justify-center pt-10 sm:pt-16 bg-black/60 backdrop-blur-sm" onClick={onClose}>
         <div className="relative w-full max-w-3xl mx-4 bg-[#12121e] border border-white/10 rounded-2xl shadow-2xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
           {/* Header */}
           <div className="flex items-center gap-3 p-4 border-b border-white/10 shrink-0">
@@ -683,11 +683,8 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
 
   // ── Main Panel ──
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-10 sm:pt-16 bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div
-        className="relative w-full max-w-3xl mx-4 bg-[#12121e] border border-white/10 rounded-2xl shadow-2xl max-h-[80vh] flex flex-col"
-        onClick={e => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 z-[60] flex items-start justify-center pt-10 sm:pt-16 bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div className="relative w-full max-w-3xl mx-4 bg-[#12121e] border border-white/10 rounded-2xl shadow-2xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
           <div className="flex items-center gap-3">
