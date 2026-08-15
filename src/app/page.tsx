@@ -60,8 +60,6 @@ class TerminalErrorBoundary extends Component<{ children: ReactNode }, { hasErro
   }
 }
 
-const ADMIN_SETUP_KEY = 'trade-bot-admin-2024';
-
 export default function Home() {
   const { data: session, status, update: updateSession } = useSession();
   const [view, setView] = useState<AppView>('auth');

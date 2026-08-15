@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic';
 import { useTerminalStore } from '@/lib/store';
 import { STRATEGIES, getStrategy } from '@/lib/strategies';
 import { cn } from '@/lib/utils';
-import { Menu, X, ChevronDown, BarChart3, RotateCcw, FileSpreadsheet, Loader2, TrendingUp, TrendingDown, Activity, Brain, Settings2 } from 'lucide-react';
+import { Menu, X, ChevronDown, BarChart3, Loader2, TrendingUp, TrendingDown, Activity, Brain, Settings2 } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
