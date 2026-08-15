@@ -7,7 +7,7 @@ import AuthScreen from '@/components/auth/auth-screen';
 import PaymentModal from '@/components/auth/payment-modal';
 import WarningModal from '@/components/warning-modal';
 import ActivityNotification from '@/components/activity-notification';
-import { Loader2, LogOut, Clock, Shield, Users, Settings, BookOpen } from 'lucide-react';
+import { Loader2, LogOut, Clock, Shield, BookOpen } from 'lucide-react';
 import AdminPaymentsPanel from '@/components/auth/admin-payments-panel';
 import ManualDialog from '@/components/manual-dialog';
 
@@ -200,12 +200,11 @@ function SubscriptionBar({ daysRemaining, username, pendingLabel, onLogout, onAd
     }`}>
       <div className="flex items-center gap-2 sm:gap-3 min-w-0">
         {onAdminPayments && (
-          <button onClick={onAdminPayments} className="flex items-center gap-1 text-amber-400/60 hover:text-amber-400 transition-colors shrink-0">
-            <Settings className="w-3 h-3" />
-            <span className="hidden sm:inline">Настройки</span>
-          </button>
+          <span className="flex items-center gap-1 text-amber-400/80 font-semibold shrink-0">
+            админ
+          </span>
         )}
-        {onManual && (
+        {onAdminPayments && onManual && (
           <button onClick={onManual} className="flex items-center gap-1 text-emerald-400/50 hover:text-emerald-400 transition-colors shrink-0">
             <BookOpen className="w-3 h-3" />
             <span className="hidden sm:inline">Справка</span>

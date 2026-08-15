@@ -1,11 +1,12 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { useSession } from 'next-auth/react';
 import dynamic from 'next/dynamic';
 import { useTerminalStore } from '@/lib/store';
 import { STRATEGIES, getStrategy } from '@/lib/strategies';
 import { cn } from '@/lib/utils';
-import { Menu, X, ChevronDown, BarChart3, RotateCcw, FileSpreadsheet, ShieldCheck, Loader2, TrendingUp, TrendingDown, Minus, Activity, Brain } from 'lucide-react';
+import { Menu, X, ChevronDown, BarChart3, RotateCcw, FileSpreadsheet, ShieldCheck, Loader2, TrendingUp, TrendingDown, Minus, Activity, Brain, Settings2, KeyRound } from 'lucide-react';
 import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
   AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
@@ -116,6 +117,16 @@ export default function TradingTerminal() {
   const [reportStrategyId, setReportStrategyId] = useState<string | null>(null);
   const [showMobilePanel, setShowMobilePanel] = useState<string | null>(null);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [showSettingsDialog, setShowSettingsDialog] = useState(false);
+  const [pwCurrent, setPwCurrent] = useState('');
+  const [pwNew, setPwNew] = useState('');
+  const [pwConfirm, setPwConfirm] = useState('');
+  const [pwError, setPwError] = useState('');
+  const [pwSuccess, setPwSuccess] = useState(false);
+  const [pwLoading, setPwLoading] = useState(false);
+
+  const { data: session } = useSession();
+  const isCurrentUserAdmin = (session?.user as any)?.username === 'admin';
 
   // Indicator state — derived from active strategy, with localStorage override
   const [indicators, setIndicators] = useState<Record<string, IndicatorConfig>>(() => {
@@ -611,16 +622,16 @@ export default function TradingTerminal() {
             <span className="text-[10px] font-medium tracking-wide hidden sm:inline">ОТЧЁТ</span>
           </button>
           <button
-            onClick={() => setShowAdminPanel(true)}
+            onClick={() => setShowSettingsDialog(true)}
             className={cn(
               'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all duration-200',
-              'bg-emerald-500/10 border-emerald-500/20 text-emerald-400/80',
-              'hover:bg-emerald-500/20 hover:border-emerald-500/30',
+              'bg-white/[0.04] border-white/[0.10] text-white/50',
+              'hover:bg-white/[0.08] hover:border-white/[0.15] hover:text-white/70',
             )}
-            title="Админ-панель"
+            title="Настройки"
           >
-            <ShieldCheck className="w-3.5 h-3.5" />
-            <span className="text-[10px] font-medium tracking-wide hidden sm:inline">АДМИН</span>
+            <Settings2 className="w-3.5 h-3.5" />
+            <span className="text-[10px] font-medium tracking-wide hidden sm:inline">НАСТРОЙКИ</span>
           </button>
         </div>
       </header>
@@ -829,6 +840,115 @@ export default function TradingTerminal() {
 
         {/* Admin Panel */}
         <AdminPanel open={showAdminPanel} onClose={() => setShowAdminPanel(false)} />
+
+        {/* Settings Dialog */}
+        <Dialog open={showSettingsDialog} onOpenChange={(open) => {
+          if (!open) {
+            setShowSettingsDialog(false);
+            setPwCurrent('');
+            setPwNew('');
+            setPwConfirm('');
+            setPwError('');
+            setPwSuccess(false);
+          }
+        }}>
+          <DialogContent className="bg-[#0d0d14] border border-white/[0.08] sm:max-w-[400px]">
+            <DialogHeader>
+              <DialogTitle className="text-white/90">Настройки</DialogTitle>
+              <DialogDescription className="text-white/40">Управление аккаунтом</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 mt-2">
+              {/* Password Change Section */}
+              <div className="space-y-3">
+                <h3 className="text-xs font-semibold text-white/60 flex items-center gap-2">
+                  <KeyRound className="w-3.5 h-3.5" />
+                  Смена пароля
+                </h3>
+                <input
+                  type="password"
+                  placeholder="Текущий пароль"
+                  value={pwCurrent}
+                  onChange={(e) => { setPwCurrent(e.target.value); setPwError(''); }}
+                  className="w-full h-9 px-3 rounded-lg bg-white/[0.04] border border-white/[0.08] text-white/90 text-xs placeholder:text-white/25 focus:outline-none focus:border-white/20"
+                />
+                <input
+                  type="password"
+                  placeholder="Новый пароль"
+                  value={pwNew}
+                  onChange={(e) => { setPwNew(e.target.value); setPwError(''); }}
+                  className="w-full h-9 px-3 rounded-lg bg-white/[0.04] border border-white/[0.08] text-white/90 text-xs placeholder:text-white/25 focus:outline-none focus:border-white/20"
+                />
+                <input
+                  type="password"
+                  placeholder="Подтвердите новый пароль"
+                  value={pwConfirm}
+                  onChange={(e) => { setPwConfirm(e.target.value); setPwError(''); }}
+                  className="w-full h-9 px-3 rounded-lg bg-white/[0.04] border border-white/[0.08] text-white/90 text-xs placeholder:text-white/25 focus:outline-none focus:border-white/20"
+                />
+                {pwError && <p className="text-[11px] text-red-400">{pwError}</p>}
+                {pwSuccess && <p className="text-[11px] text-emerald-400">Пароль успешно изменён</p>}
+                <button
+                  onClick={async () => {
+                    if (!pwCurrent || !pwNew || !pwConfirm) {
+                      setPwError('Заполните все поля');
+                      return;
+                    }
+                    if (pwNew !== pwConfirm) {
+                      setPwError('Пароли не совпадают');
+                      return;
+                    }
+                    setPwLoading(true);
+                    setPwError('');
+                    setPwSuccess(false);
+                    try {
+                      const res = await fetch('/api/change-password', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ currentPassword: pwCurrent, newPassword: pwNew }),
+                      });
+                      const data = await res.json();
+                      if (data.success) {
+                        setPwSuccess(true);
+                        setPwCurrent('');
+                        setPwNew('');
+                        setPwConfirm('');
+                      } else {
+                        setPwError(data.error || 'Ошибка');
+                      }
+                    } catch {
+                      setPwError('Ошибка сети');
+                    } finally {
+                      setPwLoading(false);
+                    }
+                  }}
+                  disabled={pwLoading}
+                  className="w-full h-9 rounded-lg bg-white/[0.06] border border-white/[0.10] text-white/70 text-xs font-medium hover:bg-white/[0.10] transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {pwLoading && <Loader2 className="w-3 h-3 animate-spin" />}
+                  Сменить пароль
+                </button>
+              </div>
+
+              {/* Admin Panel Button */}
+              {isCurrentUserAdmin && (
+                <>
+                  <div className="border-t border-white/[0.06] pt-4">
+                    <button
+                      onClick={() => {
+                        setShowSettingsDialog(false);
+                        setShowAdminPanel(true);
+                      }}
+                      className="w-full h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-medium hover:bg-emerald-500/20 transition-colors flex items-center justify-center gap-2"
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                      Админ-панель
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

@@ -27,8 +27,6 @@ import {
   Settings2,
   Loader2,
   Check,
-  Eye,
-  EyeOff,
   Copy,
   Plus,
   Trash2,
@@ -37,6 +35,9 @@ import {
   KeyRound,
   RefreshCw,
   AlertCircle,
+  Zap,
+  UserMinus,
+  UserPlus,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -835,8 +836,8 @@ function UsersTab() {
   const [userStats, setUserStats] = useState<Record<string, UserStats>>({});
   const [loading, setLoading] = useState(false);
   const [statsLoading, setStatsLoading] = useState(false);
-  const [showPasswordId, setShowPasswordId] = useState<string | null>(null);
   const [resettingId, setResettingId] = useState<string | null>(null);
+  const [extendingSubId, setExtendingSubId] = useState<string | null>(null);
   const [newPasswords, setNewPasswords] = useState<Record<string, string>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -876,6 +877,11 @@ function UsersTab() {
   useEffect(() => {
     fetchUsers();
     fetchStats();
+    // Auto-refresh stats every 30 seconds
+    const interval = setInterval(() => {
+      fetchStats();
+    }, 30_000);
+    return () => clearInterval(interval);
   }, [fetchUsers, fetchStats]);
 
   const handleResetPassword = useCallback(async (userId: string) => {
@@ -889,7 +895,6 @@ function UsersTab() {
       const data = await res.json();
       if (data.success && data.newPassword) {
         setNewPasswords(prev => ({ ...prev, [userId]: data.newPassword }));
-        setShowPasswordId(userId);
       }
     } catch (err) {
       console.error('Failed to reset password:', err);
@@ -912,6 +917,22 @@ function UsersTab() {
       setDeletingId(null);
     }
   }, []);
+
+  const handleExtendSubscription = useCallback(async (userId: string) => {
+    setExtendingSubId(userId);
+    try {
+      await fetch('/api/admin/extend-subscription', {
+        method: 'POST',
+        headers: ADMIN_HEADERS,
+        body: JSON.stringify({ userId, days: 30 }),
+      });
+      fetchUsers();
+    } catch (err) {
+      console.error('Failed to extend subscription:', err);
+    } finally {
+      setExtendingSubId(null);
+    }
+  }, [fetchUsers]);
 
   const handleCopy = useCallback(async (text: string, id: string) => {
     try {
@@ -954,6 +975,13 @@ function UsersTab() {
             <span className="text-[11px] text-white/40 font-mono">
               {loading ? 'Загрузка...' : `${users.length} пользователей`}
             </span>
+            <span className="flex items-center gap-1.5">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+              </span>
+              <span className="text-[10px] text-emerald-400/70 font-mono">Live</span>
+            </span>
             {statsLoading && <Loader2 className="w-3 h-3 text-white/20 animate-spin" />}
           </div>
           <button
@@ -993,12 +1021,12 @@ function UsersTab() {
               <tbody>
                 {users.map(user => {
                   const isNewPassword = !!newPasswords[user.id];
-                  const isShowingPassword = showPasswordId === user.id;
+                  const isBcryptHash = user.password.startsWith('$2');
                   const displayPassword = isNewPassword
                     ? newPasswords[user.id]
-                    : isShowingPassword
-                      ? user.password
-                      : '•'.repeat(12);
+                    : isBcryptHash
+                      ? '—'
+                      : user.password;
 
                   return (
                     <tr key={user.id} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
@@ -1017,15 +1045,25 @@ function UsersTab() {
                         </span>
                       </td>
                       <td className="py-2.5 px-3">
-                        {user.subscription?.isActive ? (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
-                            Активна
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-500/15 text-red-400 border border-red-500/20">
-                            Истекла
-                          </span>
-                        )}
+                        <div className="flex items-center gap-1.5">
+                          {user.subscription?.isActive ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
+                              Активна
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-500/15 text-red-400 border border-red-500/20">
+                              Истекла
+                            </span>
+                          )}
+                          <button
+                            onClick={() => handleExtendSubscription(user.id)}
+                            disabled={extendingSubId === user.id}
+                            className="w-5 h-5 rounded flex items-center justify-center text-emerald-400/50 hover:text-emerald-400 transition-colors disabled:opacity-40"
+                            title="Продлить +30д"
+                          >
+                            {extendingSubId === user.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                          </button>
+                        </div>
                       </td>
                       {/* PnL */}
                       <td className="py-2.5 px-3 text-right">
@@ -1074,17 +1112,10 @@ function UsersTab() {
                         <div className="flex items-center gap-1.5">
                           <span className={cn(
                             'text-[10px] truncate max-w-[100px]',
-                            isNewPassword ? 'text-emerald-400 font-semibold' : isShowingPassword ? 'text-white/40' : 'text-white/20',
+                            isNewPassword ? 'text-emerald-400 font-semibold' : 'text-white/20',
                           )}>
                             {displayPassword}
                           </span>
-                          <button
-                            onClick={() => setShowPasswordId(isShowingPassword ? null : user.id)}
-                            className="w-5 h-5 rounded flex items-center justify-center text-white/20 hover:text-white/50 transition-colors"
-                            title={isShowingPassword ? 'Скрыть' : 'Показать'}
-                          >
-                            {isShowingPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                          </button>
                           {isNewPassword && (
                             <button
                               onClick={() => handleCopy(newPasswords[user.id], user.id)}
@@ -1098,7 +1129,7 @@ function UsersTab() {
                             onClick={() => handleResetPassword(user.id)}
                             disabled={resettingId === user.id}
                             className="w-5 h-5 rounded flex items-center justify-center text-amber-400/60 hover:text-amber-400 transition-colors disabled:opacity-40"
-                            title="Сбросить пароль"
+                            title="Пересоздать пароль"
                           >
                             {resettingId === user.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
                           </button>
@@ -1442,6 +1473,206 @@ function DemoTab() {
 }
 
 // ============================================================
+// ActionsTab — bulk admin actions
+// ============================================================
+
+function ActionsTab() {
+  const [resetLoading, setResetLoading] = useState(false);
+  const [deleteDemosLoading, setDeleteDemosLoading] = useState(false);
+  const [createDemosLoading, setCreateDemosLoading] = useState(false);
+  const [resetResult, setResetResult] = useState<string | null>(null);
+  const [deleteResult, setDeleteResult] = useState<string | null>(null);
+  const [createResult, setCreateResult] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<string | null>(null);
+
+  const handleResetAll = useCallback(async () => {
+    setResetLoading(true);
+    setResetResult(null);
+    setConfirmAction(null);
+    try {
+      const res = await fetch('/api/admin/reset-all-accounts', {
+        method: 'POST',
+        headers: ADMIN_HEADERS,
+      });
+      const data = await res.json();
+      setResetResult(`Сброшено аккаунтов: ${data.resetCount ?? 'N/A'}`);
+    } catch {
+      setResetResult('Ошибка при сбросе');
+    } finally {
+      setResetLoading(false);
+    }
+  }, []);
+
+  const handleDeleteDemos = useCallback(async () => {
+    setDeleteDemosLoading(true);
+    setDeleteResult(null);
+    setConfirmAction(null);
+    try {
+      const res = await fetch('/api/admin/delete-demo-accounts', {
+        method: 'POST',
+        headers: ADMIN_HEADERS,
+      });
+      const data = await res.json();
+      setDeleteResult(`Удалено демо аккаунтов: ${data.deletedCount ?? 'N/A'}`);
+    } catch {
+      setDeleteResult('Ошибка при удалении');
+    } finally {
+      setDeleteDemosLoading(false);
+    }
+  }, []);
+
+  const handleCreateDemos = useCallback(async () => {
+    setCreateDemosLoading(true);
+    setCreateResult(null);
+    setConfirmAction(null);
+    try {
+      const res = await fetch('/api/admin/create-demo-accounts', {
+        method: 'POST',
+        headers: ADMIN_HEADERS,
+      });
+      const data = await res.json();
+      setCreateResult(`Создано аккаунтов: ${data.count ?? 'N/A'}`);
+    } catch {
+      setCreateResult('Ошибка при создании');
+    } finally {
+      setCreateDemosLoading(false);
+    }
+  }, []);
+
+  return (
+    <ScrollArea className="h-[calc(100vh-200px)] sm:h-[calc(100vh-160px)] pr-2">
+      <div className="space-y-4 pb-8 max-w-2xl mx-auto">
+        {/* Header */}
+        <div className="rounded-xl border border-red-500/15 bg-red-500/[0.03] p-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-red-500/10 border border-red-500/20">
+              <Zap className="w-5 h-5 text-red-400" />
+            </div>
+            <div>
+              <div className="text-base font-bold text-red-400">Массовые действия</div>
+              <div className="text-[11px] text-white/30 mt-0.5">Операции, влияющие на все аккаунты. Будьте осторожны.</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Confirm Dialog */}
+        {confirmAction && (
+          <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.05] p-4 animate-in fade-in">
+            <p className="text-[12px] text-amber-400 font-medium mb-3">
+              {confirmAction === 'reset' && 'Вы уверены? Все торговые данные будут сброшены, балансы установлены в $1000.'}
+              {confirmAction === 'delete-demos' && 'Вы уверены? Все демо аккаунты (demo*@tradepro.bot) будут удалены безвозвратно.'}
+              {confirmAction === 'create-demos' && 'Существующие демо аккаунты будут удалены и созданы 10 новых с балансом $1000.'}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  if (confirmAction === 'reset') handleResetAll();
+                  else if (confirmAction === 'delete-demos') handleDeleteDemos();
+                  else if (confirmAction === 'create-demos') handleCreateDemos();
+                }}
+                className="px-3 py-1.5 rounded-lg bg-red-500/15 border border-red-500/25 text-red-400 text-[11px] font-medium hover:bg-red-500/25 transition-colors"
+              >
+                Подтвердить
+              </button>
+              <button
+                onClick={() => setConfirmAction(null)}
+                className="px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.08] text-white/50 text-[11px] font-medium hover:bg-white/[0.08] transition-colors"
+              >
+                Отмена
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Action 1: Reset all accounts */}
+        <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-amber-500/10 border border-amber-500/20">
+                <RotateCcw className="w-4 h-4 text-amber-400" />
+              </div>
+              <div>
+                <div className="text-[13px] font-semibold text-white/80">Перезапустить все аккаунты</div>
+                <div className="text-[11px] text-white/30 mt-0.5">Сбросить торги, установить баланс $1000 для каждого</div>
+              </div>
+            </div>
+            <button
+              onClick={() => setConfirmAction('reset')}
+              disabled={resetLoading}
+              className="h-8 px-3 rounded-lg bg-amber-500/15 border border-amber-500/25 text-amber-400 text-[11px] font-medium hover:bg-amber-500/25 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+            >
+              {resetLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+              Выполнить
+            </button>
+          </div>
+          {resetResult && (
+            <div className="mt-2 px-3 py-1.5 rounded-lg bg-amber-500/[0.05] text-[11px] text-amber-400/80 font-mono">
+              {resetResult}
+            </div>
+          )}
+        </div>
+
+        {/* Action 2: Delete demo accounts */}
+        <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-red-500/10 border border-red-500/20">
+                <UserMinus className="w-4 h-4 text-red-400" />
+              </div>
+              <div>
+                <div className="text-[13px] font-semibold text-white/80">Удалить демо аккаунты</div>
+                <div className="text-[11px] text-white/30 mt-0.5">Удалить все demo*@tradepro.bot аккаунты и их данные</div>
+              </div>
+            </div>
+            <button
+              onClick={() => setConfirmAction('delete-demos')}
+              disabled={deleteDemosLoading}
+              className="h-8 px-3 rounded-lg bg-red-500/15 border border-red-500/25 text-red-400 text-[11px] font-medium hover:bg-red-500/25 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+            >
+              {deleteDemosLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+              Выполнить
+            </button>
+          </div>
+          {deleteResult && (
+            <div className="mt-2 px-3 py-1.5 rounded-lg bg-red-500/[0.05] text-[11px] text-red-400/80 font-mono">
+              {deleteResult}
+            </div>
+          )}
+        </div>
+
+        {/* Action 3: Create 10 demo accounts */}
+        <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-emerald-500/10 border border-emerald-500/20">
+                <UserPlus className="w-4 h-4 text-emerald-400" />
+              </div>
+              <div>
+                <div className="text-[13px] font-semibold text-white/80">Создать 10 демо + начать торговлю</div>
+                <div className="text-[11px] text-white/30 mt-0.5">Удалить старые демо, создать 10 новых с подпиской 30д и балансом $1000</div>
+              </div>
+            </div>
+            <button
+              onClick={() => setConfirmAction('create-demos')}
+              disabled={createDemosLoading}
+              className="h-8 px-3 rounded-lg bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 text-[11px] font-medium hover:bg-emerald-500/25 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+            >
+              {createDemosLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+              Выполнить
+            </button>
+          </div>
+          {createResult && (
+            <div className="mt-2 px-3 py-1.5 rounded-lg bg-emerald-500/[0.05] text-[11px] text-emerald-400/80 font-mono">
+              {createResult}
+            </div>
+          )}
+        </div>
+      </div>
+    </ScrollArea>
+  );
+}
+
+// ============================================================
 // Main AdminPanel component
 // ============================================================
 
@@ -1619,6 +1850,13 @@ export default function AdminPanel({ open, onClose }: AdminPanelProps) {
                   <KeyRound className="w-3 h-3 mr-1.5" />
                   Демо доступ
                 </TabsTrigger>
+                <TabsTrigger
+                  value="actions"
+                  className="text-[11px] font-medium px-3 py-2 rounded-lg data-[state=active]:bg-red-500/15 data-[state=active]:text-red-400 data-[state=active]:shadow-none"
+                >
+                  <Zap className="w-3 h-3 mr-1.5" />
+                  Действия
+                </TabsTrigger>
               </TabsList>
 
               {/* System tab */}
@@ -1650,6 +1888,11 @@ export default function AdminPanel({ open, onClose }: AdminPanelProps) {
               {/* Demo tab */}
               <TabsContent value="demo" className="flex-1 mt-0 px-4 sm:px-6 overflow-y-auto custom-scrollbar">
                 <DemoTab />
+              </TabsContent>
+
+              {/* Actions tab */}
+              <TabsContent value="actions" className="flex-1 mt-0 px-4 sm:px-6 overflow-y-auto custom-scrollbar">
+                <ActionsTab />
               </TabsContent>
             </Tabs>
           </div>
