@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Loader2, Check, X, CreditCard, XCircle, RefreshCw, Trash2,
+  Loader2, Check, X, CreditCard, XCircle, RefreshCw, Trash2, Plus,
   Users, DollarSign, Clock, ExternalLink, ChevronLeft, Mail, UserIcon, Shield, Calendar,
   UserCog, Copy, KeyRound, TrendingUp, Wallet, Zap,
 } from 'lucide-react';
@@ -129,6 +129,10 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
   const [resetPasswordLoading, setResetPasswordLoading] = useState(false);
   const [newPassword, setNewPassword] = useState<string | null>(null);
 
+  // Extend subscription state
+  const [extendLoading, setExtendLoading] = useState(false);
+  const [extendResult, setExtendResult] = useState<string | null>(null);
+
   // Demo accounts state
   const [demoAccounts, setDemoAccounts] = useState<DemoAccount[]>([]);
   const [demoLoading, setDemoLoading] = useState(false);
@@ -196,6 +200,7 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
     setUserPending([]);
     setNewPassword(null);
     setTradingStates([]);
+    setExtendResult(null);
   }, []);
 
   const handleInitTrading = async () => {
@@ -302,6 +307,32 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
       }
     } catch {}
     setResetPasswordLoading(false);
+  };
+
+  const handleExtendSubscription = async (userId: string) => {
+    setExtendLoading(true);
+    setExtendResult(null);
+    try {
+      const res = await fetch('/api/admin/extend-subscription', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ADMIN_KEY}` },
+        body: JSON.stringify({ userId, days: 30 }),
+      });
+      if (res.ok) {
+        setExtendResult('Подписка продлена на 30 дней');
+        // Refresh data
+        if (selectedUserId) await fetchUserDetail(selectedUserId);
+        await fetchUsers();
+        setTimeout(() => setExtendResult(null), 3000);
+      } else {
+        setExtendResult('Ошибка при продлении');
+        setTimeout(() => setExtendResult(null), 3000);
+      }
+    } catch {
+      setExtendResult('Ошибка сети');
+      setTimeout(() => setExtendResult(null), 3000);
+    }
+    setExtendLoading(false);
   };
 
   const handleCreateDemo = async () => {
@@ -504,6 +535,19 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
                 </div>
               ) : (
                 <p className="text-xs text-white/30">Нет подписки</p>
+              )}
+              {extendResult && (
+                <div className={`text-[11px] px-3 py-2 rounded-lg text-center ${extendResult.includes('Ошибка') ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}`}>{extendResult}</div>
+              )}
+              {u.role !== 'admin' && (
+                <button
+                  onClick={() => handleExtendSubscription(u.id)}
+                  disabled={extendLoading || u.role === 'admin'}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2.5 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
+                >
+                  {extendLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                  Продлить подписку +30 дней
+                </button>
               )}
             </div>
 
@@ -856,7 +900,20 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
                         )}
                       </div>
                     </div>
-                    <ChevronLeft className="w-3.5 h-3.5 text-white/20 rotate-180 shrink-0" />
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {user.role !== 'admin' && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleExtendSubscription(user.id); }}
+                          disabled={extendLoading}
+                          className="flex items-center gap-1 px-2 py-1 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 rounded-lg text-[10px] font-medium transition-colors disabled:opacity-50"
+                          title="Продлить +30д"
+                        >
+                          {extendLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                          +30д
+                        </button>
+                      )}
+                      <ChevronLeft className="w-3.5 h-3.5 text-white/20 rotate-180 shrink-0" />
+                    </div>
                   </div>
                 </button>
               ))
