@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useSession } from 'next-auth/react';
 import { STRATEGIES, type StrategyConfig } from '@/lib/strategies';
 import { invalidateSettingsCache } from '@/lib/settings-cache';
 import { Slider } from '@/components/ui/slider';
@@ -1682,6 +1683,8 @@ interface AdminPanelProps {
 }
 
 export default function AdminPanel({ open, onClose }: AdminPanelProps) {
+  const { data: session } = useSession();
+  const isAdmin = (session?.user as any)?.username === 'admin';
   const [dbSettings, setDbSettings] = useState<Record<string, string>>({});
   const [pendingChanges, setPendingChanges] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -1782,8 +1785,8 @@ export default function AdminPanel({ open, onClose }: AdminPanelProps) {
               <ShieldCheck className="w-4 h-4 text-emerald-400" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-white/90">Админ-панель</h2>
-              <p className="text-[10px] text-white/30">Управление параметрами стратегий и системы</p>
+              <h2 className="text-sm font-bold text-white/90">Настройки</h2>
+              <p className="text-[10px] text-white/30">Параметры стратегий и системы</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -1836,27 +1839,33 @@ export default function AdminPanel({ open, onClose }: AdminPanelProps) {
                     <span className={activeTab === s.id ? s.color : ''}>{s.name}</span>
                   </TabsTrigger>
                 ))}
-                <TabsTrigger
-                  value="users"
-                  className="text-[11px] font-medium px-3 py-2 rounded-lg data-[state=active]:bg-blue-500/15 data-[state=active]:text-blue-400 data-[state=active]:shadow-none"
-                >
-                  <Users className="w-3 h-3 mr-1.5" />
-                  Пользователи
-                </TabsTrigger>
-                <TabsTrigger
-                  value="demo"
-                  className="text-[11px] font-medium px-3 py-2 rounded-lg data-[state=active]:bg-amber-500/15 data-[state=active]:text-amber-400 data-[state=active]:shadow-none"
-                >
-                  <KeyRound className="w-3 h-3 mr-1.5" />
-                  Демо доступ
-                </TabsTrigger>
-                <TabsTrigger
-                  value="actions"
-                  className="text-[11px] font-medium px-3 py-2 rounded-lg data-[state=active]:bg-red-500/15 data-[state=active]:text-red-400 data-[state=active]:shadow-none"
-                >
-                  <Zap className="w-3 h-3 mr-1.5" />
-                  Действия
-                </TabsTrigger>
+                {isAdmin && (
+                  <TabsTrigger
+                    value="users"
+                    className="text-[11px] font-medium px-3 py-2 rounded-lg data-[state=active]:bg-blue-500/15 data-[state=active]:text-blue-400 data-[state=active]:shadow-none"
+                  >
+                    <Users className="w-3 h-3 mr-1.5" />
+                    Пользователи
+                  </TabsTrigger>
+                )}
+                {isAdmin && (
+                  <TabsTrigger
+                    value="demo"
+                    className="text-[11px] font-medium px-3 py-2 rounded-lg data-[state=active]:bg-amber-500/15 data-[state=active]:text-amber-400 data-[state=active]:shadow-none"
+                  >
+                    <KeyRound className="w-3 h-3 mr-1.5" />
+                    Демо доступ
+                  </TabsTrigger>
+                )}
+                {isAdmin && (
+                  <TabsTrigger
+                    value="actions"
+                    className="text-[11px] font-medium px-3 py-2 rounded-lg data-[state=active]:bg-red-500/15 data-[state=active]:text-red-400 data-[state=active]:shadow-none"
+                  >
+                    <Zap className="w-3 h-3 mr-1.5" />
+                    Действия
+                  </TabsTrigger>
+                )}
               </TabsList>
 
               {/* System tab */}
@@ -1880,20 +1889,22 @@ export default function AdminPanel({ open, onClose }: AdminPanelProps) {
                 </TabsContent>
               ))}
 
-              {/* Users tab */}
-              <TabsContent value="users" className="flex-1 mt-0 px-4 sm:px-6 overflow-y-auto custom-scrollbar">
-                <UsersTab />
-              </TabsContent>
-
-              {/* Demo tab */}
-              <TabsContent value="demo" className="flex-1 mt-0 px-4 sm:px-6 overflow-y-auto custom-scrollbar">
-                <DemoTab />
-              </TabsContent>
-
-              {/* Actions tab */}
-              <TabsContent value="actions" className="flex-1 mt-0 px-4 sm:px-6 overflow-y-auto custom-scrollbar">
-                <ActionsTab />
-              </TabsContent>
+              {/* Admin-only tabs */}
+              {isAdmin && (
+                <TabsContent value="users" className="flex-1 mt-0 px-4 sm:px-6 overflow-y-auto custom-scrollbar">
+                  <UsersTab />
+                </TabsContent>
+              )}
+              {isAdmin && (
+                <TabsContent value="demo" className="flex-1 mt-0 px-4 sm:px-6 overflow-y-auto custom-scrollbar">
+                  <DemoTab />
+                </TabsContent>
+              )}
+              {isAdmin && (
+                <TabsContent value="actions" className="flex-1 mt-0 px-4 sm:px-6 overflow-y-auto custom-scrollbar">
+                  <ActionsTab />
+                </TabsContent>
+              )}
             </Tabs>
           </div>
         )}
