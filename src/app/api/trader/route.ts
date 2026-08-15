@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, getTotalClosedPnl, getClosedTradeCount, openTrade, closeTrade, partialCloseTrade, updateStopLoss, updateTakeProfit, updateBalance, initUserTradingData, getClosedTrades } from '@/lib/db';
+import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, getTotalClosedPnl, getClosedTradeCount, openTrade, closeTrade, updateStopLoss, updateTakeProfit, updateBalance, initUserTradingData, getClosedTrades } from '@/lib/db';
 import { fetchKlines, makeStrategyDecision, fetchTopSymbols } from '@/lib/trading-engine';
 import { getAuthUserId } from '@/lib/auth-helpers';
 import { getStrategy } from '@/lib/strategies';
@@ -35,11 +35,11 @@ export async function GET(request: NextRequest) {
     try {
       const allClosed = await getClosedTrades(userId, strategyId);
       const closedPnlSum = allClosed.reduce((s, t) => s + (t.pnl ?? 0), 0);
-      const openAmountSum = openTrades.reduce((s, t) => s + (t.remaining_amount ?? t.amount), 0);
-      const initialDeposit = Number(state.initial_balance ?? 100);
-      const correctBalance = Math.max(0, initialDeposit + closedPnlSum - openAmountSum);
+      const openAmountSum = openTrades.reduce((s, t) => s + t.amount, 0);
+      const INITIAL_DEPOSIT = 100;
+      const correctBalance = Math.max(0, INITIAL_DEPOSIT + closedPnlSum - openAmountSum);
       if (Math.abs(state.balance - correctBalance) > 0.01) {
-        console.log(`[trader GET] Balance self-heal: ${state.balance.toFixed(2)} → ${correctBalance.toFixed(2)} (initial=$${initialDeposit} + pnl=${closedPnlSum.toFixed(2)} - open=${openAmountSum.toFixed(2)})`);
+        console.log(`[trader GET] Balance self-heal: ${state.balance.toFixed(2)} → ${correctBalance.toFixed(2)} (initial=$${INITIAL_DEPOSIT} + pnl=${closedPnlSum.toFixed(2)} - open=${openAmountSum.toFixed(2)})`);
         await updateBalance(userId, correctBalance, strategyId);
         state.balance = correctBalance;
       }
@@ -112,16 +112,13 @@ export async function POST(request: NextRequest) {
 
       if (amount <= 0) return NextResponse.json({ error: 'Invalid amount' }, { status: 400 });
 
-      const state = await getTraderState(userId, strategyId);
-
       // Validate trade parameters
-      const maxAllowedLeverage = 5;
+      const maxAllowedLeverage = 3;
       if (leverage > maxAllowedLeverage) {
         return NextResponse.json({ error: `Максимальное плечо: ${maxAllowedLeverage}x` }, { status: 400 });
       }
-      const dynamicMaxAmount = Math.max(5, state.balance * 0.25);
-      if (amount > dynamicMaxAmount) {
-        return NextResponse.json({ error: `Максимальная сумма сделки: 25% баланса ( currently $${dynamicMaxAmount.toFixed(2)} )` }, { status: 400 });
+      if (amount > 500) {
+        return NextResponse.json({ error: 'Максимальная сумма сделки: $500' }, { status: 400 });
       }
       if (stopLoss <= 0 || takeProfit <= 0) {
         return NextResponse.json({ error: 'SL и TP должны быть больше 0' }, { status: 400 });
@@ -129,13 +126,14 @@ export async function POST(request: NextRequest) {
       // Check SL/TP distances are reasonable
       const slDist = Math.abs(entryPrice - stopLoss) / entryPrice;
       const tpDist = Math.abs(takeProfit - entryPrice) / entryPrice;
-      if (slDist > 0.10) {
-        return NextResponse.json({ error: 'Stop-loss слишком далёкий (макс. 10%)' }, { status: 400 });
+      if (slDist > 0.08) {
+        return NextResponse.json({ error: 'Stop-loss слишком далёкий (макс. 8%)' }, { status: 400 });
       }
       if (tpDist > 0.20) {
         return NextResponse.json({ error: 'Take-profit слишком далёкий (макс. 20%)' }, { status: 400 });
       }
 
+      const state = await getTraderState(userId, strategyId);
       if (state.balance < amount) {
         return NextResponse.json({ error: 'Insufficient balance' }, { status: 400 });
       }
@@ -155,13 +153,14 @@ export async function POST(request: NextRequest) {
       const priceChange = trade.direction === 'long'
         ? (exitPrice - trade.entry_price) / trade.entry_price
         : (trade.entry_price - exitPrice) / trade.entry_price;
-      const effectiveAmt = trade.remaining_amount ?? trade.amount;
-      const pnl = effectiveAmt * priceChange * trade.leverage - effectiveAmt * 0.001 - (effectiveAmt / trade.leverage) * 0.001;
+      const notional = trade.amount * trade.leverage;
+      const fee = notional * 0.001 * 2; // 0.1% taker fee × 2 (open + close)
+      const pnl = trade.amount * priceChange * trade.leverage - fee;
 
       await closeTrade(tradeId, exitPrice, pnl);
 
       const state = await getTraderState(userId, strategyId);
-      const newBalance = Math.max(0, state.balance + effectiveAmt + pnl);
+      const newBalance = Math.max(0, state.balance + trade.amount + pnl);
 
       await updateBalance(userId, newBalance, strategyId);
 
@@ -196,7 +195,8 @@ export async function POST(request: NextRequest) {
             const isLong = trade.direction === 'long';
             const slBad = isLong ? trade.stop_loss >= trade.entry_price : trade.stop_loss <= trade.entry_price;
             const tpBad = isLong ? trade.take_profit <= trade.entry_price : trade.take_profit >= trade.entry_price;
-            if (slBad || tpBad) {              // SL/TP inverted — silently repair
+            if (slBad || tpBad) {
+              console.warn(`[monitor-trades] Auto-repairing inverted SL/TP for ${trade.id}: dir=${trade.direction} entry=${trade.entry_price} SL=${trade.stop_loss} TP=${trade.take_profit}`);
               if (slBad) {
                 const fixedSL = isLong ? Math.round(trade.entry_price * 0.98 * 1e8) / 1e8 : Math.round(trade.entry_price * 1.02 * 1e8) / 1e8;
                 await updateStopLoss(trade.id, fixedSL);
@@ -209,31 +209,7 @@ export async function POST(request: NextRequest) {
               }
               needsRepair = true;
             }
-            // Also cap excessive distances (>10%)
-            if (trade.take_profit) {
-              const tpDist = Math.abs(trade.take_profit - trade.entry_price) / trade.entry_price;
-              if (tpDist > 0.10) {
-                const cappedTP = isLong
-                  ? Math.round((trade.entry_price * 1.10) * 1e8) / 1e8
-                  : Math.round((trade.entry_price * 0.90) * 1e8) / 1e8;
-                console.warn(`[monitor-trades] Capping excessive TP for ${trade.id}: ${trade.take_profit} -> ${cappedTP}`);
-                await updateTakeProfit(trade.id, cappedTP);
-                trade.take_profit = cappedTP;
-                needsRepair = true;
-              }
-            }
-            if (trade.stop_loss) {
-              const slDist = Math.abs(trade.stop_loss - trade.entry_price) / trade.entry_price;
-              if (slDist > 0.05) {
-                const cappedSL = isLong
-                  ? Math.round((trade.entry_price * 0.95) * 1e8) / 1e8
-                  : Math.round((trade.entry_price * 1.05) * 1e8) / 1e8;
-                console.warn(`[monitor-trades] Capping excessive SL for ${trade.id}: ${trade.stop_loss} -> ${cappedSL}`);
-                await updateStopLoss(trade.id, cappedSL);
-                trade.stop_loss = cappedSL;
-                needsRepair = true;
-              }
-            }
+            // No TP/SL distance caps — strategies set their own R:R ratios
           }
           if (needsRepair) continue; // skip TP/SL check this cycle, repaired next cycle
 
@@ -244,17 +220,13 @@ export async function POST(request: NextRequest) {
           const klineData = await klineRes.json();
           if (!Array.isArray(klineData) || klineData.length < 1) continue;
           const completedCandle = klineData.length >= 2 ? klineData[0] : klineData[klineData.length - 1];
-          const candleClose = parseFloat(String(completedCandle[4]));
           const candleHigh = parseFloat(String(completedCandle[2]));
           const candleLow = parseFloat(String(completedCandle[3]));
-          // Also get current in-progress candle for live checks
-          const currentCandle = klineData.length >= 2 ? klineData[1] : completedCandle;
-          const currentHigh = parseFloat(String(currentCandle[2]));
-          const currentLow = parseFloat(String(currentCandle[3]));
+          const candleClose = parseFloat(String(completedCandle[4]));
 
           let shouldClose = false;
           let reason = '';
-          let exitPrice = 0;
+          let exitPrice = candleClose;
 
           // TIME-BASED EXIT: close losing trades after maxHoldMinutes
           const openMs = Date.now() - new Date(trade.opened_at).getTime();
@@ -270,70 +242,34 @@ export async function POST(request: NextRequest) {
             }
           }
 
-          // Check TP using HIGH/LOW (wicks) on both completed and current candles
-          // For LONG: TP triggers if HIGH >= TP (not just close >= TP)
-          // For SHORT: TP triggers if LOW <= TP (not just close <= TP)
-          const isLong = trade.direction === 'long';
+          // Check TP/SL using HIGH/LOW (wicks), not just CLOSE
           if (!shouldClose && trade.take_profit) {
-            if (isLong) {
-              if (candleHigh >= trade.take_profit || currentHigh >= trade.take_profit) {
-                shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
-              }
-            } else {
-              if (candleLow <= trade.take_profit || currentLow <= trade.take_profit) {
-                shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
-              }
+            if (trade.direction === 'long' && candleHigh >= trade.take_profit) {
+              shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
+            } else if (trade.direction === 'short' && candleLow <= trade.take_profit) {
+              shouldClose = true; reason = 'TP hit'; exitPrice = trade.take_profit;
             }
           }
-
-          // Check SL using HIGH/LOW (wicks) on both completed and current candles
-          // For LONG: SL triggers if LOW <= SL (not just close <= SL)
-          // For SHORT: SL triggers if HIGH >= SL (not just close >= SL)
           if (!shouldClose && trade.stop_loss) {
-            if (isLong) {
-              if (candleLow <= trade.stop_loss || currentLow <= trade.stop_loss) {
-                shouldClose = true; reason = 'SL hit'; exitPrice = trade.stop_loss;
-              }
-            } else {
-              if (candleHigh >= trade.stop_loss || currentHigh >= trade.stop_loss) {
-                shouldClose = true; reason = 'SL hit'; exitPrice = trade.stop_loss;
-              }
+            if (trade.direction === 'long' && candleLow <= trade.stop_loss) {
+              shouldClose = true; reason = 'SL hit'; exitPrice = trade.stop_loss;
+            } else if (trade.direction === 'short' && candleHigh >= trade.stop_loss) {
+              shouldClose = true; reason = 'SL hit'; exitPrice = trade.stop_loss;
             }
-          }
-
-          // Live ticker price fallback — catches intra-candle moves between kline polls
-          if (!shouldClose) {
-            try {
-              const tickerRes = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${trade.symbol}`);
-              if (tickerRes.ok) {
-                const tickerData = await tickerRes.json();
-                const livePrice = parseFloat(tickerData.price);
-                if (isLong && trade.take_profit && livePrice >= trade.take_profit) {
-                  shouldClose = true; reason = 'TP hit (ticker)'; exitPrice = trade.take_profit;
-                } else if (!isLong && trade.take_profit && livePrice <= trade.take_profit) {
-                  shouldClose = true; reason = 'TP hit (ticker)'; exitPrice = trade.take_profit;
-                } else if (isLong && trade.stop_loss && livePrice <= trade.stop_loss) {
-                  shouldClose = true; reason = 'SL hit (ticker)'; exitPrice = trade.stop_loss;
-                } else if (!isLong && trade.stop_loss && livePrice >= trade.stop_loss) {
-                  shouldClose = true; reason = 'SL hit (ticker)'; exitPrice = trade.stop_loss;
-                }
-              }
-            } catch { /* ticker fallback is best-effort */ }
           }
 
           if (shouldClose) {
-            // Use TP/SL level as exit price when hit, otherwise fall back to candle close
-            const effectiveExit = exitPrice > 0 ? exitPrice : candleClose;
             const priceChange = trade.direction === 'long'
-              ? (effectiveExit - trade.entry_price) / trade.entry_price
-              : (trade.entry_price - effectiveExit) / trade.entry_price;
-            const effectiveAmt = trade.remaining_amount ?? trade.amount;
-            const pnl = effectiveAmt * priceChange * trade.leverage - effectiveAmt * 0.001 - (effectiveAmt / trade.leverage) * 0.001;
+              ? (exitPrice - trade.entry_price) / trade.entry_price
+              : (trade.entry_price - exitPrice) / trade.entry_price;
+            const notional = trade.amount * trade.leverage;
+            const fee = notional * 0.001 * 2; // 0.1% taker fee × 2 (open + close)
+            const pnl = trade.amount * priceChange * trade.leverage - fee;
 
-            await closeTrade(trade.id, effectiveExit, pnl);
+            await closeTrade(trade.id, exitPrice, pnl);
 
             const state = await getTraderState(userId, strategyId);
-            let newBalance = state.balance + effectiveAmt + pnl;
+            let newBalance = state.balance + trade.amount + pnl;
 
             if (pnl > 0 && state.debt_to_repay > 0) {
               const repayAmount = Math.min(pnl * 0.1, state.debt_to_repay);
@@ -440,24 +376,6 @@ export async function POST(request: NextRequest) {
         message: `Auto-opened ${decision.direction} ${sym} @ ${price} with ${decision.leverage}x`,
         trade: { symbol: sym, direction: decision.direction, price, leverage: decision.leverage },
       });
-    }
-
-    if (action === 'partial-close-trade') {
-      const { tradeId: tradeId2, closeAmount, pnl: partialPnl, newRemainingAmount, newPartialState, newStopLoss } = rest as {
-        tradeId: string; closeAmount: number; pnl: number; newRemainingAmount: number; newPartialState: string; newStopLoss?: number;
-      };
-
-      if (!tradeId2 || newRemainingAmount === undefined) {
-        return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
-      }
-
-      await partialCloseTrade(tradeId2, newRemainingAmount, newPartialState, newStopLoss);
-
-      const pState = await getTraderState(userId, strategyId);
-      const newBal = Math.max(0, pState.balance + closeAmount + partialPnl);
-      await updateBalance(userId, newBal, strategyId);
-
-      return NextResponse.json({ success: true, pnl: partialPnl, newBalance: newBal });
     }
 
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });

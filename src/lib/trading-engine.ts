@@ -1,1384 +1,1423 @@
-import type { CandleData, IndicatorSignal, TradingDecision } from './types';
+import type { CandleData, IndicatorSignal, TradingDecision, OrderBookData, OrderBookLevel } from './types';
 import { getStrategy, type StrategyConfig } from './strategies';
 
 // ============================================================
-// Indicator Calculations
+// Indicator Calculations (kept for display purposes & filters)
 // ============================================================
 
-function sma(data: number[], period: number): number[] {
+function ema(data: number[], period: number): number[] {
   const result: number[] = [];
+  const k = 2 / (period + 1);
+  let prev: number | null = null;
   for (let i = 0; i < data.length; i++) {
-    if (i < period - 1) {
-      result.push(NaN);
-      continue;
-    }
-    let sum = 0;
-    for (let j = i - period + 1; j <= i; j++) {
-      sum += data[j];
-    }
-    result.push(sum / period);
-  }
-  return result;
-}
-
-export function ema(data: number[], period: number): number[] {
-  const result: number[] = [];
-  const multiplier = 2 / (period + 1);
-  let prevEma: number | null = null;
-  for (let i = 0; i < data.length; i++) {
-    if (i < period - 1) {
-      result.push(NaN);
-      continue;
-    }
-    if (prevEma === null) {
-      let sum = 0;
-      for (let j = i - period + 1; j <= i; j++) sum += data[j];
-      prevEma = sum / period;
+    if (i < period - 1) { result.push(NaN); continue; }
+    if (prev === null) {
+      let s = 0; for (let j = i - period + 1; j <= i; j++) s += data[j];
+      prev = s / period;
     } else {
-      prevEma = (data[i] - prevEma) * multiplier + prevEma;
+      prev = data[i] * k + prev * (1 - k);
     }
-    result.push(prevEma);
+    result.push(prev);
   }
   return result;
 }
 
-export function calcRSI(closes: number[], period: number = 14): number {
+function calcRSI(closes: number[], period: number = 14): number {
   if (closes.length < period + 1) return 50;
-  // Wilder's smoothing method
-  const multiplier = 1 / period;
-  let avgGain = 0;
-  let avgLoss = 0;
-
-  // Initial SMA for first period
+  const m = 1 / period;
+  let avgGain = 0, avgLoss = 0;
   for (let i = 1; i <= period; i++) {
-    const change = closes[i] - closes[i - 1];
-    if (change > 0) avgGain += change;
-    else avgLoss += Math.abs(change);
+    const d = closes[i] - closes[i - 1];
+    if (d > 0) avgGain += d; else avgLoss += Math.abs(d);
   }
-  avgGain /= period;
-  avgLoss /= period;
-
-  // Wilder's smoothing for remaining periods
+  avgGain /= period; avgLoss /= period;
   for (let i = period + 1; i < closes.length; i++) {
-    const change = closes[i] - closes[i - 1];
-    if (change > 0) avgGain = avgGain * (1 - multiplier) + change * multiplier;
-    else avgLoss = avgLoss * (1 - multiplier) + Math.abs(change) * multiplier;
+    const d = closes[i] - closes[i - 1];
+    if (d > 0) avgGain = avgGain * (1 - m) + d * m;
+    else avgLoss = avgLoss * (1 - m) + Math.abs(d) * m;
   }
-
   if (avgLoss === 0) return 100;
-  const rs = avgGain / avgLoss;
-  return 100 - (100 / (1 + rs));
+  return 100 - (100 / (1 + avgGain / avgLoss));
 }
 
-export function calcMACD(closes: number[]): { macdLine: number; signalLine: number; histogram: number } {
-  const ema12 = ema(closes, 12);
-  const ema26 = ema(closes, 26);
-  const macdLineArr: number[] = [];
+function calcMACD(closes: number[]): { macdLine: number; signalLine: number; histogram: number } {
+  const e12 = ema(closes, 12), e26 = ema(closes, 26);
+  const mArr: number[] = [];
   for (let i = 0; i < closes.length; i++) {
-    if (isNaN(ema12[i]) || isNaN(ema26[i])) macdLineArr.push(NaN);
-    else macdLineArr.push(ema12[i] - ema26[i]);
+    if (isNaN(e12[i]) || isNaN(e26[i])) mArr.push(NaN);
+    else mArr.push(e12[i] - e26[i]);
   }
   if (closes.length < 35) return { macdLine: 0, signalLine: 0, histogram: 0 };
-  // Filter NaN only for signal EMA, but use full array length
-  const validMacd = macdLineArr.slice(26); // Start from where EMA26 becomes valid
-  if (validMacd.length < 9) return { macdLine: 0, signalLine: 0, histogram: 0 };
-  const signalArr = ema(validMacd, 9);
-  const macdLine = validMacd[validMacd.length - 1];
-  const signalLine = signalArr[signalArr.length - 1] || 0;
-  return { macdLine, signalLine, histogram: macdLine - signalLine };
+  const v = mArr.slice(26);
+  if (v.length < 9) return { macdLine: 0, signalLine: 0, histogram: 0 };
+  const s = ema(v, 9);
+  const ml = v[v.length - 1], sl = s[s.length - 1] || 0;
+  return { macdLine: ml, signalLine: sl, histogram: ml - sl };
 }
 
 function calcBollingerBands(closes: number[], period: number = 20, stdDev: number = 2): { upper: number; middle: number; lower: number; position: number } {
   if (closes.length < period) return { upper: 0, middle: 0, lower: 0, position: 0.5 };
-  const slice = closes.slice(-period);
-  const middle = slice.reduce((a, b) => a + b, 0) / period;
-  const variance = slice.reduce((sum, val) => sum + Math.pow(val - middle, 2), 0) / (period - 1);
-  const std = Math.sqrt(variance);
-  const upper = middle + stdDev * std;
-  const lower = middle - stdDev * std;
-  const currentPrice = closes[closes.length - 1];
-  const position = (currentPrice - lower) / (upper - lower);
-  return { upper, middle, lower, position: Math.max(0, Math.min(1, position)) };
+  const sl = closes.slice(-period);
+  const mid = sl.reduce((a, b) => a + b, 0) / period;
+  const v = sl.reduce((s, val) => s + Math.pow(val - mid, 2), 0) / (period - 1);
+  const sd = Math.sqrt(v);
+  const up = mid + stdDev * sd, lo = mid - stdDev * sd;
+  const cp = closes[closes.length - 1];
+  return { upper: up, middle: mid, lower: lo, position: up === lo ? 0.5 : Math.max(0, Math.min(1, (cp - lo) / (up - lo))) };
 }
 
-export function calcATR(candles: CandleData[], period: number = 14): number {
+function calcATR(candles: CandleData[], period: number = 14): number {
   if (candles.length < period + 1) return 0;
-  let sum = 0;
+  let s = 0;
   for (let i = candles.length - period; i < candles.length; i++) {
-    const tr = Math.max(
-      candles[i].high - candles[i].low,
-      Math.abs(candles[i].high - candles[i - 1].close),
-      Math.abs(candles[i].low - candles[i - 1].close)
-    );
-    sum += tr;
+    s += Math.max(candles[i].high - candles[i].low, Math.abs(candles[i].high - candles[i - 1].close), Math.abs(candles[i].low - candles[i - 1].close));
   }
-  return sum / period;
+  return s / period;
 }
 
-function calcVolumeSignal(candles: CandleData[], period: number = 20): number {
-  if (candles.length < period) return 0;
-  const recentVol = candles.slice(-period).reduce((s, c) => s + c.volume, 0) / period;
-  const currentVol = candles[candles.length - 1].volume;
-  if (recentVol === 0) return 0;
-  const ratio = currentVol / recentVol;
-  if (ratio > 2.0) return 1;
-  if (ratio > 1.5) return 0.5;
-  if (ratio < 0.5) return -0.5;
-  return 0;
-}
-
-// ============================================================
-// Additional Indicator Calculations
-// ============================================================
-
-function calcStochRSI(closes: number[], rsiPeriod: number = 14, stochPeriod: number = 14): number {
-  if (closes.length < rsiPeriod + stochPeriod) return 0.5;
-  // Calculate RSI for each window
-  const rsiValues: number[] = [];
-  for (let i = rsiPeriod; i <= closes.length; i++) {
-    rsiValues.push(calcRSI(closes.slice(0, i), rsiPeriod));
-  }
-  // Take last stochPeriod RSI values
-  const recentRSI = rsiValues.slice(-stochPeriod);
-  const minRSI = Math.min(...recentRSI);
-  const maxRSI = Math.max(...recentRSI);
-  const currentRSI = recentRSI[recentRSI.length - 1];
-  if (maxRSI === minRSI) return 0.5;
-  return (currentRSI - minRSI) / (maxRSI - minRSI);
-}
-
-export function calcADX(candles: CandleData[], period: number = 14): { adx: number; plusDI: number; minusDI: number } {
+function calcADX(candles: CandleData[], period: number = 14): { adx: number; plusDI: number; minusDI: number } {
   if (candles.length < period * 2) return { adx: 0, plusDI: 0, minusDI: 0 };
-
-  const trueRanges: number[] = [];
-  const plusDM: number[] = [];
-  const minusDM: number[] = [];
-
+  const tr: number[] = [], pdm: number[] = [], mdm: number[] = [];
   for (let i = 1; i < candles.length; i++) {
-    const high = candles[i].high;
-    const low = candles[i].low;
-    const prevHigh = candles[i - 1].high;
-    const prevLow = candles[i - 1].low;
-    const prevClose = candles[i - 1].close;
-
-    const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
-    trueRanges.push(tr);
-
-    const upMove = high - prevHigh;
-    const downMove = prevLow - low;
-
-    plusDM.push(upMove > downMove && upMove > 0 ? upMove : 0);
-    minusDM.push(downMove > upMove && downMove > 0 ? downMove : 0);
+    const h = candles[i].high, l = candles[i].low, ph = candles[i-1].high, pl = candles[i-1].low, pc = candles[i-1].close;
+    tr.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+    const up = h - ph, dn = pl - l;
+    pdm.push(up > dn && up > 0 ? up : 0);
+    mdm.push(dn > up && dn > 0 ? dn : 0);
   }
-
-  // Smooth with Wilder's method
-  const smooth = (data: number[], p: number) => {
-    const result: number[] = [];
-    let sum = 0;
-    for (let i = 0; i < p && i < data.length; i++) sum += data[i];
-    result.push(sum);
-    for (let i = p; i < data.length; i++) {
-      sum = sum - sum / p + data[i];
-      result.push(sum);
-    }
-    return result;
+  const sm = (d: number[], p: number) => {
+    const r: number[] = []; let s = 0;
+    for (let i = 0; i < p && i < d.length; i++) s += d[i];
+    r.push(s);
+    for (let i = p; i < d.length; i++) { s = s - s / p + d[i]; r.push(s); }
+    return r;
   };
-
-  const smoothTR = smooth(trueRanges, period);
-  const smoothPlusDM = smooth(plusDM, period);
-  const smoothMinusDM = smooth(minusDM, period);
-
-  const diValues: number[] = [];
-  const plusDIValues: number[] = [];
-  const minusDIValues: number[] = [];
-
-  for (let i = 0; i < smoothTR.length; i++) {
-    const pdi = smoothTR[i] > 0 ? (smoothPlusDM[i] / smoothTR[i]) * 100 : 0;
-    const mdi = smoothTR[i] > 0 ? (smoothMinusDM[i] / smoothTR[i]) * 100 : 0;
-    plusDIValues.push(pdi);
-    minusDIValues.push(mdi);
-    const diSum = pdi + mdi;
-    diValues.push(diSum > 0 ? (Math.abs(pdi - mdi) / diSum) * 100 : 0);
+  const sTR = sm(tr, period), sPDM = sm(pdm, period), sMDM = sm(mdm, period);
+  const di: number[] = [], pdi: number[] = [], mdi: number[] = [];
+  for (let i = 0; i < sTR.length; i++) {
+    const p = sTR[i] > 0 ? (sPDM[i] / sTR[i]) * 100 : 0;
+    const m = sTR[i] > 0 ? (sMDM[i] / sTR[i]) * 100 : 0;
+    pdi.push(p); mdi.push(m);
+    const ds = p + m; di.push(ds > 0 ? (Math.abs(p - m) / ds) * 100 : 0);
   }
-
-  // Smooth ADX
-  const adxSmoothed: number[] = [];
-  if (diValues.length >= period) {
-    let adxSum = 0;
-    for (let i = 0; i < period; i++) adxSum += diValues[i];
-    adxSmoothed.push(adxSum / period);
-    for (let i = period; i < diValues.length; i++) {
-      adxSmoothed.push((adxSmoothed[adxSmoothed.length - 1] * (period - 1) + diValues[i]) / period);
-    }
+  const adxS: number[] = [];
+  if (di.length >= period) {
+    let s = 0; for (let i = 0; i < period; i++) s += di[i];
+    adxS.push(s / period);
+    for (let i = period; i < di.length; i++) adxS.push((adxS[adxS.length - 1] * (period - 1) + di[i]) / period);
   }
-
-  const lastIdx = adxSmoothed.length - 1;
-  return {
-    adx: adxSmoothed.length > 0 ? adxSmoothed[lastIdx] : 0,
-    plusDI: plusDIValues.length > 0 ? plusDIValues[plusDIValues.length - 1] : 0,
-    minusDI: minusDIValues.length > 0 ? minusDIValues[minusDIValues.length - 1] : 0,
-  };
+  return { adx: adxS.length > 0 ? adxS[adxS.length - 1] : 0, plusDI: pdi[pdi.length - 1] || 0, minusDI: mdi[mdi.length - 1] || 0 };
 }
 
-function calcOBV(candles: CandleData[]): { obv: number; trend: number } {
-  if (candles.length < 2) return { obv: 0, trend: 0 };
-  let obv = 0;
-  const obvHistory: number[] = [];
-  for (let i = 1; i < candles.length; i++) {
-    if (candles[i].close > candles[i - 1].close) obv += candles[i].volume;
-    else if (candles[i].close < candles[i - 1].close) obv -= candles[i].volume;
-    obvHistory.push(obv);
-  }
-  // Simple trend: compare recent OBV vs earlier OBV
-  if (obvHistory.length < 10) return { obv, trend: 0 };
-  const recent = obvHistory.slice(-10).reduce((a, b) => a + b, 0) / 10;
-  const earlier = obvHistory.slice(-20, -10).reduce((a, b) => a + b, 0) / Math.min(10, obvHistory.length - 10);
-  const trend = earlier !== 0 ? (recent - earlier) / Math.abs(earlier) : 0;
-  return { obv, trend: Math.max(-1, Math.min(1, trend)) };
+function calcStochRSI(closes: number[], rp: number = 14, sp: number = 14): number {
+  if (closes.length < rp + sp) return 0.5;
+  const rv: number[] = [];
+  for (let i = rp; i <= closes.length; i++) rv.push(calcRSI(closes.slice(0, i), rp));
+  const r = rv.slice(-sp);
+  const mn = Math.min(...r), mx = Math.max(...r);
+  return mx === mn ? 0.5 : (r[r.length - 1] - mn) / (mx - mn);
 }
 
 function calcVWAP(candles: CandleData[], period: number = 20): { vwap: number; signal: number } {
   if (candles.length < period) return { vwap: 0, signal: 0 };
-  const slice = candles.slice(-period);
-  let cumVolumePrice = 0;
-  let cumVolume = 0;
-  for (const c of slice) {
-    const typicalPrice = (c.high + c.low + c.close) / 3;
-    cumVolumePrice += typicalPrice * c.volume;
-    cumVolume += c.volume;
+  const sl = candles.slice(-period);
+  let cvp = 0, cv = 0;
+  for (const c of sl) { const tp = (c.high + c.low + c.close) / 3; cvp += tp * c.volume; cv += c.volume; }
+  const v = cv > 0 ? cvp / cv : 0;
+  const p = candles[candles.length - 1].close;
+  return { vwap: v, signal: v > 0 ? (p - v) / v : 0 };
+}
+
+function calcOBV(candles: CandleData[]): { obv: number; trend: number } {
+  if (candles.length < 20) return { obv: 0, trend: 0 };
+  let obv = 0; const h: number[] = [];
+  for (let i = 1; i < candles.length; i++) {
+    if (candles[i].close > candles[i-1].close) obv += candles[i].volume;
+    else if (candles[i].close < candles[i-1].close) obv -= candles[i].volume;
+    h.push(obv);
   }
-  const vwap = cumVolume > 0 ? cumVolumePrice / cumVolume : 0;
-  const price = candles[candles.length - 1].close;
-  const signal = vwap > 0 ? (price - vwap) / vwap : 0;
-  return { vwap, signal: Math.max(-1, Math.min(1, signal * 100)) }; // scale up
+  if (h.length < 10) return { obv, trend: 0 };
+  const r = h.slice(-10).reduce((a, b) => a + b, 0) / 10;
+  const e = h.slice(-20, -10).reduce((a, b) => a + b, 0) / Math.min(10, h.length - 10);
+  return e === 0 ? { obv, trend: 0 } : { obv, trend: Math.max(-1, Math.min(1, (r - e) / Math.abs(e))) };
 }
 
 // ============================================================
-// Anti-Chase / Spike Detection Indicators
-// (Based on freqtrade community strategies + ta4j patterns)
+// ANTI-SPIKE / ANTI-CHASE FILTER
 // ============================================================
 
-/**
- * ATR Ratio — current candle range vs ATR(14).
- * Values > 2.5 = spike candle (the move already happened).
- * Used to BLOCK entry on spike candles.
- */
-function calcCandleATRRatio(candles: CandleData[], atr: number): number {
-  if (atr <= 0) return 1;
-  const last = candles[candles.length - 1];
-  return (last.high - last.low) / atr;
+function calcROC(closes: number[], p: number = 3): number {
+  if (closes.length < p + 1) return 0;
+  const c = closes[closes.length - 1], past = closes[closes.length - 1 - p];
+  return past === 0 ? 0 : ((c - past) / past) * 100;
 }
 
-/**
- * Rate of Change (ROC) — % price change over N candles.
- * Detects velocity. ROC_3 > 8% = sharp 3-candle move = block entry.
- */
-function calcROC(closes: number[], period: number = 3): number {
-  if (closes.length < period + 1) return 0;
-  const current = closes[closes.length - 1];
-  const past = closes[closes.length - 1 - period];
-  if (past === 0) return 0;
-  return ((current - past) / past) * 100;
-}
-
-/**
- * CCI (Commodity Channel Index) — detects overbought/oversold cyclical extremes.
- * |CCI| > 200 = extreme, likely to revert.
- */
 function calcCCI(candles: CandleData[], period: number = 20): number {
   if (candles.length < period) return 0;
-  const slice = candles.slice(-period);
-  const typicalPrices = slice.map(c => (c.high + c.low + c.close) / 3);
-  const smaTP = typicalPrices.reduce((s, v) => s + v, 0) / period;
-  const meanDev = typicalPrices.reduce((s, v) => s + Math.abs(v - smaTP), 0) / period;
-  if (meanDev === 0) return 0;
-  const currentTP = typicalPrices[typicalPrices.length - 1];
-  return (currentTP - smaTP) / (0.015 * meanDev);
+  const sl = candles.slice(-period);
+  const tp = sl.map(c => (c.high + c.low + c.close) / 3);
+  const sm = tp.reduce((s, v) => s + v, 0) / period;
+  const md = tp.reduce((s, v) => s + Math.abs(v - sm), 0) / period;
+  return md === 0 ? 0 : (tp[tp.length - 1] - sm) / (0.015 * md);
 }
 
-/**
- * Volume spike ratio — current volume vs 20-period average.
- * > 5.0 = extreme volume anomaly (pump/dump signature).
- */
-function calcVolumeRatio(candles: CandleData[], period: number = 20): number {
-  if (candles.length < period + 1) return 1;
-  const avgVol = candles.slice(-period - 1, -1).reduce((s, c) => s + c.volume, 0) / period;
-  if (avgVol === 0) return 1;
-  return candles[candles.length - 1].volume / avgVol;
-}
-
-/**
- * Candle body/wick analysis — detects directional spike candles.
- * Returns { bodyRatio, closePosition } where:
- *   bodyRatio > 0.85 = strong directional candle (likely a pump candle)
- *   closePosition > 0.95 = closed at top (buying the top for longs)
- */
-function analyzeCandleShape(candle: CandleData): { bodyRatio: number; closePosition: number; upperWickRatio: number; lowerWickRatio: number } {
-  const range = candle.high - candle.low;
-  if (range === 0) return { bodyRatio: 0, closePosition: 0.5, upperWickRatio: 0, lowerWickRatio: 0 };
-  const body = Math.abs(candle.close - candle.open);
-  const upperWick = candle.high - Math.max(candle.close, candle.open);
-  const lowerWick = Math.min(candle.close, candle.open) - candle.low;
+function analyzeCandleShape(c: CandleData): { bodyRatio: number; closePos: number; upperWick: number; lowerWick: number } {
+  const rng = c.high - c.low;
+  if (rng === 0) return { bodyRatio: 0, closePos: 0.5, upperWick: 0, lowerWick: 0 };
+  const body = Math.abs(c.close - c.open);
   return {
-    bodyRatio: body / range,
-    closePosition: (candle.close - candle.low) / range,
-    upperWickRatio: upperWick / range,
-    lowerWickRatio: lowerWick / range,
+    bodyRatio: body / rng,
+    closePos: (c.close - c.low) / rng,
+    upperWick: (c.high - Math.max(c.close, c.open)) / rng,
+    lowerWick: (Math.min(c.close, c.open) - c.low) / rng,
   };
 }
 
-/**
- * Distance from EMA — detects overextension.
- * distance > 5% from EMA20 = overextended (will revert).
- */
-function calcDistanceFromMA(closes: number[], ma: number): number {
-  if (ma === 0) return 0;
-  const price = closes[closes.length - 1];
-  return ((price - ma) / ma) * 100;
-}
-
-/**
- * ── SPIKE GUARD ──
- * Comprehensive anti-chase filter. Returns { blocked, reason } if any
- * spike/exhaustion condition is detected. Used by ALL strategies.
- *
- * Based on freqtrade community "Complete Spike Guard" pattern:
- *   1. Candle ATR ratio > 2.5 (current candle IS the spike)
- *   2. ROC(3) > 8% (3-candle move too large)
- *   3. Volume ratio > 5.0 AND ROC(1) > 2% (FOMO candle)
- *   4. RSI extreme (direction-dependent)
- *   5. Distance from EMA20 > 5% (overextended)
- *   6. CCI > ±200 (cyclical extreme)
- *   7. Candle closed at extreme (closePosition > 0.95 for longs)
- */
 function spikeGuard(
-  candles: CandleData[],
-  closes: number[],
-  atr: number,
-  rsi: number,
-  direction: 'long' | 'short' | 'none',
-  ema20: number,
-  thresholds?: {
-    atrRatioMax?: number;
-    roc3Max?: number;
-    rsiOverbought?: number;
-    rsiOversold?: number;
-    emaDistMax?: number;
-    cciMax?: number;
-  }
+  candles: CandleData[], closes: number[], atr: number, rsi: number,
+  dir: 'long' | 'short' | 'none', ema20: number,
+  t?: { atrMax?: number; rocMax?: number; rsiOB?: number; rsiOS?: number; emaMax?: number; cciMax?: number },
 ): { blocked: boolean; reason: string } {
-  if (direction === 'none') return { blocked: false, reason: '' };
-
-  // Default thresholds (for 1H/4H)
-  const t = {
-    atrRatioMax: thresholds?.atrRatioMax ?? 2.5,
-    roc3Max: thresholds?.roc3Max ?? 8,
-    rsiOverbought: thresholds?.rsiOverbought ?? 78,
-    rsiOversold: thresholds?.rsiOversold ?? 22,
-    emaDistMax: thresholds?.emaDistMax ?? 5,
-    cciMax: thresholds?.cciMax ?? 200,
-  };
-
+  if (dir === 'none') return { blocked: false, reason: '' };
+  const th = { atrMax: t?.atrMax ?? 2.5, rocMax: t?.rocMax ?? 8, rsiOB: t?.rsiOB ?? 78, rsiOS: t?.rsiOS ?? 22, emaMax: t?.emaMax ?? 5, cciMax: t?.cciMax ?? 200 };
   const last = candles[candles.length - 1];
-  const candleShape = analyzeCandleShape(last);
-  const candleATRRatio = calcCandleATRRatio(candles, atr);
+  if (atr > 0 && (last.high - last.low) / atr > th.atrMax) return { blocked: true, reason: `Спайк ATR×${((last.high - last.low) / atr).toFixed(1)}` };
   const roc3 = calcROC(closes, 3);
+  if (roc3 > th.rocMax) return { blocked: true, reason: `ROC3=${roc3.toFixed(1)}%` };
+  const volAvg = candles.slice(-21, -1).reduce((s, c) => s + c.volume, 0) / 20 || 1;
   const roc1 = calcROC(closes, 1);
+  if (last.volume / volAvg > 5.0 && Math.abs(roc1) > 2.0) return { blocked: true, reason: `FOMO vol×${(last.volume / volAvg).toFixed(1)}` };
+  const isL = dir === 'long';
+  if (isL && rsi > th.rsiOB) return { blocked: true, reason: `RSI ${rsi.toFixed(0)}` };
+  if (!isL && rsi < th.rsiOS) return { blocked: true, reason: `RSI ${rsi.toFixed(0)}` };
+  const dEma = ema20 > 0 ? ((closes[closes.length - 1] - ema20) / ema20) * 100 : 0;
+  if (isL && dEma > th.emaMax) return { blocked: true, reason: `EMA+${dEma.toFixed(1)}%` };
+  if (!isL && dEma < -th.emaMax) return { blocked: true, reason: `EMA-${Math.abs(dEma).toFixed(1)}%` };
   const cci = calcCCI(candles, 20);
-  const volRatio = calcVolumeRatio(candles, 20);
-  const distFromEMA20 = calcDistanceFromMA(closes, ema20);
-
-  const isLong = direction === 'long';
-
-  // 1. Current candle is a spike (ATR ratio)
-  if (candleATRRatio > t.atrRatioMax) {
-    return { blocked: true, reason: `Спайк-свеча (ATR×${candleATRRatio.toFixed(1)})` };
-  }
-
-  // 2. 3-candle velocity too high
-  if (roc3 > t.roc3Max) {
-    return { blocked: true, reason: `Сильное движение ROC3=${roc3.toFixed(1)}%` };
-  }
-
-  // 3. FOMO candle: high volume + sharp move
-  if (volRatio > 5.0 && Math.abs(roc1) > 2.0) {
-    return { blocked: true, reason: `FOMO свеча (vol×${volRatio.toFixed(1)}, ROC=${roc1.toFixed(1)}%)` };
-  }
-
-  // 4. RSI extreme — don't buy overbought, don't sell oversold
-  if (isLong && rsi > t.rsiOverbought) {
-    return { blocked: true, reason: `RSI перекуплен (${rsi.toFixed(0)})` };
-  }
-  if (!isLong && rsi < t.rsiOversold) {
-    return { blocked: true, reason: `RSI перепродан (${rsi.toFixed(0)})` };
-  }
-
-  // 5. Overextended from EMA20
-  if (isLong && distFromEMA20 > t.emaDistMax) {
-    return { blocked: true, reason: `Цена выше EMA20 на ${distFromEMA20.toFixed(1)}%` };
-  }
-  if (!isLong && distFromEMA20 < -t.emaDistMax) {
-    return { blocked: true, reason: `Цена ниже EMA20 на ${Math.abs(distFromEMA20).toFixed(1)}%` };
-  }
-
-  // 6. CCI extreme
-  if (isLong && cci > t.cciMax) {
-    return { blocked: true, reason: `CCI перекуплен (${cci.toFixed(0)})` };
-  }
-  if (!isLong && cci < -t.cciMax) {
-    return { blocked: true, reason: `CCI перепродан (${cci.toFixed(0)})` };
-  }
-
-  // 7. Closed at extreme of candle (buying the top / selling the bottom)
-  if (isLong && candleShape.closePosition > 0.95 && candleShape.bodyRatio > 0.7) {
-    return { blocked: true, reason: `Закрытие на вершине свечи (покупка верха)` };
-  }
-  if (!isLong && candleShape.closePosition < 0.05 && candleShape.bodyRatio > 0.7) {
-    return { blocked: true, reason: `Закрытие на дне свечи (продажа низа)` };
-  }
-
+  if (isL && cci > th.cciMax) return { blocked: true, reason: `CCI ${cci.toFixed(0)}` };
+  if (!isL && cci < -th.cciMax) return { blocked: true, reason: `CCI ${cci.toFixed(0)}` };
+  const cs = analyzeCandleShape(last);
+  if (isL && cs.closePos > 0.95 && cs.bodyRatio > 0.7) return { blocked: true, reason: 'Закрытие на вершине' };
+  if (!isL && cs.closePos < 0.05 && cs.bodyRatio > 0.7) return { blocked: true, reason: 'Закрытие на дне' };
   return { blocked: false, reason: '' };
 }
 
 // ============================================================
-// Signal Generation
+// INDICATOR ANALYSIS (for UI display only — NOT used for entry)
 // ============================================================
 
-export function analyzeIndicators(
-  candles: CandleData[],
-  weights: Record<string, number>
-): IndicatorSignal[] {
+export function analyzeIndicators(candles: CandleData[], weights: Record<string, number>): IndicatorSignal[] {
   if (candles.length < 50) return [];
   const closes = candles.map(c => c.close);
   const signals: IndicatorSignal[] = [];
-
-  // RSI
   const rsi = calcRSI(closes);
-  const rsiWeight = weights['rsi'] ?? 1;
-  if (rsi < 30) {
-    signals.push({ name: 'RSI', signal: 1, strength: (30 - rsi) / 30 });
-  } else if (rsi > 70) {
-    signals.push({ name: 'RSI', signal: -1, strength: (rsi - 70) / 30 });
-  } else {
-    signals.push({ name: 'RSI', signal: 0, strength: 0 });
-  }
-
-  // MACD
+  signals.push({ name: 'RSI', signal: rsi < 30 ? 1 : rsi > 70 ? -1 : 0, strength: rsi < 30 ? (30 - rsi) / 30 : rsi > 70 ? (rsi - 70) / 30 : 0 });
   const macd = calcMACD(closes);
-  const macdWeight = weights['macd'] ?? 1;
-  if (macd.histogram > 0 && macd.macdLine > macd.signalLine) {
-    signals.push({ name: 'MACD', signal: 1, strength: Math.min(Math.abs(macd.histogram) / (macd.signalLine || 1), 1) });
-  } else if (macd.histogram < 0) {
-    signals.push({ name: 'MACD', signal: -1, strength: Math.min(Math.abs(macd.histogram) / (macd.signalLine || 1), 1) });
-  } else {
-    signals.push({ name: 'MACD', signal: 0, strength: 0 });
-  }
-
-  // EMA 50
-  const ema50Arr = ema(closes, 50);
-  const ema50 = ema50Arr[ema50Arr.length - 1];
-  const price = closes[closes.length - 1];
-  const ema50Weight = weights['ema50'] ?? 1;
-  if (!isNaN(ema50)) {
-    signals.push({
-      name: 'EMA_50',
-      signal: price > ema50 ? 1 : -1,
-      strength: Math.min(Math.abs(price - ema50) / ema50 * 10, 1),
-    });
-  } else {
-    signals.push({ name: 'EMA_50', signal: 0, strength: 0 });
-  }
-
-  // EMA 200
-  const ema200Arr = ema(closes, 200);
-  const ema200 = ema200Arr[ema200Arr.length - 1];
-  const ema200Weight = weights['ema200'] ?? 1;
-  if (!isNaN(ema200)) {
-    signals.push({
-      name: 'EMA_200',
-      signal: price > ema200 ? 1 : -1,
-      strength: Math.min(Math.abs(price - ema200) / ema200 * 10, 1),
-    });
-  } else {
-    signals.push({ name: 'EMA_200', signal: 0, strength: 0 });
-  }
-
-  // Bollinger Bands
+  signals.push({ name: 'MACD', signal: macd.histogram > 0 && macd.macdLine > macd.signalLine ? 1 : macd.histogram < 0 ? -1 : 0, strength: Math.min(Math.abs(macd.histogram) / (Math.abs(macd.signalLine) || 1), 1) });
+  const e50 = ema(closes, 50), e50v = e50[e50.length - 1], p = closes[closes.length - 1];
+  signals.push({ name: 'EMA_50', signal: !isNaN(e50v) ? (p > e50v ? 1 : -1) : 0, strength: !isNaN(e50v) ? Math.min(Math.abs(p - e50v) / e50v * 10, 1) : 0 });
+  const e200 = ema(closes, 200), e200v = e200[e200.length - 1];
+  signals.push({ name: 'EMA_200', signal: !isNaN(e200v) ? (p > e200v ? 1 : -1) : 0, strength: !isNaN(e200v) ? Math.min(Math.abs(p - e200v) / e200v * 10, 1) : 0 });
   const bb = calcBollingerBands(closes);
-  const bbWeight = weights['bollinger'] ?? 1;
-  if (bb.position < 0.1) {
-    signals.push({ name: 'Bollinger', signal: 1, strength: (0.1 - bb.position) / 0.1 });
-  } else if (bb.position > 0.9) {
-    signals.push({ name: 'Bollinger', signal: -1, strength: (bb.position - 0.9) / 0.1 });
-  } else {
-    signals.push({ name: 'Bollinger', signal: 0, strength: 0 });
-  }
-
-  // Volume
-  const volSignal = calcVolumeSignal(candles);
-  const volWeight = weights['volume'] ?? 1;
-  signals.push({ name: 'Volume', signal: volSignal > 0 ? 1 : volSignal < 0 ? -1 : 0, strength: Math.abs(volSignal) });
-
-  // StochRSI
-  const stochRSI = calcStochRSI(closes);
-  if (stochRSI > 0.8) {
-    signals.push({ name: 'StochRSI', signal: -1, strength: (stochRSI - 0.8) / 0.2 });
-  } else if (stochRSI < 0.2) {
-    signals.push({ name: 'StochRSI', signal: 1, strength: (0.2 - stochRSI) / 0.2 });
-  } else {
-    signals.push({ name: 'StochRSI', signal: 0, strength: 0 });
-  }
-
-  // ADX
-  const adxResult = calcADX(candles);
-  if (adxResult.adx > 25) {
-    // Strong trend — follow +DI vs -DI
-    const adxStrength = Math.min((adxResult.adx - 25) / 25, 1);
-    if (adxResult.plusDI > adxResult.minusDI) {
-      signals.push({ name: 'ADX', signal: 1, strength: adxStrength });
-    } else {
-      signals.push({ name: 'ADX', signal: -1, strength: adxStrength });
-    }
-  } else if (adxResult.adx < 20) {
-    // Weak/ranging — avoid, slight neutral
-    signals.push({ name: 'ADX', signal: 0, strength: 0.1 });
-  } else {
-    signals.push({ name: 'ADX', signal: 0, strength: 0 });
-  }
-
-  // OBV
-  const obvResult = calcOBV(candles);
-  const priceChange = closes.length > 5
-    ? (closes[closes.length - 1] - closes[closes.length - 6]) / closes[closes.length - 6]
-    : 0;
-  if (obvResult.trend > 0.05 && priceChange > 0) {
-    // Rising OBV + rising price = bullish confirmation
-    signals.push({ name: 'OBV', signal: 1, strength: Math.min(Math.abs(obvResult.trend) * 5, 1) });
-  } else if (obvResult.trend < -0.05 && priceChange < 0) {
-    // Falling OBV + falling price = bearish confirmation
-    signals.push({ name: 'OBV', signal: -1, strength: Math.min(Math.abs(obvResult.trend) * 5, 1) });
-  } else if (obvResult.trend > 0.05 && priceChange < 0) {
-    // Divergence: OBV rising but price falling — potential reversal up
-    signals.push({ name: 'OBV', signal: 1, strength: Math.min(Math.abs(obvResult.trend) * 3, 0.7) });
-  } else if (obvResult.trend < -0.05 && priceChange > 0) {
-    // Divergence: OBV falling but price rising — potential reversal down
-    signals.push({ name: 'OBV', signal: -1, strength: Math.min(Math.abs(obvResult.trend) * 3, 0.7) });
-  } else {
-    signals.push({ name: 'OBV', signal: 0, strength: 0 });
-  }
-
-  // VWAP
-  const vwapResult = calcVWAP(candles);
-  if (vwapResult.signal > 0.005) {
-    signals.push({ name: 'VWAP', signal: 1, strength: Math.min(vwapResult.signal * 10, 1) });
-  } else if (vwapResult.signal < -0.005) {
-    signals.push({ name: 'VWAP', signal: -1, strength: Math.min(Math.abs(vwapResult.signal) * 10, 1) });
-  } else {
-    signals.push({ name: 'VWAP', signal: 0, strength: 0 });
-  }
-
+  signals.push({ name: 'Bollinger', signal: bb.position < 0.1 ? 1 : bb.position > 0.9 ? -1 : 0, strength: bb.position < 0.1 ? (0.1 - bb.position) / 0.1 : bb.position > 0.9 ? (bb.position - 0.9) / 0.1 : 0 });
+  const volAvg = candles.slice(-20).reduce((s, c) => s + c.volume, 0) / 20;
+  const vr = volAvg > 0 ? candles[candles.length - 1].volume / volAvg : 0;
+  signals.push({ name: 'Volume', signal: vr > 2.0 ? 1 : vr < 0.5 ? -1 : 0, strength: Math.max(0, (vr - 1) / 2) });
+  const sr = calcStochRSI(closes);
+  signals.push({ name: 'StochRSI', signal: sr > 0.8 ? -1 : sr < 0.2 ? 1 : 0, strength: sr > 0.8 ? (sr - 0.8) / 0.2 : sr < 0.2 ? (0.2 - sr) / 0.2 : 0 });
+  const adx = calcADX(candles);
+  signals.push({ name: 'ADX', signal: adx.adx > 25 ? (adx.plusDI > adx.minusDI ? 1 : -1) : 0, strength: adx.adx > 25 ? Math.min((adx.adx - 25) / 25, 1) : 0 });
+  const obv = calcOBV(candles);
+  const pc = closes.length > 5 ? (closes[closes.length - 1] - closes[closes.length - 6]) / closes[closes.length - 6] : 0;
+  let obvSig = 0, obvStr = 0;
+  if (obv.trend > 0.05 && pc > 0) { obvSig = 1; obvStr = Math.min(obv.trend * 5, 1); }
+  else if (obv.trend < -0.05 && pc < 0) { obvSig = -1; obvStr = Math.min(Math.abs(obv.trend) * 5, 1); }
+  else if (obv.trend > 0.05 && pc < 0) { obvSig = 1; obvStr = Math.min(obv.trend * 3, 0.7); }
+  else if (obv.trend < -0.05 && pc > 0) { obvSig = -1; obvStr = Math.min(Math.abs(obv.trend) * 3, 0.7); }
+  signals.push({ name: 'OBV', signal: obvSig, strength: obvStr });
+  const vw = calcVWAP(candles);
+  signals.push({ name: 'VWAP', signal: vw.signal > 0.005 ? 1 : vw.signal < -0.005 ? -1 : 0, strength: Math.min(Math.abs(vw.signal) * 10, 1) });
   return signals;
 }
 
 // ============================================================
-// Trading Decision
+// STRUCTURE-FIRST TRADING ENGINE
+// Core Principle: NEVER enter unless price TOUCHED an S/R level
 // ============================================================
 
-export function makeTradingDecision(
-  symbol: string,
-  candles: CandleData[],
-  weights: Record<string, number>,
-  idleMinutes: number = 0,
-): TradingDecision {
-  const indicators = analyzeIndicators(candles, weights);
-  const closes = candles.map(c => c.close);
-  const price = closes[closes.length - 1];
-  const atr = calcATR(candles);
+// --- Support / Resistance Types & Detection ---
 
-  // ============================================================
-  // POINT 1: ADX regime filter — skip if market is ranging (ADX < 20)
-  // ============================================================
-  const adxResult = calcADX(candles);
-  if (adxResult.adx < 20) {
-    // Market is choppy/ranging — don't trade
-    return {
-      symbol,
-      direction: 'none',
-      score: 0,
-      leverage: 1,
-      stopLoss: 0,
-      takeProfit: 0,
-      indicators,
-    };
+interface SRLevel {
+  price: number;
+  type: 'support' | 'resistance';
+  touches: number;
+  lastTouchIdx: number;
+  strength: number;       // 0-1 quality score
+  heldCount: number;      // how many times the level held
+  brokenCount: number;    // how many times the level was broken
+  zoneHigh: number;
+  zoneLow: number;
+}
+
+/**
+ * Find swing highs and lows using a lookback window.
+ * A swing high must be the highest high among `lookback` bars on each side.
+ * A swing low must be the lowest low among `lookback` bars on each side.
+ */
+function findSwingPoints(candles: CandleData[], lookback: number = 7): Array<{ price: number; index: number; type: 'high' | 'low' }> {
+  const points: Array<{ price: number; index: number; type: 'high' | 'low' }> = [];
+  for (let i = lookback; i < candles.length - lookback; i++) {
+    let isHigh = true, isLow = true;
+    for (let j = 1; j <= lookback; j++) {
+      if (candles[i].high <= candles[i - j].high || candles[i].high <= candles[i + j].high) isHigh = false;
+      if (candles[i].low >= candles[i - j].low || candles[i].low >= candles[i + j].low) isLow = false;
+    }
+    if (isHigh) points.push({ price: candles[i].high, index: i, type: 'high' });
+    if (isLow) points.push({ price: candles[i].low, index: i, type: 'low' });
   }
+  return points;
+}
 
-  let longScore = 0;
-  let shortScore = 0;
-  let longCount = 0;  // POINT 3: count agreeing indicators
-  let shortCount = 0;
+/**
+ * Find consolidation zones — areas where price spent significant time.
+ * These are stronger S/R than single-swing points.
+ */
+function findConsolidationZones(candles: CandleData[], zoneSize: number = 0.003): Array<{ price: number; strength: number; touches: number }> {
+  const n = candles.length;
+  if (n < 50) return [];
+  const zones: Map<string, { totalWeight: number; candleCount: number; priceSum: number; volumeSum: number }> = new Map();
 
-  for (const ind of indicators) {
-    const w = weights[ind.name] ?? 1;
-    if (ind.signal > 0) {
-      longScore += ind.strength * w;
-      longCount++;
-    } else if (ind.signal < 0) {
-      shortScore += ind.strength * w;
-      shortCount++;
+  for (let i = Math.floor(n * 0.4); i < n; i++) {
+    const c = candles[i];
+    const tickSize = c.close * zoneSize;
+    const bucket = Math.floor(c.close / tickSize);
+    const key = `z_${bucket}`;
+    const existing = zones.get(key);
+    if (existing) {
+      existing.totalWeight += 1 + (c.volume / (candles.slice(Math.max(0, i - 20), i).reduce((s, x) => s + x.volume, 0) / 20 || 1));
+      existing.candleCount++;
+      existing.priceSum += c.close;
+      existing.volumeSum += c.volume;
+    } else {
+      zones.set(key, { totalWeight: 1, candleCount: 1, priceSum: c.close, volumeSum: c.volume });
     }
   }
 
-  const OPEN_THRESHOLD = 0.15;
-  const absLongScore = Math.abs(longScore);
-  const absShortScore = Math.abs(shortScore);
-  const maxScore = Math.max(absLongScore, absShortScore);
+  const avgWeight = Array.from(zones.values()).reduce((s, z) => s + z.totalWeight, 0) / (zones.size || 1);
+  const result: Array<{ price: number; strength: number; touches: number }> = [];
 
-  // ============================================================
-  // POINT 3: Confluence filter — require ≥4 indicators to agree
-  // ============================================================
-  const bestCount = Math.max(longCount, shortCount);
-  if (bestCount < 4) {
-    return {
-      symbol,
-      direction: 'none',
-      score: maxScore,
-      leverage: 1,
-      stopLoss: 0,
-      takeProfit: 0,
-      indicators,
-    };
+  for (const [, z] of zones) {
+    if (z.candleCount >= 3 && z.totalWeight > avgWeight * 1.5) {
+      result.push({
+        price: z.priceSum / z.candleCount,
+        strength: Math.min(z.totalWeight / (avgWeight * 3), 1),
+        touches: z.candleCount,
+      });
+    }
   }
 
-  // ============================================================
-  // POINT 2: Removed sub-threshold fallback — only trade with real signals
-  // ============================================================
-  let direction: 'long' | 'short' | 'none' = 'none';
-  let score = 0;
+  return result.sort((a, b) => b.strength - a.strength).slice(0, 10);
+}
 
-  if (absLongScore >= OPEN_THRESHOLD && absLongScore >= absShortScore) {
-    direction = 'long';
-    score = longScore;
-  } else if (absShortScore >= OPEN_THRESHOLD && absShortScore > absLongScore) {
-    direction = 'short';
-    score = shortScore;
+/**
+ * Find all S/R levels by clustering swing points and consolidation zones.
+ * Returns levels sorted by strength (strongest first).
+ */
+function findSRLevels(candles: CandleData[], lookback: number = 7, clusterPct: number = 0.4, minTouches: number = 2): SRLevel[] {
+  const n = candles.length;
+  const swings = findSwingPoints(candles, lookback);
+  const consolidations = findConsolidationZones(candles);
+  const levels: SRLevel[] = [];
+
+  // Add swing-based levels
+  for (const sw of swings) {
+    let matched = false;
+    for (const lv of levels) {
+      const dist = Math.abs(sw.price - lv.price) / lv.price * 100;
+      if (dist < clusterPct) {
+        lv.price = (lv.price * lv.touches + sw.price) / (lv.touches + 1);
+        lv.touches++;
+        lv.lastTouchIdx = Math.max(lv.lastTouchIdx, sw.index);
+        if (sw.type === 'high' && lv.type === 'resistance') lv.heldCount++;
+        else if (sw.type === 'low' && lv.type === 'support') lv.heldCount++;
+        else lv.brokenCount++;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) {
+      levels.push({
+        price: sw.price,
+        type: sw.type === 'high' ? 'resistance' : 'support',
+        touches: 1,
+        lastTouchIdx: sw.index,
+        strength: 0,
+        heldCount: 1,
+        brokenCount: 0,
+        zoneHigh: sw.price * 1.002,
+        zoneLow: sw.price * 0.998,
+      });
+    }
   }
-  // No more fallback at score > 0.02
 
-  // Leverage based on signal strength (1x to 10x), lower for weak signals
-  const leverage = direction === 'none' ? 1 : Math.min(10, Math.max(1, Math.round(maxScore * 3)));
+  // Add consolidation zones as levels
+  for (const cz of consolidations) {
+    let matched = false;
+    for (const lv of levels) {
+      if (Math.abs(cz.price - lv.price) / lv.price * 100 < clusterPct * 1.5) {
+        lv.strength += cz.strength * 0.3;
+        lv.touches += Math.floor(cz.touches * 0.3);
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) {
+      const price = candles[n - 1].close;
+      levels.push({
+        price: cz.price,
+        type: cz.price > price ? 'resistance' : 'support',
+        touches: Math.max(minTouches, Math.floor(cz.touches * 0.5)),
+        lastTouchIdx: n - 1,
+        strength: cz.strength * 0.5,
+        heldCount: Math.floor(cz.touches * 0.3),
+        brokenCount: 0,
+        zoneHigh: cz.price * 1.003,
+        zoneLow: cz.price * 0.997,
+      });
+    }
+  }
 
-  // Stop loss and take profit based on ATR
-  const stopLossPercent = atr / price;
-  const takeProfitPercent = stopLossPercent * 2.5; // Improved: 1:2.5 risk/reward
+  // Filter, compute strength, and sort
+  return levels
+    .filter(lv => lv.touches >= minTouches)
+    .map(lv => {
+      const recency = 0.3 + 0.7 * (lv.lastTouchIdx / n);
+      const touchScore = Math.min(lv.touches / 6, 1);
+      const holdRate = lv.heldCount + lv.brokenCount > 0
+        ? lv.heldCount / (lv.heldCount + lv.brokenCount)
+        : 0.5;
+      const strength = Math.min(touchScore * recency * (0.5 + holdRate * 0.5) + lv.strength, 1);
+      const zoneSize = Math.max(0.002, calcATR(candles, 14) / candles[n - 1].close * 0.5);
+      return {
+        ...lv,
+        strength,
+        zoneHigh: lv.price * (1 + zoneSize),
+        zoneLow: lv.price * (1 - zoneSize),
+      };
+    })
+    .sort((a, b) => b.strength - a.strength);
+}
 
-  const stopLoss = direction === 'long'
-    ? price * (1 - stopLossPercent)
-    : price * (1 + stopLossPercent);
-  const takeProfit = direction === 'long'
-    ? price * (1 + takeProfitPercent)
-    : price * (1 - takeProfitPercent);
+// --- Level Touch Verification (CRITICAL) ---
+
+interface TouchResult {
+  touched: boolean;
+  touchCandleIdx: number;
+  touchType: 'wick' | 'close' | 'body';
+  touchDistance: number;  // % distance from the level
+}
+
+/**
+ * CRITICAL: Verify that price actually TOUCHED an S/R level.
+ * This prevents the #1 bug: entering BEFORE price reaches the level.
+ *
+ * For resistance: check if last `lookbackCandles` candles' HIGH reached within `thresholdPct`.
+ * For support: check if last `lookbackCandles` candles' LOW reached within `thresholdPct`.
+ */
+function verifyLevelTouch(
+  candles: CandleData[],
+  level: SRLevel,
+  direction: 'test_resistance' | 'test_support',
+  lookbackCandles: number = 3,
+  thresholdPct: number = 0.15,
+): TouchResult {
+  const n = candles.length;
+  const startIdx = Math.max(0, n - lookbackCandles);
+
+  for (let i = startIdx; i < n; i++) {
+    const c = candles[i];
+    const distPct = (Math.abs(c.close - level.price) / level.price) * 100;
+
+    if (direction === 'test_resistance') {
+      // For resistance, the candle's HIGH must reach the level
+      const highDist = (Math.abs(c.high - level.price) / level.price) * 100;
+      if (highDist <= thresholdPct) {
+        // Classify touch type
+        const closeAbove = c.close >= level.price;
+        const bodyHigh = Math.max(c.close, c.open);
+        const bodyDist = (Math.abs(bodyHigh - level.price) / level.price) * 100;
+
+        let touchType: TouchResult['touchType'];
+        if (bodyDist <= thresholdPct) {
+          touchType = 'body';
+        } else if (closeAbove) {
+          touchType = 'close';
+        } else {
+          touchType = 'wick';
+        }
+
+        return { touched: true, touchCandleIdx: i, touchType, touchDistance: highDist };
+      }
+    } else {
+      // For support, the candle's LOW must reach the level
+      const lowDist = (Math.abs(c.low - level.price) / level.price) * 100;
+      if (lowDist <= thresholdPct) {
+        const closeBelow = c.close <= level.price;
+        const bodyLow = Math.min(c.close, c.open);
+        const bodyDist = (Math.abs(bodyLow - level.price) / level.price) * 100;
+
+        let touchType: TouchResult['touchType'];
+        if (bodyDist <= thresholdPct) {
+          touchType = 'body';
+        } else if (closeBelow) {
+          touchType = 'close';
+        } else {
+          touchType = 'wick';
+        }
+
+        return { touched: true, touchCandleIdx: i, touchType, touchDistance: lowDist };
+      }
+    }
+  }
+
+  return { touched: false, touchCandleIdx: -1, touchType: 'wick', touchDistance: 100 };
+}
+
+// --- Market Structure Detection ---
+
+interface TrendInfo {
+  direction: 'up' | 'down' | 'range';
+  strength: number;    // 0.0 to 1.0
+  ema50Slope: number;  // positive = rising
+  structure: 'HH_HL' | 'LH_LL' | 'mixed';
+}
+
+/**
+ * Detect market trend using EMA50 slope and HH/HL/LH/LL structure.
+ * Uses 10-bar EMA50 slope for smoothness.
+ * Requires at least 2 consecutive HH+HL or LH+LL for structure confirmation.
+ */
+function detectTrend(candles: CandleData[]): TrendInfo {
+  if (candles.length < 60) return { direction: 'range', strength: 0, ema50Slope: 0, structure: 'mixed' };
+
+  const closes = candles.map(c => c.close);
+  const e50 = ema(closes, 50);
+  const e20 = ema(closes, 20);
+
+  // EMA50 slope over 10 bars
+  const n = e50.length;
+  const slopeIdx = n - 1;
+  const slopeLookback = 10;
+  if (slopeIdx < slopeLookback || isNaN(e50[slopeIdx]) || isNaN(e50[slopeIdx - slopeLookback])) {
+    return { direction: 'range', strength: 0, ema50Slope: 0, structure: 'mixed' };
+  }
+  const ema50Slope = (e50[slopeIdx] - e50[slopeIdx - slopeLookback]) / e50[slopeIdx - slopeLookback];
+  const slopeStrength = Math.min(Math.abs(ema50Slope) / 0.02, 1); // 2% over 10 bars = max strength
+
+  // Price vs EMA50
+  const price = closes[closes.length - 1];
+  const ema50Val = e50[slopeIdx];
+  const priceAboveEma = price > ema50Val;
+
+  // EMA20 vs EMA50 alignment
+  const e20Val = e20[n - 1];
+  const emasAligned = !isNaN(e20Val) && !isNaN(ema50Val)
+    ? (priceAboveEma ? e20Val > ema50Val : e20Val < ema50Val)
+    : true;
+
+  // HH/HL/LH/LL structure detection (last 30 bars)
+  const structureBars = Math.min(30, candles.length - 1);
+  const startBar = candles.length - 1 - structureBars;
+  let higherHighs = 0, higherLows = 0, lowerHighs = 0, lowerLows = 0;
+
+  for (let i = startBar + 1; i < candles.length; i++) {
+    if (candles[i].high > candles[i - 1].high) higherHighs++;
+    else if (candles[i].high < candles[i - 1].high) lowerHighs++;
+    if (candles[i].low > candles[i - 1].low) higherLows++;
+    else if (candles[i].low < candles[i - 1].low) lowerLows++;
+  }
+
+  let structure: TrendInfo['structure'] = 'mixed';
+  if (higherHighs >= 2 && higherLows >= 2 && higherHighs > lowerHighs) {
+    structure = 'HH_HL';
+  } else if (lowerHighs >= 2 && lowerLows >= 2 && lowerHighs > higherHighs) {
+    structure = 'LH_LL';
+  }
+
+  // Determine direction
+  let direction: TrendInfo['direction'] = 'range';
+  if (ema50Slope > 0.005 && priceAboveEma && emasAligned && structure === 'HH_HL') {
+    direction = 'up';
+  } else if (ema50Slope < -0.005 && !priceAboveEma && emasAligned && structure === 'LH_LL') {
+    direction = 'down';
+  } else if (ema50Slope > 0.003 && priceAboveEma) {
+    direction = 'up';
+  } else if (ema50Slope < -0.003 && !priceAboveEma) {
+    direction = 'down';
+  }
 
   return {
-    symbol,
     direction,
-    score,
-    leverage,
-    stopLoss,
-    takeProfit,
-    indicators,
+    strength: direction === 'range' ? slopeStrength * 0.3 : slopeStrength,
+    ema50Slope,
+    structure,
   };
+}
+
+// --- Candle Pattern Detection ---
+
+interface CandlePattern {
+  type: 'pin_bar_bullish' | 'pin_bar_bearish' | 'engulfing_bullish' | 'engulfing_bearish' | 'doji' | 'long_wick_bullish' | 'long_wick_bearish' | 'none';
+  strength: number;  // 0-1
+}
+
+/**
+ * Detect candlestick patterns on the last candle.
+ * Includes long wick detection (>50% of range, body <35%) as valid rejection.
+ */
+function detectCandlePattern(candles: CandleData[]): CandlePattern {
+  if (candles.length < 3) return { type: 'none', strength: 0 };
+  const c = candles[candles.length - 1];
+  const prev = candles[candles.length - 2];
+  const shape = analyzeCandleShape(c);
+  const prevShape = analyzeCandleShape(prev);
+
+  // Doji: very small body relative to range
+  if (shape.bodyRatio < 0.15 && (c.high - c.low) > 0) {
+    return { type: 'doji', strength: 0.6 };
+  }
+
+  // Long upper wick bearish (rejection of higher prices)
+  if (shape.upperWick > 0.50 && shape.bodyRatio < 0.35) {
+    return { type: 'long_wick_bearish', strength: Math.min(shape.upperWick, 0.9) };
+  }
+
+  // Long lower wick bullish (rejection of lower prices)
+  if (shape.lowerWick > 0.50 && shape.bodyRatio < 0.35) {
+    return { type: 'long_wick_bullish', strength: Math.min(shape.lowerWick, 0.9) };
+  }
+
+  // Pin bar bearish: small body at top, long lower shadow... wait, pin bar bearish = long upper wick
+  // Classic pin bar: body < 1/3 of range, one wick > 2/3 of range
+  const range = c.high - c.low;
+  if (range > 0) {
+    const bodyTop = Math.max(c.close, c.open);
+    const bodyBottom = Math.min(c.close, c.open);
+    const upperWickLen = c.high - bodyTop;
+    const lowerWickLen = bodyBottom - c.low;
+
+    // Bearish pin bar: long upper wick, body at bottom
+    if (upperWickLen > range * 0.6 && shape.bodyRatio < 0.35 && c.close < c.open) {
+      return { type: 'pin_bar_bearish', strength: Math.min(upperWickLen / range, 1) };
+    }
+
+    // Bullish pin bar: long lower wick, body at top
+    if (lowerWickLen > range * 0.6 && shape.bodyRatio < 0.35 && c.close > c.open) {
+      return { type: 'pin_bar_bullish', strength: Math.min(lowerWickLen / range, 1) };
+    }
+  }
+
+  // Engulfing patterns
+  if (c.close > c.open && prev.close < prev.open) { // Bullish engulfing
+    if (c.open <= prev.close && c.close >= prev.open) {
+      return { type: 'engulfing_bullish', strength: Math.min(shape.bodyRatio * 1.5, 1) };
+    }
+  }
+  if (c.close < c.open && prev.close > prev.open) { // Bearish engulfing
+    if (c.open >= prev.close && c.close <= prev.open) {
+      return { type: 'engulfing_bearish', strength: Math.min(shape.bodyRatio * 1.5, 1) };
+    }
+  }
+
+  return { type: 'none', strength: 0 };
+}
+
+// --- Helper: Find nearest S/R level ---
+
+function findNearestLevel(
+  price: number,
+  levels: SRLevel[],
+  direction: 'above' | 'below' | 'any',
+  maxDistPct: number = 5,
+): SRLevel | null {
+  let best: SRLevel | null = null;
+  let bestDist = Infinity;
+
+  for (const lv of levels) {
+    const dist = Math.abs(lv.price - price) / price * 100;
+    if (dist > maxDistPct) continue;
+
+    if (direction === 'above' && lv.price <= price) continue;
+    if (direction === 'below' && lv.price >= price) continue;
+
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = lv;
+    }
+  }
+
+  return best;
+}
+
+// --- Helper: Average volume of last N candles ---
+
+function avgVolume(candles: CandleData[], n: number = 20): number {
+  const sl = candles.slice(-n);
+  return sl.reduce((s, c) => s + c.volume, 0) / sl.length;
+}
+
+// --- Helper: No decision ---
+
+function noDecision(symbol: string): TradingDecision {
+  return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators: [] };
+}
+
+// ============================================================
+// Strategy 1: Momentum Pro (1H) — "Smart Pullback"
+// Only 4 valid entry patterns, ALL require S/R touch.
+// ============================================================
+
+function makeMomentumDecision(symbol: string, candles: CandleData[]): TradingDecision {
+  if (candles.length < 100) return noDecision(symbol);
+
+  const n = candles.length;
+  const price = candles[n - 1].close;
+  const closes = candles.map(c => c.close);
+
+  // Calculate indicators for filtering
+  const atr = calcATR(candles, 14);
+  const adxData = calcADX(candles);
+  const rsi = calcRSI(closes);
+  const e20arr = ema(closes, 20);
+  const ema20 = e20arr[e20arr.length - 1] || 0;
+
+  // ADX regime filter: ADX < 15 → return none (very choppy)
+  // With S/R-first entry, we can trade in moderate ADX since the level provides the edge
+  if (adxData.adx < 15) return noDecision(symbol);
+
+  // Step 1: Detect market structure
+  const trend = detectTrend(candles);
+
+  // Step 2: Find S/R levels (lookback=7 for 1H)
+  const levels = findSRLevels(candles, 7);
+  if (levels.length === 0) return noDecision(symbol);
+
+  // Step 3: Detect candle pattern
+  const pattern = detectCandlePattern(candles);
+
+  // Step 4: Volume check — any of last 3 candles above average?
+  const volAvg = avgVolume(candles, 20);
+  const volAboveAvg = candles.slice(-3).some(c => c.volume > volAvg);
+
+  // ==================================================================
+  // PATTERN A: Rejection at Resistance → SHORT
+  // ==================================================================
+  if (trend.direction === 'down' || trend.direction === 'range') {
+    // Find nearest resistance above price
+    const resistLevel = findNearestLevel(price, levels, 'above', 3);
+    if (resistLevel) {
+      const touch = verifyLevelTouch(candles, resistLevel, 'test_resistance', 3, 0.15);
+      if (touch.touched) {
+        // Check for rejection candle pattern
+        const isBearishRejection =
+          pattern.type === 'pin_bar_bearish' ||
+          pattern.type === 'engulfing_bearish' ||
+          pattern.type === 'long_wick_bearish';
+        const isDojiAtResistance = pattern.type === 'doji';
+
+        if (isBearishRejection && price < resistLevel.price && volAboveAvg) {
+          const sl = resistLevel.price + atr * 1.2;
+          const slDist = sl - price;
+          const nextSupport = findNearestLevel(price, levels, 'below', 10);
+          let tp: number;
+          if (nextSupport && nextSupport.price < price) {
+            tp = nextSupport.price;
+          } else {
+            tp = price - slDist * 3; // 1:3 R:R
+          }
+
+          // Cap TP at 15%
+          tp = Math.max(tp, price * (1 - 0.15));
+
+          // Ensure minimum R:R of 2:1
+          {
+            const slDist = Math.abs(sl - price) / price;
+            const tpDist = Math.abs(tp - price) / price;
+            if (tpDist < slDist * 2) {
+              tp = price - slDist * 2.5;
+            }
+          }
+
+          // Spike guard
+          const guard = spikeGuard(candles, closes, atr, rsi, 'short', ema20);
+          if (guard.blocked) return noDecision(symbol);
+
+          const score = 0.35 + resistLevel.strength * 0.3 + pattern.strength * 0.2 + (volAboveAvg ? 0.1 : 0);
+
+          console.log(`[Momentum] ${symbol} SHORT @ ${price.toFixed(4)} | reason: rejection_resistance | level: ${resistLevel.price.toFixed(4)} | touched: ${touch.touchType} | pattern: ${pattern.type} | trend: ${trend.direction}(${trend.strength.toFixed(2)})`);
+
+          return {
+            symbol,
+            direction: 'short',
+            score: Math.min(score, 1),
+            leverage: 3,
+            stopLoss: Math.round(sl * 1e8) / 1e8,
+            takeProfit: Math.round(tp * 1e8) / 1e8,
+            indicators: [],
+          };
+        }
+
+        // Doji at resistance in range/down trend = potential reversal
+        if (isDojiAtResistance && price < resistLevel.price && volAboveAvg) {
+          const sl = resistLevel.price + atr * 1.2;
+          const slDist = sl - price;
+          const nextSupport = findNearestLevel(price, levels, 'below', 10);
+          let tp: number;
+          if (nextSupport && nextSupport.price < price) {
+            tp = nextSupport.price;
+          } else {
+            tp = price - slDist * 3;
+          }
+          tp = Math.max(tp, price * (1 - 0.15));
+
+          // Ensure minimum R:R of 2:1
+          {
+            const slDist = Math.abs(sl - price) / price;
+            const tpDist = Math.abs(tp - price) / price;
+            if (tpDist < slDist * 2) {
+              tp = price - slDist * 2.5;
+            }
+          }
+
+          const guard = spikeGuard(candles, closes, atr, rsi, 'short', ema20);
+          if (guard.blocked) return noDecision(symbol);
+
+          const score = 0.35 + resistLevel.strength * 0.2 + 0.1;
+
+          console.log(`[Momentum] ${symbol} SHORT @ ${price.toFixed(4)} | reason: doji_resistance | level: ${resistLevel.price.toFixed(4)} | touched: ${touch.touchType} | trend: ${trend.direction}(${trend.strength.toFixed(2)})`);
+
+          return {
+            symbol,
+            direction: 'short',
+            score: Math.min(score, 0.8),
+            leverage: 2,
+            stopLoss: Math.round(sl * 1e8) / 1e8,
+            takeProfit: Math.round(tp * 1e8) / 1e8,
+            indicators: [],
+          };
+        }
+      }
+    }
+  }
+
+  // ==================================================================
+  // PATTERN B: Bounce at Support → LONG
+  // ==================================================================
+  if (trend.direction === 'up' || trend.direction === 'range') {
+    const supportLevel = findNearestLevel(price, levels, 'below', 3);
+    if (supportLevel) {
+      const touch = verifyLevelTouch(candles, supportLevel, 'test_support', 3, 0.15);
+      if (touch.touched) {
+        const isBullishBounce =
+          pattern.type === 'pin_bar_bullish' ||
+          pattern.type === 'engulfing_bullish' ||
+          pattern.type === 'long_wick_bullish';
+        const isDojiAtSupport = pattern.type === 'doji';
+
+        if (isBullishBounce && price > supportLevel.price && volAboveAvg) {
+          const sl = supportLevel.price - atr * 1.2;
+          const slDist = price - sl;
+          const nextResistance = findNearestLevel(price, levels, 'above', 10);
+          let tp: number;
+          if (nextResistance && nextResistance.price > price) {
+            tp = nextResistance.price;
+          } else {
+            tp = price + slDist * 3;
+          }
+          tp = Math.min(tp, price * (1 + 0.15));
+
+          // Ensure minimum R:R of 2:1
+          {
+            const slDist = Math.abs(sl - price) / price;
+            const tpDist = Math.abs(tp - price) / price;
+            if (tpDist < slDist * 2) {
+              tp = price + slDist * 2.5;
+            }
+          }
+
+          const guard = spikeGuard(candles, closes, atr, rsi, 'long', ema20);
+          if (guard.blocked) return noDecision(symbol);
+
+          const score = 0.35 + supportLevel.strength * 0.3 + pattern.strength * 0.2 + (volAboveAvg ? 0.1 : 0);
+
+          console.log(`[Momentum] ${symbol} LONG @ ${price.toFixed(4)} | reason: bounce_support | level: ${supportLevel.price.toFixed(4)} | touched: ${touch.touchType} | pattern: ${pattern.type} | trend: ${trend.direction}(${trend.strength.toFixed(2)})`);
+
+          return {
+            symbol,
+            direction: 'long',
+            score: Math.min(score, 1),
+            leverage: 3,
+            stopLoss: Math.round(sl * 1e8) / 1e8,
+            takeProfit: Math.round(tp * 1e8) / 1e8,
+            indicators: [],
+          };
+        }
+
+        if (isDojiAtSupport && price > supportLevel.price && volAboveAvg) {
+          const sl = supportLevel.price - atr * 1.2;
+          const slDist = price - sl;
+          const nextResistance = findNearestLevel(price, levels, 'above', 10);
+          let tp: number;
+          if (nextResistance && nextResistance.price > price) {
+            tp = nextResistance.price;
+          } else {
+            tp = price + slDist * 3;
+          }
+          tp = Math.min(tp, price * (1 + 0.15));
+
+          // Ensure minimum R:R of 2:1
+          {
+            const slDist = Math.abs(sl - price) / price;
+            const tpDist = Math.abs(tp - price) / price;
+            if (tpDist < slDist * 2) {
+              tp = price + slDist * 2.5;
+            }
+          }
+
+          const guard = spikeGuard(candles, closes, atr, rsi, 'long', ema20);
+          if (guard.blocked) return noDecision(symbol);
+
+          const score = 0.35 + supportLevel.strength * 0.2 + 0.1;
+
+          console.log(`[Momentum] ${symbol} LONG @ ${price.toFixed(4)} | reason: doji_support | level: ${supportLevel.price.toFixed(4)} | touched: ${touch.touchType} | trend: ${trend.direction}(${trend.strength.toFixed(2)})`);
+
+          return {
+            symbol,
+            direction: 'long',
+            score: Math.min(score, 0.8),
+            leverage: 2,
+            stopLoss: Math.round(sl * 1e8) / 1e8,
+            takeProfit: Math.round(tp * 1e8) / 1e8,
+            indicators: [],
+          };
+        }
+      }
+    }
+  }
+
+  // ==================================================================
+  // PATTERN C: Pullback to Support in Uptrend → LONG
+  // ==================================================================
+  if (trend.direction === 'up' && (trend.structure === 'HH_HL' || trend.strength > 0.3)) {
+    const supportLevel = findNearestLevel(price, levels, 'below', 5);
+    if (supportLevel) {
+      const touch = verifyLevelTouch(candles, supportLevel, 'test_support', 3, 0.15);
+      if (touch.touched) {
+        // At minimum: doji or small body at support
+        const lastShape = analyzeCandleShape(candles[n - 1]);
+        const isIndecision = lastShape.bodyRatio < 0.35;
+        const isBullish = candles[n - 1].close > candles[n - 1].open;
+
+        if (isIndecision || isBullish) {
+          const sl = supportLevel.price - atr * 1.2;
+          const slDist = price - sl;
+          // Target previous swing high or 1:3 R:R
+          const nextResistance = findNearestLevel(price, levels, 'above', 10);
+          let tp: number;
+          if (nextResistance && nextResistance.price > price) {
+            tp = nextResistance.price;
+          } else {
+            tp = price + slDist * 3;
+          }
+          tp = Math.min(tp, price * (1 + 0.15));
+
+          // Ensure minimum R:R of 2:1
+          {
+            const slDist = Math.abs(sl - price) / price;
+            const tpDist = Math.abs(tp - price) / price;
+            if (tpDist < slDist * 2) {
+              tp = price + slDist * 2.5;
+            }
+          }
+
+          const guard = spikeGuard(candles, closes, atr, rsi, 'long', ema20);
+          if (guard.blocked) return noDecision(symbol);
+
+          const score = 0.4 + trend.strength * 0.2 + supportLevel.strength * 0.2 + (isBullish ? 0.1 : 0);
+
+          console.log(`[Momentum] ${symbol} LONG @ ${price.toFixed(4)} | reason: pullback_support_uptrend | level: ${supportLevel.price.toFixed(4)} | touched: ${touch.touchType} | trend: ${trend.direction}(${trend.strength.toFixed(2)})`);
+
+          return {
+            symbol,
+            direction: 'long',
+            score: Math.min(score, 1),
+            leverage: 3,
+            stopLoss: Math.round(sl * 1e8) / 1e8,
+            takeProfit: Math.round(tp * 1e8) / 1e8,
+            indicators: [],
+          };
+        }
+      }
+    }
+  }
+
+  // ==================================================================
+  // PATTERN D: Pullback to Resistance in Downtrend → SHORT
+  // ==================================================================
+  if (trend.direction === 'down' && (trend.structure === 'LH_LL' || trend.strength > 0.3)) {
+    const resistLevel = findNearestLevel(price, levels, 'above', 5);
+    if (resistLevel) {
+      const touch = verifyLevelTouch(candles, resistLevel, 'test_resistance', 3, 0.15);
+      if (touch.touched) {
+        const lastShape = analyzeCandleShape(candles[n - 1]);
+        const isIndecision = lastShape.bodyRatio < 0.35;
+        const isBearish = candles[n - 1].close < candles[n - 1].open;
+
+        if (isIndecision || isBearish) {
+          const sl = resistLevel.price + atr * 1.2;
+          const slDist = sl - price;
+          const nextSupport = findNearestLevel(price, levels, 'below', 10);
+          let tp: number;
+          if (nextSupport && nextSupport.price < price) {
+            tp = nextSupport.price;
+          } else {
+            tp = price - slDist * 3;
+          }
+          tp = Math.max(tp, price * (1 - 0.15));
+
+          // Ensure minimum R:R of 2:1
+          {
+            const slDist = Math.abs(sl - price) / price;
+            const tpDist = Math.abs(tp - price) / price;
+            if (tpDist < slDist * 2) {
+              tp = price - slDist * 2.5;
+            }
+          }
+
+          const guard = spikeGuard(candles, closes, atr, rsi, 'short', ema20);
+          if (guard.blocked) return noDecision(symbol);
+
+          const score = 0.4 + trend.strength * 0.2 + resistLevel.strength * 0.2 + (isBearish ? 0.1 : 0);
+
+          console.log(`[Momentum] ${symbol} SHORT @ ${price.toFixed(4)} | reason: pullback_resistance_downtrend | level: ${resistLevel.price.toFixed(4)} | touched: ${touch.touchType} | trend: ${trend.direction}(${trend.strength.toFixed(2)})`);
+
+          return {
+            symbol,
+            direction: 'short',
+            score: Math.min(score, 1),
+            leverage: 3,
+            stopLoss: Math.round(sl * 1e8) / 1e8,
+            takeProfit: Math.round(tp * 1e8) / 1e8,
+            indicators: [],
+          };
+        }
+      }
+    }
+  }
+
+  // No pattern matched → no trade. Period.
+  return noDecision(symbol);
+}
+
+// ============================================================
+// Strategy 2: Scalp Hunter (5M) — "Level Scalper"
+// S/R-first on 5M with tighter parameters
+// ============================================================
+
+function makeScalpHunterDecision(symbol: string, candles: CandleData[]): TradingDecision {
+  if (candles.length < 100) return noDecision(symbol);
+
+  const n = candles.length;
+  const price = candles[n - 1].close;
+  const closes = candles.map(c => c.close);
+
+  const atr = calcATR(candles, 14);
+  const rsi = calcRSI(closes, 7); // Faster RSI for scalping
+  const e20arr = ema(closes, 20);
+  const ema20 = e20arr[e20arr.length - 1] || 0;
+  const volAvg = avgVolume(candles, 20);
+  const lastVol = candles[n - 1].volume;
+  const volSpike = lastVol > volAvg * 1.5;
+
+  // Find S/R levels with lookback=10 for 5M (need more bars)
+  const levels = findSRLevels(candles, 10, 0.4, 3); // minTouches=3 for stronger threshold
+  const strongLevels = levels.filter(l => l.strength > 0.3);
+  if (strongLevels.length === 0) return noDecision(symbol);
+
+  const pattern = detectCandlePattern(candles);
+
+  // RSI direction: rising = long-biased, falling = short-biased
+  const rsiPrev = calcRSI(closes.slice(0, -1), 7);
+  const rsiRising = rsi > rsiPrev;
+
+  // Max 2 indicators need to agree (RSI direction + volume), but S/R touch is MANDATORY
+  let indicatorAgree = 0;
+  if (rsiRising) indicatorAgree++;
+  else indicatorAgree--;
+  if (volSpike) indicatorAgree++; // volume spike always helps
+
+  // Touch verification: 0.1% (tighter for scalping)
+  // ==================================================================
+  // SHORT: Price touched resistance, rejection pattern + volume spike
+  // ==================================================================
+  const resistLevel = findNearestLevel(price, strongLevels, 'above', 2);
+  if (resistLevel) {
+    const touch = verifyLevelTouch(candles, resistLevel, 'test_resistance', 3, 0.1);
+    if (touch.touched) {
+      const isBearishRejection =
+        pattern.type === 'pin_bar_bearish' ||
+        pattern.type === 'engulfing_bearish' ||
+        pattern.type === 'long_wick_bearish' ||
+        pattern.type === 'doji';
+
+      if (isBearishRejection && price < resistLevel.price) {
+        // Require at least RSI falling or volume spike
+        if (indicatorAgree <= 0 || volSpike) {
+          const sl = price + Math.max(atr * 1.2, price * 0.005); // 1.2×ATR, min 0.5%
+          const slDist = sl - price;
+          let tp = price - slDist * 2.5; // 1:2.5 R:R
+          tp = Math.max(tp, price * (1 - 0.05)); // cap 5%
+
+          const guard = spikeGuard(candles, closes, atr, rsi, 'short', ema20, {
+            atrMax: 2.0, rocMax: 5, rsiOS: 15,
+          });
+          if (guard.blocked) return noDecision(symbol);
+
+          const score = 0.2 + resistLevel.strength * 0.3 + pattern.strength * 0.2 + (volSpike ? 0.2 : 0);
+
+          console.log(`[Scalper] ${symbol} SHORT @ ${price.toFixed(4)} | reason: rejection_resistance | level: ${resistLevel.price.toFixed(4)} | touched: ${touch.touchType} | volSpike: ${volSpike} | rsi: ${rsi.toFixed(1)}`);
+
+          return {
+            symbol,
+            direction: 'short',
+            score: Math.min(score, 0.9),
+            leverage: 2,
+            stopLoss: Math.round(sl * 1e8) / 1e8,
+            takeProfit: Math.round(tp * 1e8) / 1e8,
+            indicators: [],
+          };
+        }
+      }
+    }
+  }
+
+  // ==================================================================
+  // LONG: Price touched support, bounce pattern + volume spike
+  // ==================================================================
+  const supportLevel = findNearestLevel(price, strongLevels, 'below', 2);
+  if (supportLevel) {
+    const touch = verifyLevelTouch(candles, supportLevel, 'test_support', 3, 0.1);
+    if (touch.touched) {
+      const isBullishBounce =
+        pattern.type === 'pin_bar_bullish' ||
+        pattern.type === 'engulfing_bullish' ||
+        pattern.type === 'long_wick_bullish' ||
+        pattern.type === 'doji';
+
+      if (isBullishBounce && price > supportLevel.price) {
+        if (indicatorAgree >= 0 || volSpike) {
+          const sl = price - Math.max(atr * 1.2, price * 0.005);
+          const slDist = price - sl;
+          let tp = price + slDist * 2.5;
+          tp = Math.min(tp, price * (1 + 0.05)); // cap 5%
+
+          const guard = spikeGuard(candles, closes, atr, rsi, 'long', ema20, {
+            atrMax: 2.0, rocMax: 5, rsiOB: 85,
+          });
+          if (guard.blocked) return noDecision(symbol);
+
+          const score = 0.2 + supportLevel.strength * 0.3 + pattern.strength * 0.2 + (volSpike ? 0.2 : 0);
+
+          console.log(`[Scalper] ${symbol} LONG @ ${price.toFixed(4)} | reason: bounce_support | level: ${supportLevel.price.toFixed(4)} | touched: ${touch.touchType} | volSpike: ${volSpike} | rsi: ${rsi.toFixed(1)}`);
+
+          return {
+            symbol,
+            direction: 'long',
+            score: Math.min(score, 0.9),
+            leverage: 2,
+            stopLoss: Math.round(sl * 1e8) / 1e8,
+            takeProfit: Math.round(tp * 1e8) / 1e8,
+            indicators: [],
+          };
+        }
+      }
+    }
+  }
+
+  return noDecision(symbol);
+}
+
+// ============================================================
+// Strategy 3: Position Alpha (4H) — "Major Reversal"
+// EMA50/200 crossover MUST happen near a major S/R level
+// ============================================================
+
+function makePositionAlphaDecision(symbol: string, candles: CandleData[]): TradingDecision {
+  if (candles.length < 220) return noDecision(symbol); // Need 200+ for EMA200
+
+  const n = candles.length;
+  const price = candles[n - 1].close;
+  const closes = candles.map(c => c.close);
+
+  const atr = calcATR(candles, 14);
+  const adxData = calcADX(candles);
+  const rsi = calcRSI(closes);
+  const e20arr = ema(closes, 20);
+  const ema20 = e20arr[e20arr.length - 1] || 0;
+
+  // ADX > 25 required (config says 30, but 25 is the strategy adxMin)
+  if (adxData.adx < 25) return noDecision(symbol);
+
+  // EMA50 and EMA200
+  const e50 = ema(closes, 50);
+  const e200 = ema(closes, 200);
+  const ema50Now = e50[n - 1];
+  const ema200Now = e200[n - 1];
+  const ema50Prev = e50[n - 2];
+  const ema200Prev = e200[n - 2];
+
+  if (isNaN(ema50Now) || isNaN(ema200Now) || isNaN(ema50Prev) || isNaN(ema200Prev)) {
+    return noDecision(symbol);
+  }
+
+  // Detect crossover in the last 5 candles
+  let crossoverType: 'golden' | 'death' | null = null;
+  let crossoverIdx = -1;
+  for (let i = n - 5; i < n; i++) {
+    if (isNaN(e50[i]) || isNaN(e200[i]) || isNaN(e50[i-1]) || isNaN(e200[i-1])) continue;
+    if (e50[i-1] <= e200[i-1] && e50[i] > e200[i]) {
+      crossoverType = 'golden';
+      crossoverIdx = i;
+      break;
+    }
+    if (e50[i-1] >= e200[i-1] && e50[i] < e200[i]) {
+      crossoverType = 'death';
+      crossoverIdx = i;
+      break;
+    }
+  }
+
+  // If no recent crossover, no trade
+  if (!crossoverType) return noDecision(symbol);
+
+  // Find S/R levels
+  const levels = findSRLevels(candles, 7, 0.5, 2);
+  if (levels.length === 0) return noDecision(symbol);
+
+  // CRITICAL: Crossover must happen near a major S/R level (within 2%)
+  const nearLevel = findNearestLevel(price, levels, 'any', 2);
+  if (!nearLevel) {
+    console.log(`[PositionAlpha] ${symbol} SKIP: crossover(${crossoverType}) but no S/R level within 2% (price=${price.toFixed(4)})`);
+    return noDecision(symbol);
+  }
+
+  // Additional confirmation: MACD direction
+  const macd = calcMACD(closes);
+  const macdBullish = macd.histogram > 0 && macd.macdLine > macd.signalLine;
+  const macdBearish = macd.histogram < 0 && macd.macdLine < macd.signalLine;
+
+  // Additional confirmation: OBV trend alignment
+  const obv = calcOBV(candles);
+
+  // Spike guard
+  const guard = spikeGuard(candles, closes, atr, rsi, crossoverType === 'golden' ? 'long' : 'short', ema20);
+  if (guard.blocked) return noDecision(symbol);
+
+  // ==================================================================
+  // Golden Cross near support → LONG
+  // ==================================================================
+  if (crossoverType === 'golden') {
+    const levelTypeOk = nearLevel.type === 'support';
+    if (levelTypeOk && macdBullish) {
+      const sl = price - atr * 4; // Wide SL: 4×ATR
+      const slDist = price - sl;
+      let tp = price + slDist * 5; // 1:5 R:R
+      tp = Math.min(tp, price * (1 + 0.15)); // cap 15%
+
+      const score = 0.4 + nearLevel.strength * 0.2 + (adxData.adx > 30 ? 0.15 : 0.05) + (obv.trend > 0 ? 0.1 : 0);
+
+      console.log(`[PositionAlpha] ${symbol} LONG @ ${price.toFixed(4)} | reason: golden_cross_at_SR | level: ${nearLevel.price.toFixed(4)}(${nearLevel.type}) | adx: ${adxData.adx.toFixed(1)} | macd: bullish`);
+
+      return {
+        symbol,
+        direction: 'long',
+        score: Math.min(score, 1),
+        leverage: 2,
+        stopLoss: Math.round(sl * 1e8) / 1e8,
+        takeProfit: Math.round(tp * 1e8) / 1e8,
+        indicators: [],
+      };
+    }
+  }
+
+  // ==================================================================
+  // Death Cross near resistance → SHORT
+  // ==================================================================
+  if (crossoverType === 'death') {
+    const levelTypeOk = nearLevel.type === 'resistance';
+    if (levelTypeOk && macdBearish) {
+      const sl = price + atr * 4;
+      const slDist = sl - price;
+      let tp = price - slDist * 5;
+      tp = Math.max(tp, price * (1 - 0.15));
+
+      const score = 0.4 + nearLevel.strength * 0.2 + (adxData.adx > 30 ? 0.15 : 0.05) + (obv.trend < 0 ? 0.1 : 0);
+
+      console.log(`[PositionAlpha] ${symbol} SHORT @ ${price.toFixed(4)} | reason: death_cross_at_SR | level: ${nearLevel.price.toFixed(4)}(${nearLevel.type}) | adx: ${adxData.adx.toFixed(1)} | macd: bearish`);
+
+      return {
+        symbol,
+        direction: 'short',
+        score: Math.min(score, 1),
+        leverage: 2,
+        stopLoss: Math.round(sl * 1e8) / 1e8,
+        takeProfit: Math.round(tp * 1e8) / 1e8,
+        indicators: [],
+      };
+    }
+  }
+
+  return noDecision(symbol);
 }
 
 // ============================================================
 // Multi-Strategy Decision Router
 // ============================================================
 
-function noDecision(symbol: string, candles: CandleData[]): TradingDecision {
-  return {
-    symbol,
-    direction: 'none',
-    score: 0,
-    leverage: 1,
-    stopLoss: 0,
-    takeProfit: 0,
-    indicators: [],
-  };
-}
-
-export type StrategyOverrides = {
-  scoreThreshold?: number;
-  maxLeverage?: number;
-  riskRewardRatio?: number;
-  adxMin?: number | null;
-  mtfEnabled?: boolean;
-};
-
 export function makeStrategyDecision(
   strategyId: string,
   symbol: string,
   candles: CandleData[],
-  idleMinutes: number = 0,
-  strategyOverride?: StrategyOverrides & Partial<StrategyConfig>,
-  weights?: Record<string, number>,
+  _idleMinutes: number,
+  _strategyOverride?: StrategyConfig,
 ): TradingDecision {
-  const base = getStrategy(strategyId);
-  if (!base) return noDecision(symbol, candles);
-
-  // Merge overrides with base strategy config
-  const strategy: StrategyConfig = strategyOverride
-    ? { ...base, ...strategyOverride } as StrategyConfig
-    : base;
-
-  const effectiveWeights = weights ?? {};
-
+  let decision: TradingDecision;
   switch (strategyId) {
+    case 'momentum':
+      decision = makeMomentumDecision(symbol, candles);
+      break;
     case 'scalper':
-      return makePatternProDecision(symbol, candles, strategy, idleMinutes, effectiveWeights);
+      decision = makeScalpHunterDecision(symbol, candles);
+      break;
     case 'position-alpha':
-      return makePositionAlphaDecision(symbol, candles, strategy, idleMinutes, effectiveWeights);
+      decision = makePositionAlphaDecision(symbol, candles);
+      break;
     default:
-      return makeMomentumDecision(symbol, candles, strategy, idleMinutes, effectiveWeights);
+      decision = makeMomentumDecision(symbol, candles);
+      break;
   }
+
+  // Minimum R:R validation
+  const currentPrice = candles[candles.length - 1]?.close ?? 0;
+  if (decision.direction !== 'none' && decision.stopLoss && decision.takeProfit && currentPrice > 0) {
+    const slDist = Math.abs(decision.stopLoss - currentPrice) / currentPrice;
+    const tpDist = Math.abs(decision.takeProfit - currentPrice) / currentPrice;
+    const rr = tpDist / Math.max(slDist, 0.0001);
+    if (rr < 1.5) {
+      decision.direction = 'none';
+      decision.score = 0;
+    }
+  }
+
+  return decision;
 }
 
 // ============================================================
-// Strategy 1: Momentum Pro (adapted from makeTradingDecision)
+// Generic Trading Decision (legacy — for backward compatibility)
+// Uses indicator confluence only, NOT used by new strategies
 // ============================================================
 
-function makeMomentumDecision(
+export function makeTradingDecision(
   symbol: string,
   candles: CandleData[],
-  strategy: StrategyConfig,
-  _idleMinutes: number = 0,
-  weights: Record<string, number> = {},
+  weights: Record<string, number>,
 ): TradingDecision {
-  const indicators = analyzeIndicators(candles, weights);
+  if (candles.length < 50) return noDecision(symbol);
+
   const closes = candles.map(c => c.close);
-  const price = closes[closes.length - 1];
-  const atr = calcATR(candles);
+  const atr = calcATR(candles, 14);
   const rsi = calcRSI(closes);
-  const adxResult = calcADX(candles);
+  const signals = analyzeIndicators(candles, weights);
 
-  // ADX regime filter — require strong trend
-  if (strategy.adxMin !== null && adxResult.adx < strategy.adxMin) {
-    return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
+  let longScore = 0, shortScore = 0;
+  for (const sig of signals) {
+    const w = weights[sig.name] ?? 1;
+    if (sig.signal > 0) longScore += sig.strength * w;
+    if (sig.signal < 0) shortScore += sig.strength * w;
   }
 
-  let longScore = 0;
-  let shortScore = 0;
-  let longCount = 0;
-  let shortCount = 0;
-
-  for (const ind of indicators) {
-    const w = weights[ind.name] ?? 1;
-    if (ind.signal > 0) {
-      longScore += ind.strength * w;
-      longCount++;
-    } else if (ind.signal < 0) {
-      shortScore += ind.strength * w;
-      shortCount++;
-    }
-  }
-
-  const absLongScore = Math.abs(longScore);
-  const absShortScore = Math.abs(shortScore);
-  const maxScore = Math.max(absLongScore, absShortScore);
-
-  // Confluence: require ≥4 of 10 indicators to agree
-  const bestCount = Math.max(longCount, shortCount);
-  if (bestCount < 4) {
-    return { symbol, direction: 'none', score: maxScore, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
-  }
-
-  // Trend exhaustion filter: don't buy at the top, don't sell at the bottom
-  if (absLongScore >= absShortScore && rsi > 78) {
-    return { symbol, direction: 'none', score: maxScore, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
-  }
-  if (absShortScore > absLongScore && rsi < 22) {
-    return { symbol, direction: 'none', score: maxScore, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
-  }
-
-  let direction: 'long' | 'short' | 'none' = 'none';
-  let score = 0;
-
-  if (absLongScore >= strategy.scoreThreshold && absLongScore >= absShortScore) {
-    direction = 'long';
-    score = longScore;
-  } else if (absShortScore >= strategy.scoreThreshold && absShortScore > absLongScore) {
-    direction = 'short';
-    score = shortScore;
-  }
-
-  // ── SPIKE GUARD: Anti-chase filter ──
-  // Block entry if the market just had a sharp move (pump/dump).
-  // Computes EMA20 for overextension check.
-  if (direction !== 'none') {
-    const ema20Arr = ema(closes, 20);
-    const ema20 = ema20Arr[ema20Arr.length - 1] || price;
-    const guard = spikeGuard(candles, closes, atr, rsi, direction, ema20);
-    if (guard.blocked) {
-      console.log(`[Momentum] ${symbol} ${direction.toUpperCase()} blocked: ${guard.reason}`);
-      return { symbol, direction: 'none', score: maxScore, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
-    }
-  }
-
-  // Leverage: scale with signal strength
-  const leverage = direction === 'none'
-    ? 1
-    : Math.min(strategy.maxLeverage, Math.max(1, Math.round(maxScore * 2)));
-
-  // Wide stop loss: 3.0× ATR, floored at 0.8%, capped at 5% max from entry
-  // (floor prevents noise stop-outs on low-ATR assets; cap limits risk)
-  const stopLossPercent = Math.max(0.008, Math.min(3.0 * atr / price, 0.05));
-  const takeProfitPercent = Math.min(stopLossPercent * strategy.riskRewardRatio, 0.15);
-
-  const stopLoss = direction === 'long'
-    ? price * (1 - stopLossPercent)
-    : price * (1 + stopLossPercent);
-  const takeProfit = direction === 'long'
-    ? price * (1 + takeProfitPercent)
-    : price * (1 - takeProfitPercent);
-
-  return { symbol, direction, score, leverage, stopLoss, takeProfit, indicators };
-}
-
-// ============================================================
-// Strategy 2: Pattern Pro
-// Candlestick pattern recognition on 15m timeframe
-// Detects: Morning/Evening Star, Bull/Bear Flags, Wedges,
-// Double Bottom, Twins (bottom pattern)
-// SL: 2.5× ATR, TP: 1:2.5 R:R, strength > 0.15
-// ============================================================
-
-const TIER1_NAMES = [
-  'Утренняя звезда',
-  'Вечерняя звезда',
-  'Бычий флаг',
-  'Медвежий флаг',
-  'Близнецы (дно)',
-  'Нисходящий клин',
-  'Двойное дно',
-];
-
-function detectCandlePatterns(candles: CandleData[]): { name: string; direction: 'long' | 'short'; strength: number }[] {
-  const patterns: { name: string; direction: 'long' | 'short'; strength: number }[] = [];
-  if (candles.length < 10) return patterns;
-
-  const c = candles;
-  const len = c.length;
-  const last = c[len - 1];
-  const prev = c[len - 2];
-  const prev2 = c[len - 3];
-  const prev3 = len >= 4 ? c[len - 4] : null;
-
-  // ── Morning Star (Утренняя звезда) ──
-  // 3-candle bullish reversal: big red, small body (star), big green
-  if (prev3 && prev2) {
-    const body1 = Math.abs(prev3.close - prev3.open);
-    const body2 = Math.abs(prev2.close - prev2.open);
-    const body3 = Math.abs(last.close - last.open);
-    const range1 = prev3.high - prev3.low;
-    const range2 = prev2.high - prev2.low;
-    const isBearish1 = prev3.close < prev3.open;
-    const isBullish3 = last.close > last.open;
-    const starSmall = range1 > 0 ? body2 / range1 < 0.3 : false;
-    const body3Big = range1 > 0 ? body3 / range1 > 0.5 : false;
-    if (isBearish1 && starSmall && isBullish3 && body3Big && last.close > (prev3.open + prev3.close) / 2) {
-      const strength = Math.min(0.4 + body3 / (range1 || 1) * 0.6, 1);
-      patterns.push({ name: 'Утренняя звезда', direction: 'long', strength });
-    }
-  }
-
-  // ── Evening Star (Вечерняя звезда) ──
-  if (prev3 && prev2) {
-    const body1 = Math.abs(prev3.close - prev3.open);
-    const body2 = Math.abs(prev2.close - prev2.open);
-    const body3 = Math.abs(last.close - last.open);
-    const range1 = prev3.high - prev3.low;
-    const isBullish1 = prev3.close > prev3.open;
-    const isBearish3 = last.close < last.open;
-    const starSmall = range1 > 0 ? body2 / range1 < 0.3 : false;
-    const body3Big = range1 > 0 ? body3 / range1 > 0.5 : false;
-    if (isBullish1 && starSmall && isBearish3 && body3Big && last.close < (prev3.open + prev3.close) / 2) {
-      const strength = Math.min(0.4 + body3 / (range1 || 1) * 0.6, 1);
-      patterns.push({ name: 'Вечерняя звезда', direction: 'short', strength });
-    }
-  }
-
-  // ── Bull Flag (Бычий флаг) ──
-  // Strong upward move (pole) then 3-5 candles consolidating slightly down
-  if (len >= 8) {
-    const poleEnd = c[len - 6];
-    const poleStart = c[len - 10] ?? c[0];
-    const poleMove = (poleEnd.close - poleStart.close) / poleStart.close;
-    if (poleMove > 0.02) {
-      // Flag: last 5 candles consolidating (small range, slightly down)
-      const flagCandles = c.slice(-5);
-      const flagHigh = Math.max(...flagCandles.map(x => x.high));
-      const flagLow = Math.min(...flagCandles.map(x => x.low));
-      const flagRange = (flagHigh - flagLow) / flagLow;
-      const flagDrift = (flagCandles[flagCandles.length - 1].close - flagCandles[0].open) / flagCandles[0].open;
-      if (flagRange < 0.015 && flagDrift > -0.01) {
-        const strength = Math.min(poleMove * 20, 1) * Math.min((0.015 - flagRange) / 0.01, 1);
-        patterns.push({ name: 'Бычий флаг', direction: 'long', strength: Math.max(0.2, Math.min(strength, 1)) });
-      }
-    }
-  }
-
-  // ── Bear Flag (Медвежий флаг) ──
-  if (len >= 8) {
-    const poleEnd = c[len - 6];
-    const poleStart = c[len - 10] ?? c[0];
-    const poleMove = (poleStart.close - poleEnd.close) / poleStart.close;
-    if (poleMove > 0.02) {
-      const flagCandles = c.slice(-5);
-      const flagHigh = Math.max(...flagCandles.map(x => x.high));
-      const flagLow = Math.min(...flagCandles.map(x => x.low));
-      const flagRange = (flagHigh - flagLow) / flagLow;
-      const flagDrift = (flagCandles[0].open - flagCandles[flagCandles.length - 1].close) / flagCandles[0].open;
-      if (flagRange < 0.015 && flagDrift > -0.01) {
-        const strength = Math.min(poleMove * 20, 1) * Math.min((0.015 - flagRange) / 0.01, 1);
-        patterns.push({ name: 'Медвежий флаг', direction: 'short', strength: Math.max(0.2, Math.min(strength, 1)) });
-      }
-    }
-  }
-
-  // ── Descending Wedge (Нисходящий клин) — bullish reversal ──
-  if (len >= 10) {
-    const recent = c.slice(-10);
-    const highs = recent.map(x => x.high);
-    const lows = recent.map(x => x.low);
-    const highSlope = (highs[highs.length - 1] - highs[0]) / highs[0];
-    const lowSlope = (lows[lows.length - 1] - lows[0]) / lows[0];
-    // Both highs and lows declining, but lows decline faster (converging)
-    if (highSlope < -0.005 && lowSlope < highSlope * 1.5 && last.close > prev.close) {
-      const convergence = Math.abs(lowSlope - highSlope);
-      const strength = Math.min(convergence * 100, 1);
-      patterns.push({ name: 'Нисходящий клин', direction: 'long', strength: Math.max(0.2, strength) });
-    }
-  }
-
-  // ── Double Bottom (Двойное дно) ──
-  if (len >= 15) {
-    const recent = c.slice(-15);
-    const lows: { price: number; idx: number }[] = [];
-    for (let i = 1; i < recent.length - 1; i++) {
-      if (recent[i].low < recent[i - 1].low && recent[i].low < recent[i + 1].low) {
-        lows.push({ price: recent[i].low, idx: i });
-      }
-    }
-    if (lows.length >= 2) {
-      const lastTwo = lows.slice(-2);
-      const priceDiff = Math.abs(lastTwo[0].price - lastTwo[1].price) / lastTwo[0].price;
-      if (priceDiff < 0.01 && last.close > recent[recent.length - 2].close) {
-        const strength = Math.min((0.01 - priceDiff) / 0.005, 1) * 0.8;
-        patterns.push({ name: 'Двойное дно', direction: 'long', strength: Math.max(0.3, strength) });
-      }
-    }
-  }
-
-  // ── Twins Bottom (Близнецы (дно)) — two consecutive doji/small candles at bottom ──
-  if (prev3 && prev2) {
-    const body2 = Math.abs(prev.close - prev.open);
-    const body3 = Math.abs(prev2.close - prev2.open);
-    const range2 = prev.high - prev.low;
-    const range3 = prev2.high - prev2.low;
-    const isSmall2 = range2 > 0 ? body2 / range2 < 0.2 : false;
-    const isSmall3 = range3 > 0 ? body3 / range3 < 0.2 : false;
-    const lowsNear = range2 > 0 ? Math.abs(prev.low - prev2.low) / range2 < 0.3 : false;
-    const bullishClose = last.close > prev.close && last.close > prev2.close;
-    if (isSmall2 && isSmall3 && lowsNear && bullishClose) {
-      patterns.push({ name: 'Близнецы (дно)', direction: 'long', strength: 0.5 });
-    }
-  }
-
-  return patterns;
-}
-
-function makePatternProDecision(
-  symbol: string,
-  candles: CandleData[],
-  strategy: StrategyConfig,
-  _idleMinutes: number = 0,
-  weights: Record<string, number> = {},
-): TradingDecision {
-  if (candles.length < 25) return noDecision(symbol, candles);
-
-  const closes = candles.map(c => c.close);
-  const price = closes[closes.length - 1];
-  const atr = calcATR(candles, 14);
-  const indicators: IndicatorSignal[] = [];
-
-  // ── Pattern Detection ──
-  const patterns = detectCandlePatterns(candles);
-  const tier1Patterns = patterns.filter(p => TIER1_NAMES.includes(p.name) && p.strength > 0.15);
-
-  if (tier1Patterns.length === 0) {
-    return { symbol, direction: 'none', score: 0, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
-  }
-
-  // Score based on pattern strength and count
-  let longScore = 0;
-  let shortScore = 0;
-  for (const p of tier1Patterns) {
-    if (p.direction === 'long') longScore += p.strength;
-    else shortScore += p.strength;
-    indicators.push({ name: p.name, signal: p.direction === 'long' ? 1 : -1, strength: p.strength });
-  }
-
-  // ── Supplementary: RSI context ──
-  const rsi = calcRSI(closes, 14);
-  const rsiBoost = rsi < 35 ? 0.15 : rsi > 65 ? -0.15 : 0;
-  indicators.push({ name: 'RSI', signal: rsiBoost > 0 ? 1 : rsiBoost < 0 ? -1 : 0, strength: Math.abs(rsiBoost) });
-  if (rsiBoost > 0) longScore += rsiBoost;
-  else if (rsiBoost < 0) shortScore += Math.abs(rsiBoost);
-
-  // ── Supplementary: Volume confirmation ──
-  if (candles.length >= 20) {
-    const recent5Vol = candles.slice(-5).reduce((s, c) => s + c.volume, 0) / 5;
-    const last20Vol = candles.slice(-20).reduce((s, c) => s + c.volume, 0) / 20;
-    const volRatio = last20Vol > 0 ? recent5Vol / last20Vol : 0;
-    if (volRatio > 1.2) {
-      indicators.push({ name: 'Volume', signal: 1, strength: Math.min((volRatio - 1.2) / 2, 0.5) });
-    }
-  }
-
-  let direction: 'long' | 'short' | 'none' = 'none';
-  let score = 0;
-
-  if (longScore >= strategy.scoreThreshold && longScore >= shortScore) {
-    direction = 'long';
-    score = longScore;
-  } else if (shortScore >= strategy.scoreThreshold && shortScore > longScore) {
-    direction = 'short';
-    score = shortScore;
-  }
-
-  if (direction === 'none') {
-    return { symbol, direction: 'none', score: Math.max(longScore, shortScore), leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
-  }
-
-  // ── Spike Guard (15m thresholds) ──
-  {
-    const ema20Arr = ema(closes, 20);
-    const ema20 = ema20Arr[ema20Arr.length - 1] || price;
-    const guard = spikeGuard(candles, closes, atr, rsi, direction, ema20, {
-      atrRatioMax: 4.0,
-      roc3Max: 12,
-      rsiOverbought: 85,
-      rsiOversold: 15,
-      emaDistMax: 6,
-      cciMax: 250,
-    });
-    if (guard.blocked) {
-      console.log(`[PatternPro] ${symbol} ${direction.toUpperCase()} blocked: ${guard.reason}`);
-      return { symbol, direction: 'none', score: Math.max(longScore, shortScore), leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
-    }
-  }
-
-  const leverage = Math.min(strategy.maxLeverage, Math.max(1, Math.round(score * 2.5)));
-  // SL: 2.5× ATR for 15m noise tolerance, floored at 0.5%, capped at 4%
-  const stopLossPercent = Math.max(0.005, Math.min(2.5 * atr / price, 0.04));
-  const takeProfitPercent = Math.min(stopLossPercent * strategy.riskRewardRatio, 0.10);
-
-  const stopLoss = direction === 'long'
-    ? price * (1 - stopLossPercent)
-    : price * (1 + stopLossPercent);
-  const takeProfit = direction === 'long'
-    ? price * (1 + takeProfitPercent)
-    : price * (1 - takeProfitPercent);
-
-  return { symbol, direction, score, leverage, stopLoss, takeProfit, indicators };
-}
-
-// ============================================================
-// Strategy 3: Position Alpha
-// Long-term position trading: rare entries on strong reversals
-// Uses EMA50/200 crossover, MACD, ADX>30, OBV long-term, price vs EMA200, RSI
-// Entry: EMA50/200 crossover PLUS ≥3 of 5 more indicators, score ≥ 0.40
-// SL: 4× ATR (wide), TP: 1:5 R:R
-// ============================================================
-
-function makePositionAlphaDecision(
-  symbol: string,
-  candles: CandleData[],
-  strategy: StrategyConfig,
-  _idleMinutes: number = 0,
-  weights: Record<string, number> = {},
-): TradingDecision {
-  if (candles.length < 250) return noDecision(symbol, candles);
-
-  const closes = candles.map(c => c.close);
-  const price = closes[closes.length - 1];
-  const atr = calcATR(candles, 14);
-  const indicators: IndicatorSignal[] = [];
-
-  // ── Compute EMAs ──
-  const ema50Arr = ema(closes, 50);
-  const ema200Arr = ema(closes, 200);
-  const ema50 = ema50Arr[ema50Arr.length - 1];
-  const ema200 = ema200Arr[ema200Arr.length - 1];
-
-  if (isNaN(ema50) || isNaN(ema200)) {
-    return noDecision(symbol, candles);
-  }
-
-  // ── GATE CHECK: EMA50/200 crossover — the GOLDEN signal ──
-  // Check if crossover happened in the last 5 candles
-  let crossoverSignal: 'long' | 'short' | 'none' = 'none';
-  let crossoverStrength = 0;
-  const ema50Prev = ema50Arr.length >= 2 ? ema50Arr[ema50Arr.length - 2] : ema50;
-  const ema200Prev = ema200Arr.length >= 2 ? ema200Arr[ema200Arr.length - 2] : ema200;
-
-  if (ema50 > ema200 && ema50Prev <= ema200Prev) {
-    // Golden cross just happened — very strong long signal
-    crossoverSignal = 'long';
-    crossoverStrength = 1.0;
-  } else if (ema50 < ema200 && ema50Prev >= ema200Prev) {
-    // Death cross just happened — very strong short signal
-    crossoverSignal = 'short';
-    crossoverStrength = 1.0;
-  } else if (ema50 > ema200) {
-    // Still bullish (crossed earlier) — reduced strength
-    crossoverSignal = 'long';
-    crossoverStrength = 0.3;
-  } else if (ema50 < ema200) {
-    // Still bearish — reduced strength
-    crossoverSignal = 'short';
-    crossoverStrength = 0.3;
-  }
-
-  // No trade if no crossover signal at all
-  if (crossoverSignal === 'none') {
-    return noDecision(symbol, candles);
-  }
-
-  indicators.push({
-    name: 'EMA_Cross',
-    signal: crossoverSignal === 'long' ? 1 : -1,
-    strength: crossoverStrength,
-  });
-
-  // ── ADX filter: require > 30 (very strong trend) ──
-  const adxResult = calcADX(candles);
-  const adxPass = adxResult.adx >= 30;
-  const adxStrength = adxPass ? Math.min((adxResult.adx - 30) / 20, 1) : 0;
-  indicators.push({
-    name: 'ADX',
-    signal: adxPass
-      ? (adxResult.plusDI > adxResult.minusDI ? 1 : -1)
-      : 0,
-    strength: adxStrength,
-  });
-
-  // ── MACD(12,26,9) — cross in direction of EMA trend ──
-  const macd = calcMACD(closes);
-  const macdTrend = crossoverSignal === 'long'
-    ? (macd.macdLine > macd.signalLine ? 1 : 0)
-    : crossoverSignal === 'short'
-      ? (macd.macdLine < macd.signalLine ? -1 : 0)
-      : 0;
-  const macdStrength = macdTrend !== 0
-    ? Math.min(Math.abs(macd.histogram) / (Math.abs(macd.signalLine) || 1), 1)
-    : 0;
-  indicators.push({
-    name: 'MACD',
-    signal: macdTrend,
-    strength: macdStrength,
-  });
-
-  // ── OBV long-term trend — compare 50 candles vs 50 before ──
-  let obvTrendLong = false;
-  let obvTrendShort = false;
-  let obvStrength = 0;
-  if (candles.length >= 100) {
-    // Build OBV history
-    let obv = 0;
-    const obvHistory: number[] = [];
-    for (let i = 1; i < candles.length; i++) {
-      if (candles[i].close > candles[i - 1].close) obv += candles[i].volume;
-      else if (candles[i].close < candles[i - 1].close) obv -= candles[i].volume;
-      obvHistory.push(obv);
-    }
-    if (obvHistory.length >= 100) {
-      const recent50 = obvHistory.slice(-50).reduce((a, b) => a + b, 0) / 50;
-      const prev50 = obvHistory.slice(-100, -50).reduce((a, b) => a + b, 0) / 50;
-      if (prev50 !== 0) {
-        const obvChange = (recent50 - prev50) / Math.abs(prev50);
-        obvTrendLong = obvChange > 0.1;
-        obvTrendShort = obvChange < -0.1;
-        obvStrength = Math.min(Math.abs(obvChange) * 3, 1);
-      }
-    }
-  }
-  indicators.push({
-    name: 'OBV',
-    signal: obvTrendLong ? 1 : obvTrendShort ? -1 : 0,
-    strength: obvStrength,
-  });
-
-  // ── Price vs EMA200 — must be on right side ──
-  const priceAboveEma200 = price > ema200;
-  const priceBelowEma200 = price < ema200;
-  const ema200Dist = Math.abs(price - ema200) / ema200;
-  const ema200Strength = Math.min(ema200Dist * 50, 1);
-  indicators.push({
-    name: 'EMA_200',
-    signal: priceAboveEma200 ? 1 : priceBelowEma200 ? -1 : 0,
-    strength: ema200Strength,
-  });
-
-  // ── RSI(14): 45-70 for longs, 30-55 for shorts ──
-  const rsi = calcRSI(closes, 14);
-  const rsiLong = rsi >= 45 && rsi <= 70;    // healthy uptrend confirmation
-  const rsiShort = rsi >= 30 && rsi <= 55;    // healthy downtrend confirmation
-  const rsiStrength = rsiLong
-    ? (rsi >= 50 ? 0.5 : (50 - rsi) / 5)   // stronger when closer to 45 (not overbought)
-    : rsiShort
-      ? (rsi <= 40 ? 0.5 : (rsi - 40) / 15)
-      : 0;
-  indicators.push({
-    name: 'RSI',
-    signal: rsiLong ? 1 : rsiShort ? -1 : 0,
-    strength: rsiStrength,
-  });
-
-  // ── Score calculation ──
-  const trendDir = crossoverSignal === 'long' ? 1 : -1;
-  let agreeCount = 0;
-  let score = 0;
-
-  // EMA crossover always counts (it's the gate)
-  score += crossoverStrength;
-
-  // Count how many other indicators agree with the trend direction
-  for (let i = 1; i < indicators.length; i++) {
-    if (indicators[i].signal === trendDir) {
-      agreeCount++;
-      const w = weights[indicators[i].name] ?? 1;
-      score += indicators[i].strength * w;
-    }
-  }
-
-  // Require EMA crossover PLUS ≥3 more of 5 indicators
-  if (agreeCount < 3) {
-    return { symbol, direction: 'none', score, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
-  }
-
-  // Score threshold
-  if (score < strategy.scoreThreshold) {
-    return { symbol, direction: 'none', score, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
-  }
-
-  const direction: 'long' | 'short' = trendDir === 1 ? 'long' : 'short';
-
-  // ── SPIKE GUARD: Anti-chase filter ──
-  // Block entry if market just had a sharp move (4h/1d spikes are rare but devastating).
-  // Position Alpha uses EMA50 as the reference MA (longer-term than Momentum's EMA20).
-  {
-    const ema50Val = ema50Arr[ema50Arr.length - 1] || price;
-    const guard = spikeGuard(candles, closes, atr, rsi, direction, ema50Val);
-    if (guard.blocked) {
-      console.log(`[PositionAlpha] ${symbol} ${direction.toUpperCase()} blocked: ${guard.reason}`);
-      return { symbol, direction: 'none', score, leverage: 1, stopLoss: 0, takeProfit: 0, indicators };
-    }
-  }
-
-  const leverage = Math.min(strategy.maxLeverage, Math.max(1, Math.round(score * 1.2)));
-
-  // Wide stop: 4× ATR — give position room to breathe for days
-  // Floored at 1.5% (prevents noise stop-outs), capped at 5% max, TP at 15% max from entry
-  const stopLossPercent = Math.max(0.015, Math.min(4 * atr / price, 0.05));
-  const takeProfitPercent = Math.min(stopLossPercent * strategy.riskRewardRatio, 0.15);
-
-  const stopLoss = direction === 'long'
-    ? price * (1 - stopLossPercent)
-    : price * (1 + stopLossPercent);
-  const takeProfit = direction === 'long'
-    ? price * (1 + takeProfitPercent)
-    : price * (1 - takeProfitPercent);
-
-  return { symbol, direction, score, leverage, stopLoss, takeProfit, indicators };
-}
-
-// ============================================================
-// Order Book Analysis
-// ============================================================
-
-export function analyzeOrderBook(
-  bids: Array<{ price: number; quantity: number; total: number }>,
-  asks: Array<{ price: number; quantity: number; total: number }>,
-  midPrice: number
-): IndicatorSignal {
-  // Calculate bid/ask volume imbalance
-  const totalBidVol = bids.reduce((sum, b) => sum + b.quantity, 0);
-  const totalAskVol = asks.reduce((sum, a) => sum + a.quantity, 0);
-  const totalVol = totalBidVol + totalAskVol;
-
-  let imbalance = 0;
-  if (totalVol > 0) {
-    imbalance = (totalBidVol - totalAskVol) / totalVol;
-  }
-
-  // Detect walls — large orders (>3x average) near price
-  let bidWallPressure = 0;
-  let askWallPressure = 0;
-
-  if (bids.length > 1) {
-    const avgBidQty = totalBidVol / bids.length;
-    const largeBids = bids.filter(b => b.quantity > avgBidQty * 3);
-    bidWallPressure = largeBids.reduce((sum, b) => {
-      const distance = (midPrice - b.price) / midPrice;
-      return sum + (b.quantity * Math.exp(-distance * 100)); // closer walls matter more
-    }, 0);
-  }
-
-  if (asks.length > 1) {
-    const avgAskQty = totalAskVol / asks.length;
-    const largeAsks = asks.filter(a => a.quantity > avgAskQty * 3);
-    askWallPressure = largeAsks.reduce((sum, a) => {
-      const distance = (a.price - midPrice) / midPrice;
-      return sum + (a.quantity * Math.exp(-distance * 100));
-    }, 0);
-  }
-
-  // Combine signals
-  const wallImbalance = bidWallPressure > 0 || askWallPressure > 0
-    ? (bidWallPressure - askWallPressure) / (bidWallPressure + askWallPressure)
-    : 0;
-
-  const combinedSignal = imbalance * 0.6 + wallImbalance * 0.4;
-
-  let signal: number;
-  let strength: number;
-
-  if (combinedSignal > 0.15) {
-    signal = 1;
-    strength = Math.min(combinedSignal / 0.5, 1);
-  } else if (combinedSignal < -0.15) {
-    signal = -1;
-    strength = Math.min(Math.abs(combinedSignal) / 0.5, 1);
-  } else {
-    signal = 0;
-    strength = 0;
-  }
+  const direction = longScore > shortScore ? 'long' : shortScore > longScore ? 'short' : 'none';
+  const score = Math.max(longScore, shortScore) / 10;
+
+  if (direction === 'none' || score < 0.3) return noDecision(symbol);
+
+  const price = candles[candles.length - 1].close;
+  const e20arr = ema(closes, 20);
+  const ema20 = e20arr[e20arr.length - 1] || 0;
+  const guard = spikeGuard(candles, closes, atr, rsi, direction, ema20);
+  if (guard.blocked) return noDecision(symbol);
+
+  const slDist = Math.max(atr * 2.5, price * 0.01);
+  const isLong = direction === 'long';
+  const sl = isLong ? price - slDist : price + slDist;
+  const tp = isLong ? price + slDist * 3 : price - slDist * 3;
 
   return {
-    name: 'OrderBook',
-    signal,
-    strength,
+    symbol,
+    direction: direction as 'long' | 'short',
+    score: Math.min(score, 1),
+    leverage: 2,
+    stopLoss: Math.round(sl * 1e8) / 1e8,
+    takeProfit: Math.round(tp * 1e8) / 1e8,
+    indicators: signals,
   };
 }
 
 // ============================================================
-// Fetch Klines from Binance
+// Order Book Analysis (unchanged)
+// ============================================================
+
+export function analyzeOrderBook(bids: Array<[string, string]>, asks: Array<[string, string]>): OrderBookData {
+  const bidLevels: OrderBookLevel[] = [];
+  const askLevels: OrderBookLevel[] = [];
+  let bidTotal = 0, askTotal = 0;
+
+  for (const [priceStr, qtyStr] of bids) {
+    const price = parseFloat(priceStr);
+    const quantity = parseFloat(qtyStr);
+    bidTotal += price * quantity;
+    bidLevels.push({ price, quantity, total: bidTotal });
+  }
+
+  for (const [priceStr, qtyStr] of asks) {
+    const price = parseFloat(priceStr);
+    const quantity = parseFloat(qtyStr);
+    askTotal += price * quantity;
+    askLevels.push({ price, quantity, total: askTotal });
+  }
+
+  bidLevels.sort((a, b) => b.price - a.price);
+  askLevels.sort((a, b) => a.price - b.price);
+
+  const bestBid = bidLevels[0]?.price ?? 0;
+  const bestAsk = askLevels[0]?.price ?? 0;
+  const spread = bestAsk - bestBid;
+  const midPrice = (bestBid + bestAsk) / 2;
+  const spreadPercent = midPrice > 0 ? (spread / midPrice) * 100 : 0;
+
+  return { asks: askLevels, bids: bidLevels, spread, spreadPercent, midPrice };
+}
+
+// ============================================================
+// Data Fetching (unchanged)
 // ============================================================
 
 export async function fetchKlines(symbol: string, interval: string = '1h', limit: number = 1440): Promise<CandleData[]> {
   const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to fetch klines for ${symbol}: ${res.statusText}`);
+  if (!res.ok) throw new Error(`Failed to fetch klines for ${symbol}: ${res.status}`);
   const data = await res.json();
+  if (!Array.isArray(data) || data.length === 0) return [];
   return data.map((k: (string | number)[]) => ({
     time: Math.floor(Number(k[0]) / 1000),
     open: parseFloat(String(k[1])),
@@ -1389,20 +1428,17 @@ export async function fetchKlines(symbol: string, interval: string = '1h', limit
   }));
 }
 
-// ============================================================
-// Fetch Top Symbols from Binance
-// ============================================================
-
 export async function fetchTopSymbols(): Promise<string[]> {
-  const url = 'https://api.binance.com/api/v3/ticker/24hr';
-  const res = await fetch(url);
+  const res = await fetch('https://api.binance.com/api/v3/ticker/24hr');
   if (!res.ok) return [];
   const data = await res.json();
-  // Filter USDT pairs, sort by quote volume, take top 50
-  const usdtPairs = data
-    .filter((t: { symbol: string; quoteVolume: string }) => t.symbol.endsWith('USDT') && Number(t.quoteVolume) > 0)
-    .sort((a: { quoteVolume: string }, b: { quoteVolume: string }) => Number(b.quoteVolume) - Number(a.quoteVolume))
+  return data
+    .filter((t: { symbol: string; quoteVolume: string }) =>
+      t.symbol.endsWith('USDT') && Number(t.quoteVolume) > 0
+    )
+    .sort((a: { quoteVolume: string }, b: { quoteVolume: string }) =>
+      Number(b.quoteVolume) - Number(a.quoteVolume)
+    )
     .slice(0, 50)
     .map((t: { symbol: string }) => t.symbol);
-  return usdtPairs;
 }

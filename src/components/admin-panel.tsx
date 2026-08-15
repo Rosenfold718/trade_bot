@@ -812,6 +812,18 @@ interface UserInfo {
   } | null;
 }
 
+interface UserStats {
+  userId: string;
+  email: string;
+  name: string;
+  totalPnl: number;
+  totalTrades: number;
+  winRate: number;
+  currentBalance: number;
+  activeStrategies: number;
+  createdAt: string;
+}
+
 const ADMIN_AUTH = 'Bearer trade-bot-admin-2024';
 const ADMIN_HEADERS: HeadersInit = {
   'Authorization': ADMIN_AUTH,
@@ -820,7 +832,9 @@ const ADMIN_HEADERS: HeadersInit = {
 
 function UsersTab() {
   const [users, setUsers] = useState<UserInfo[]>([]);
+  const [userStats, setUserStats] = useState<Record<string, UserStats>>({});
   const [loading, setLoading] = useState(false);
+  const [statsLoading, setStatsLoading] = useState(false);
   const [showPasswordId, setShowPasswordId] = useState<string | null>(null);
   const [resettingId, setResettingId] = useState<string | null>(null);
   const [newPasswords, setNewPasswords] = useState<Record<string, string>>({});
@@ -842,9 +856,27 @@ function UsersTab() {
     }
   }, []);
 
+  const fetchStats = useCallback(async () => {
+    setStatsLoading(true);
+    try {
+      const res = await fetch('/api/admin/users-stats', { headers: { 'Authorization': ADMIN_AUTH } });
+      const data = await res.json();
+      const map: Record<string, UserStats> = {};
+      for (const s of (data.stats ?? [])) {
+        map[s.userId] = s;
+      }
+      setUserStats(map);
+    } catch (err) {
+      console.error('Failed to load user stats:', err);
+    } finally {
+      setStatsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchUsers();
-  }, [fetchUsers]);
+    fetchStats();
+  }, [fetchUsers, fetchStats]);
 
   const handleResetPassword = useCallback(async (userId: string) => {
     setResettingId(userId);
@@ -902,7 +934,7 @@ function UsersTab() {
 
   return (
     <ScrollArea className="h-[calc(100vh-200px)] sm:h-[calc(100vh-160px)] pr-2">
-      <div className="space-y-4 pb-8 max-w-3xl mx-auto">
+      <div className="space-y-4 pb-8 max-w-5xl mx-auto">
         {/* Header */}
         <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
           <div className="flex items-center gap-3">
@@ -911,22 +943,25 @@ function UsersTab() {
             </div>
             <div>
               <div className="text-base font-bold text-blue-400">Пользователи</div>
-              <div className="text-[11px] text-white/30 mt-0.5">Управление аккаунтами, просмотр паролей и подписок</div>
+              <div className="text-[11px] text-white/30 mt-0.5">Управление аккаунтами, просмотр паролей, подписок и PnL статистики</div>
             </div>
           </div>
         </div>
 
         {/* Users count */}
         <div className="flex items-center justify-between px-1">
-          <span className="text-[11px] text-white/40 font-mono">
-            {loading ? 'Загрузка...' : `${users.length} пользователей`}
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-[11px] text-white/40 font-mono">
+              {loading ? 'Загрузка...' : `${users.length} пользователей`}
+            </span>
+            {statsLoading && <Loader2 className="w-3 h-3 text-white/20 animate-spin" />}
+          </div>
           <button
-            onClick={fetchUsers}
-            disabled={loading}
+            onClick={() => { fetchUsers(); fetchStats(); }}
+            disabled={loading || statsLoading}
             className="text-[11px] text-white/40 hover:text-white/60 transition-colors flex items-center gap-1"
           >
-            <RefreshCw className={cn('w-3 h-3', loading && 'animate-spin')} />
+            <RefreshCw className={cn('w-3 h-3', (loading || statsLoading) && 'animate-spin')} />
             Обновить
           </button>
         </div>
@@ -946,6 +981,10 @@ function UsersTab() {
                   <th className="text-left py-2.5 px-3 text-white/40 font-medium">Email</th>
                   <th className="text-left py-2.5 px-3 text-white/40 font-medium">Роль</th>
                   <th className="text-left py-2.5 px-3 text-white/40 font-medium">Подписка</th>
+                  <th className="text-right py-2.5 px-3 text-white/40 font-medium">PnL</th>
+                  <th className="text-right py-2.5 px-3 text-white/40 font-medium">Сделки</th>
+                  <th className="text-right py-2.5 px-3 text-white/40 font-medium">Win %</th>
+                  <th className="text-right py-2.5 px-3 text-white/40 font-medium">Баланс</th>
                   <th className="text-left py-2.5 px-3 text-white/40 font-medium">Пароль</th>
                   <th className="text-left py-2.5 px-3 text-white/40 font-medium">Создан</th>
                   <th className="text-right py-2.5 px-3 text-white/40 font-medium"></th>
@@ -987,6 +1026,49 @@ function UsersTab() {
                             Истекла
                           </span>
                         )}
+                      </td>
+                      {/* PnL */}
+                      <td className="py-2.5 px-3 text-right">
+                        {(() => {
+                          const s = userStats[user.id];
+                          if (!s) return <span className="text-white/15">—</span>;
+                          return (
+                            <span className={cn('text-[11px] font-medium', s.totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400')}>
+                              {s.totalPnl >= 0 ? '+' : ''}{s.totalPnl.toFixed(2)}
+                            </span>
+                          );
+                        })()}
+                      </td>
+                      {/* Trades */}
+                      <td className="py-2.5 px-3 text-right text-white/40">
+                        {userStats[user.id]?.totalTrades ?? <span className="text-white/15">—</span>}
+                      </td>
+                      {/* Win Rate */}
+                      <td className="py-2.5 px-3 text-right">
+                        {(() => {
+                          const s = userStats[user.id];
+                          if (!s) return <span className="text-white/15">—</span>;
+                          const wr = s.winRate;
+                          return (
+                            <span className={cn('text-[11px] font-medium',
+                              wr >= 50 ? 'text-emerald-400/80' : wr > 0 ? 'text-amber-400/80' : 'text-white/30',
+                            )}>
+                              {wr.toFixed(1)}%
+                            </span>
+                          );
+                        })()}
+                      </td>
+                      {/* Balance */}
+                      <td className="py-2.5 px-3 text-right">
+                        {(() => {
+                          const s = userStats[user.id];
+                          if (!s) return <span className="text-white/15">—</span>;
+                          return (
+                            <span className="text-[11px] font-medium text-white/70">
+                              ${s.currentBalance.toFixed(2)}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="py-2.5 px-3">
                         <div className="flex items-center gap-1.5">
