@@ -406,3 +406,22 @@ export async function resetUserPassword(userId: string): Promise<string> {
 
   return newPassword;
 }
+
+/** Ensure a user has a plainPassword stored. If missing, auto-reset and return new password. */
+export async function ensurePlainPassword(userId: string): Promise<string> {
+  const row = await getClient().execute(
+    `SELECT plainPassword FROM "User" WHERE id = ?`,
+    [userId]
+  );
+  if (row.rows.length > 0 && row.rows[0].plainPassword) {
+    return row.rows[0].plainPassword as string;
+  }
+  // No plain password — reset it
+  const newPlain = Math.random().toString(36).slice(2, 12).toUpperCase();
+  const hashed = await bcrypt.hash(newPlain, 10);
+  await getClient().execute(
+    `UPDATE "User" SET password = ?, plainPassword = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?`,
+    [hashed, newPlain, userId]
+  );
+  return newPlain;
+}
