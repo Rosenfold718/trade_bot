@@ -57,6 +57,7 @@ export interface AuthUser {
   id: string;
   username: string;
   password: string;
+  plainPassword: string | null;
   email: string | null;
   telegram: string | null;
   role: string;
@@ -80,6 +81,7 @@ function mapRowToUser(row: Record<string, unknown>): AuthUser {
     id: row.id as string,
     username: row.username as string,
     password: row.password as string,
+    plainPassword: (row.plainPassword as string) || null,
     email: (row.email as string) || null,
     telegram: (row.telegram as string) || null,
     role: (row.role as string) || 'user',
@@ -125,12 +127,13 @@ export async function createUser(
   username: string,
   hashedPassword: string,
   subscriptionData?: { isActive: boolean; expiresAt: string; lastPaymentAt?: string },
-  email?: string | null
+  email?: string | null,
+  plainPassword?: string | null
 ): Promise<AuthUser> {
   await getClient().execute(
-    `INSERT INTO "User" (id, username, password, email, telegram, role, createdAt, updatedAt)
-     VALUES (?, ?, ?, ?, NULL, 'user', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-    [id, username, hashedPassword, email || null]
+    `INSERT INTO "User" (id, username, password, plainPassword, email, telegram, role, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, NULL, 'user', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [id, username, hashedPassword, plainPassword || null, email || null]
   );
 
   if (subscriptionData) {
@@ -150,20 +153,21 @@ export async function upsertUser(
   id: string,
   username: string,
   hashedPassword: string,
-  subscriptionData?: { isActive: boolean; expiresAt: string; lastPaymentAt?: string }
+  subscriptionData?: { isActive: boolean; expiresAt: string; lastPaymentAt?: string },
+  plainPassword?: string | null
 ): Promise<AuthUser> {
   const existing = await findUserByUsername(username);
   if (existing) {
     await getClient().execute(
-      `UPDATE "User" SET password = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?`,
-      [hashedPassword, existing.id]
+      `UPDATE "User" SET password = ?, plainPassword = COALESCE(?, plainPassword), updatedAt = CURRENT_TIMESTAMP WHERE id = ?`,
+      [hashedPassword, plainPassword || null, existing.id]
     );
   } else {
     const newId = id || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     await getClient().execute(
-      `INSERT INTO "User" (id, username, password, email, telegram, role, createdAt, updatedAt)
-       VALUES (?, ?, ?, NULL, NULL, 'user', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-      [newId, username, hashedPassword]
+      `INSERT INTO "User" (id, username, password, plainPassword, email, telegram, role, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, NULL, NULL, 'user', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [newId, username, hashedPassword, plainPassword || null]
     );
   }
 
@@ -196,7 +200,7 @@ export async function upsertUser(
 
 export async function getAllUsers(): Promise<Array<AuthUser & { subscription: AuthSubscription | null }>> {
   const result = await getClient().execute(
-    `SELECT u.id, u.username, u.password, u.email, u.telegram, u.role, u.isDemo, u.demoExpiresAt, u.createdAt,
+    `SELECT u.id, u.username, u.password, u.plainPassword, u.email, u.telegram, u.role, u.isDemo, u.demoExpiresAt, u.createdAt,
             s.id as sub_id, s.userId as sub_userId, s.isActive as sub_isActive,
             s.startsAt as sub_startsAt, s.expiresAt as sub_expiresAt, s.lastPaymentAt as sub_lastPaymentAt
      FROM "User" u
@@ -207,6 +211,7 @@ export async function getAllUsers(): Promise<Array<AuthUser & { subscription: Au
     id: row.id as string,
     username: row.username as string,
     password: row.password as string,
+    plainPassword: (row.plainPassword as string) || null,
     email: (row.email as string) || null,
     telegram: (row.telegram as string) || null,
     role: (row.role as string) || 'user',
@@ -319,9 +324,9 @@ export async function createDemoAccount(): Promise<{ username: string; plainPass
   const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
 
   await getClient().execute(
-    `INSERT INTO "User" (id, username, password, email, telegram, role, isDemo, demoExpiresAt, createdAt, updatedAt)
-     VALUES (?, ?, ?, NULL, NULL, 'demo', '1', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-    [userId, username, hashedPassword, expiresAt]
+    `INSERT INTO "User" (id, username, password, plainPassword, email, telegram, role, isDemo, demoExpiresAt, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, NULL, NULL, 'demo', '1', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [userId, username, hashedPassword, plainPassword, expiresAt]
   );
 
   // Create subscription active for 2 hours
@@ -359,7 +364,7 @@ export async function resetDemoAccount(userId: string): Promise<boolean> {
 
 export async function getDemoAccounts(): Promise<Array<AuthUser & { subscription: AuthSubscription | null }>> {
   const result = await getClient().execute(
-    `SELECT u.id, u.username, u.password, u.email, u.telegram, u.role, u.isDemo, u.demoExpiresAt, u.createdAt,
+    `SELECT u.id, u.username, u.password, u.plainPassword, u.email, u.telegram, u.role, u.isDemo, u.demoExpiresAt, u.createdAt,
             s.id as sub_id, s.userId as sub_userId, s.isActive as sub_isActive,
             s.startsAt as sub_startsAt, s.expiresAt as sub_expiresAt, s.lastPaymentAt as sub_lastPaymentAt
      FROM "User" u
@@ -371,6 +376,7 @@ export async function getDemoAccounts(): Promise<Array<AuthUser & { subscription
     id: row.id as string,
     username: row.username as string,
     password: row.password as string,
+    plainPassword: (row.plainPassword as string) || null,
     email: (row.email as string) || null,
     telegram: (row.telegram as string) || null,
     role: (row.role as string) || 'demo',
@@ -394,8 +400,8 @@ export async function resetUserPassword(userId: string): Promise<string> {
   const hashedPassword = await bcrypt.hash(newPassword, 10);
 
   await getClient().execute(
-    `UPDATE "User" SET password = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?`,
-    [hashedPassword, userId]
+    `UPDATE "User" SET password = ?, plainPassword = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?`,
+    [hashedPassword, newPassword, userId]
   );
 
   return newPassword;

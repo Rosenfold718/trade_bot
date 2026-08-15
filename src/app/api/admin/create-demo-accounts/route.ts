@@ -64,9 +64,9 @@ export async function POST(request: NextRequest) {
       // Create user
       try {
         await db.execute(
-          `INSERT INTO "User" (id, username, password, email, telegram, role, isDemo, demoExpiresAt, createdAt, updatedAt)
-           VALUES (?, ?, ?, ?, NULL, 'demo', '1', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-          [userId, username, hashedPassword, email, expiresAt]
+          `INSERT INTO "User" (id, username, password, plainPassword, email, telegram, role, isDemo, demoExpiresAt, createdAt, updatedAt)
+           VALUES (?, ?, ?, ?, ?, NULL, 'demo', '1', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [userId, username, hashedPassword, plainPassword, email, expiresAt]
         );
       } catch (err: any) {
         if (err?.message?.includes('UNIQUE constraint') || err?.message?.includes('unique')) {

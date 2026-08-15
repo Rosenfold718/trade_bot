@@ -46,7 +46,8 @@ export async function POST(request: NextRequest) {
         isActive: true,
         expiresAt: farFuture.toISOString(),
         lastPaymentAt: new Date().toISOString(),
-      }
+      },
+      password
     );
 
     return NextResponse.json({

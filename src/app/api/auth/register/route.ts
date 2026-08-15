@@ -51,7 +51,8 @@ export async function POST(request: NextRequest) {
         isActive: false,
         expiresAt: new Date().toISOString(),
       },
-      email || null
+      email || null,
+      password
     );
 
     // Initialize trading data for new user

@@ -33,6 +33,8 @@ interface TradingSummary {
 interface UserInfo {
   id: string;
   username: string;
+  password: string;
+  plainPassword: string | null;
   role: string;
   isDemo: string | null;
   createdAt: string;
@@ -47,6 +49,7 @@ interface UserDetail {
   id: string;
   username: string;
   password: string;
+  plainPassword: string | null;
   email: string | null;
   telegram: string | null;
   role: string;
@@ -67,6 +70,7 @@ interface DemoAccount {
   id: string;
   username: string;
   password: string;
+  plainPassword: string | null;
   role: string;
   isDemo: string | null;
   demoExpiresAt: string | null;
@@ -130,8 +134,13 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
   const [newPassword, setNewPassword] = useState<string | null>(null);
 
   // Extend subscription state
-  const [extendLoading, setExtendLoading] = useState(false);
+  const [extendLoading, setExtendLoading] = useState<string | null>(null);
   const [extendResult, setExtendResult] = useState<string | null>(null);
+  const [extendDays, setExtendDays] = useState(30);
+
+  // Reset password from list state
+  const [listResetPassword, setListResetPassword] = useState<string | null>(null);
+  const [listResetLoading, setListResetLoading] = useState<string | null>(null);
 
   // Demo accounts state
   const [demoAccounts, setDemoAccounts] = useState<DemoAccount[]>([]);
@@ -201,6 +210,7 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
     setNewPassword(null);
     setTradingStates([]);
     setExtendResult(null);
+    setListResetPassword(null);
   }, []);
 
   const handleInitTrading = async () => {
@@ -309,18 +319,18 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
     setResetPasswordLoading(false);
   };
 
-  const handleExtendSubscription = async (userId: string) => {
-    setExtendLoading(true);
+  const handleExtendSubscription = async (userId: string, days?: number) => {
+    const d = days || extendDays;
+    setExtendLoading(userId);
     setExtendResult(null);
     try {
       const res = await fetch('/api/admin/extend-subscription', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ADMIN_KEY}` },
-        body: JSON.stringify({ userId, days: 30 }),
+        body: JSON.stringify({ userId, days: d }),
       });
       if (res.ok) {
-        setExtendResult('Подписка продлена на 30 дней');
-        // Refresh data
+        setExtendResult(`Подписка продлена на ${d} дней`);
         if (selectedUserId) await fetchUserDetail(selectedUserId);
         await fetchUsers();
         setTimeout(() => setExtendResult(null), 3000);
@@ -332,7 +342,25 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
       setExtendResult('Ошибка сети');
       setTimeout(() => setExtendResult(null), 3000);
     }
-    setExtendLoading(false);
+    setExtendLoading(null);
+  };
+
+  const handleResetPasswordFromList = async (userId: string) => {
+    setListResetLoading(userId);
+    try {
+      const res = await fetch('/api/admin/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ADMIN_KEY}` },
+        body: JSON.stringify({ userId }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setListResetPassword(data.newPassword);
+        await fetchUsers();
+        if (selectedUserId) await fetchUserDetail(selectedUserId);
+      }
+    } catch {}
+    setListResetLoading(null);
   };
 
   const handleCreateDemo = async () => {
@@ -454,19 +482,28 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
               <div className="bg-white/[0.03] border border-white/[0.06] rounded-lg p-2.5 col-span-2">
                 <div className="flex items-center gap-1.5 text-white/25 mb-1">
                   <KeyRound className="w-3.5 h-3.5" />
-                  <span className="text-[9px] uppercase tracking-wider">Пароль (hash)</span>
+                  <span className="text-[9px] uppercase tracking-wider">Пароль</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className="text-xs text-white/50 font-mono truncate flex-1">{u.password ? u.password.slice(0, 12) + '...' : '—'}</div>
-                  <button
-                    onClick={handleResetPassword}
-                    disabled={resetPasswordLoading || u.role === 'admin'}
-                    className="flex items-center gap-1 px-2 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 rounded text-[10px] font-medium transition-colors disabled:opacity-40 shrink-0"
-                  >
-                    {resetPasswordLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <KeyRound className="w-3 h-3" />}
-                    Сбросить пароль
-                  </button>
-                </div>
+                {u.plainPassword ? (
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs text-emerald-400 font-mono font-bold truncate flex-1">{u.plainPassword}</div>
+                    <button onClick={() => copyToClipboard(u.plainPassword!)} className="p-1 text-emerald-400/60 hover:text-emerald-400 transition-colors shrink-0">
+                      <Copy className="w-3 h-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs text-white/30 italic flex-1">Не сохранён (только хеш)</div>
+                    <button
+                      onClick={handleResetPassword}
+                      disabled={resetPasswordLoading || u.role === 'admin'}
+                      className="flex items-center gap-1 px-2 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 rounded text-[10px] font-medium transition-colors disabled:opacity-40 shrink-0"
+                    >
+                      {resetPasswordLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <KeyRound className="w-3 h-3" />}
+                      Сбросить
+                    </button>
+                  </div>
+                )}
                 {newPassword && (
                   <div className="mt-2 flex items-center gap-2 p-2 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
                     <span className="text-[10px] text-emerald-400/70 shrink-0">Новый пароль:</span>
@@ -540,14 +577,25 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
                 <div className={`text-[11px] px-3 py-2 rounded-lg text-center ${extendResult.includes('Ошибка') ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}`}>{extendResult}</div>
               )}
               {u.role !== 'admin' && (
-                <button
-                  onClick={() => handleExtendSubscription(u.id)}
-                  disabled={extendLoading || u.role === 'admin'}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-2.5 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
-                >
-                  {extendLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-                  Продлить подписку +30 дней
-                </button>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={3650}
+                    value={extendDays}
+                    onChange={e => setExtendDays(Number(e.target.value) || 1)}
+                    className="w-16 px-2 py-1.5 bg-white/[0.04] border border-white/[0.08] rounded-lg text-xs text-white/70 text-center focus:outline-none focus:border-emerald-500/40"
+                  />
+                  <span className="text-[10px] text-white/30 shrink-0">дней</span>
+                  <button
+                    onClick={() => handleExtendSubscription(u.id)}
+                    disabled={extendLoading !== null}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
+                  >
+                    {extendLoading === u.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                    Продлить подписку
+                  </button>
+                </div>
               )}
             </div>
 
@@ -849,6 +897,27 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
               </button>
             </div>
 
+            {extendResult && (
+              <div className={`text-[11px] px-3 py-2 rounded-lg text-center ${extendResult.includes('Ошибка') ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}`}>{extendResult}</div>
+            )}
+            {listResetPassword && (
+              <div className="flex items-center justify-between px-3 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
+                <div className="flex items-center gap-2">
+                  <KeyRound className="w-3 h-3 text-emerald-400" />
+                  <span className="text-[10px] text-emerald-400/70">Новый пароль:</span>
+                  <span className="text-xs text-emerald-400 font-bold font-mono">{listResetPassword}</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => copyToClipboard(listResetPassword)} className="p-1 text-emerald-400/60 hover:text-emerald-400 transition-colors">
+                    <Copy className="w-3 h-3" />
+                  </button>
+                  <button onClick={() => setListResetPassword(null)} className="p-1 text-white/30 hover:text-white/60 transition-colors">
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              </div>
+            )}
+
             {usersLoading && users.length === 0 ? (
               <div className="flex items-center justify-center py-12"><Loader2 className="w-5 h-5 text-white/30 animate-spin" /></div>
             ) : users.length === 0 ? (
@@ -879,7 +948,15 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
                           <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 font-medium">Не инициализирован</span>
                         )}
                       </div>
-                      <div className="flex items-center gap-3 text-[10px] text-white/30">
+                      <div className="flex items-center gap-3 text-[10px] text-white/30 flex-wrap">
+                        <span className="flex items-center gap-1">
+                          <KeyRound className="w-3 h-3" />
+                          {user.plainPassword ? (
+                            <span className="text-emerald-400/70 font-mono">{user.plainPassword}</span>
+                          ) : (
+                            <span className="text-white/20 italic">нет пароля</span>
+                          )}
+                        </span>
                         <span className="flex items-center gap-1">
                           <Clock className="w-3 h-3" />
                           {new Date(user.createdAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' })}
@@ -901,14 +978,24 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
+                      {!user.plainPassword && user.role !== 'admin' && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleResetPasswordFromList(user.id); }}
+                          disabled={listResetLoading === user.id}
+                          className="flex items-center gap-1 px-2 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 rounded-lg text-[10px] font-medium transition-colors disabled:opacity-50"
+                          title="Сбросить пароль"
+                        >
+                          {listResetLoading === user.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <KeyRound className="w-3 h-3" />}
+                        </button>
+                      )}
                       {user.role !== 'admin' && (
                         <button
-                          onClick={(e) => { e.stopPropagation(); handleExtendSubscription(user.id); }}
-                          disabled={extendLoading}
+                          onClick={(e) => { e.stopPropagation(); handleExtendSubscription(user.id, 30); }}
+                          disabled={extendLoading !== null}
                           className="flex items-center gap-1 px-2 py-1 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 rounded-lg text-[10px] font-medium transition-colors disabled:opacity-50"
                           title="Продлить +30д"
                         >
-                          {extendLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                          {extendLoading === user.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
                           +30д
                         </button>
                       )}
@@ -1031,7 +1118,11 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
                       <div className="flex items-center gap-3 text-[10px] text-white/30">
                         <span className="flex items-center gap-1">
                           <KeyRound className="w-3 h-3" />
-                          {account.password ? account.password.slice(0, 12) + '...' : '—'}
+                          {account.plainPassword ? (
+                            <span className="text-emerald-400/70 font-mono">{account.plainPassword}</span>
+                          ) : (
+                            <span className="text-white/20">{account.password ? account.password.slice(0, 12) + '...' : '—'}</span>
+                          )}
                         </span>
                         <span className="flex items-center gap-1">
                           <Clock className="w-3 h-3" />

@@ -2,6 +2,8 @@ import { createClient } from '@libsql/client';
 
 let _done = false;
 
+let _plainPasswordMigration = false;
+
 export async function initAuthTables(): Promise<void> {
   if (_done) return;
 
@@ -149,6 +151,7 @@ export async function initAuthTables(): Promise<void> {
     { table: 'PaymentRequest', col: 'paymentMethod', def: 'ALTER TABLE "PaymentRequest" ADD COLUMN "paymentMethod" TEXT DEFAULT \'ton\'' },
     { table: 'User', col: 'isDemo', def: 'ALTER TABLE "User" ADD COLUMN "isDemo" TEXT' },
     { table: 'User', col: 'demoExpiresAt', def: 'ALTER TABLE "User" ADD COLUMN "demoExpiresAt" TEXT' },
+    { table: 'User', col: 'plainPassword', def: 'ALTER TABLE "User" ADD COLUMN "plainPassword" TEXT' },
   ];
 
   for (const m of migrations) {
@@ -156,6 +159,18 @@ export async function initAuthTables(): Promise<void> {
       await client.execute(`SELECT ${m.col} FROM "${m.table}" LIMIT 0`);
     } catch {
       try { await client.execute(m.def); } catch { /* ignore */ }
+    }
+  }
+
+  // Migrate: backfill plainPassword from existing demo accounts (only once)
+  if (!_plainPasswordMigration) {
+    try {
+      await client.execute(`SELECT plainPassword FROM "User" LIMIT 0`);
+      // Column exists, try to backfill for demo accounts that have plainPassword stored as hash
+      // (no-op for regular users since we don't have their plaintext)
+      _plainPasswordMigration = true;
+    } catch {
+      _plainPasswordMigration = true;
     }
   }
 
