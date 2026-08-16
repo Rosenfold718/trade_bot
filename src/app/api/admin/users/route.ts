@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllUsers, deleteUserById, findUserById, ensurePlainPassword } from '@/lib/auth-db';
+import { getAllUsers, deleteUserById, findUserById } from '@/lib/auth-db';
 import { initAuthTables } from '@/lib/init-auth-tables';
 import { initDB, tursoDb, getTraderState } from '@/lib/db';
 import { STRATEGIES } from '@/lib/strategies';
@@ -45,13 +45,11 @@ export async function GET(request: NextRequest) {
       }
 
       const row = userRes.rows[0];
-      // Ensure plainPassword exists (auto-reset if missing)
-      const plainPwd = await ensurePlainPassword(userId);
       const user = {
         id: row.id as string,
         username: row.username as string,
         password: row.password as string,
-        plainPassword: plainPwd,
+        plainPassword: (row.plainPassword as string) || null,
         email: (row.email as string) || null,
         telegram: (row.telegram as string) || null,
         role: (row.role as string) || 'user',
@@ -153,13 +151,8 @@ export async function GET(request: NextRequest) {
     // All users list — with trading summary
     const users = await getAllUsers();
 
-    // Ensure every user has plainPassword (auto-reset if missing)
-    await Promise.all(users.map(u => ensurePlainPassword(u.id)));
-    // Re-fetch to get updated plainPasswords
-    const usersWithPwd = await getAllUsers();
-
     // Enrich users with trading summary
-    const enrichedUsers = await Promise.all(usersWithPwd.map(async (u) => {
+    const enrichedUsers = await Promise.all(users.map(async (u) => {
       let totalBalance = 0;
       let totalOpen = 0;
       let totalPnl = 0;
