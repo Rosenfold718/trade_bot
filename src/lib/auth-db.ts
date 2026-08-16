@@ -11,11 +11,11 @@ function getClient(): Client {
   if (_client) return _client;
 
   const url = process.env.TURSO_DATABASE_URL;
-  const token = process.env.TURSO_AUTH_TOKEN;
+  const token = process.env.TURSO_AUTH_TOKEN || undefined;
 
-  if (!url || !token) {
+  if (!url) {
     throw new Error(
-      '[auth-db] Missing TURSO_DATABASE_URL or TURSO_AUTH_TOKEN'
+      '[auth-db] Missing TURSO_DATABASE_URL'
     );
   }
 
