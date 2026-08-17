@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createDemoAccount, resetDemoAccount, getDemoAccounts, deleteUserById } from '@/lib/auth-db';
 import { initAuthTables } from '@/lib/init-auth-tables';
+import { initDB, initUserTradingData } from '@/lib/db';
 
 const ADMIN_SETUP_KEY = process.env.ADMIN_SETUP_KEY || 'trade-bot-admin-2024';
 
@@ -31,6 +32,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     await initAuthTables();
+    await initDB();
     if (!checkAuth(request)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -49,12 +51,19 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Create new demo account
+    // Create new demo account with trading data initialized
     const demo = await createDemoAccount();
+    try {
+      await initUserTradingData(demo.userId);
+    } catch (err) {
+      console.error(`[admin/demo POST] Failed to init trading data for ${demo.username}:`, err);
+    }
+
     return NextResponse.json({
       success: true,
       username: demo.username,
       password: demo.plainPassword,
+      userId: demo.userId,
       expiresAt: demo.expiresAt,
     });
   } catch (err) {

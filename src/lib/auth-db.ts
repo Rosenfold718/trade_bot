@@ -314,7 +314,7 @@ export async function createSupportTicket(data: {
 // Demo accounts
 // ============================================================
 
-export async function createDemoAccount(): Promise<{ username: string; plainPassword: string; expiresAt: string }> {
+export async function createDemoAccount(): Promise<{ userId: string; username: string; plainPassword: string; expiresAt: string }> {
   const randomSuffix = Math.random().toString(36).slice(2, 8);
   const username = `demo_${randomSuffix}`;
   const plainPassword = Math.random().toString(36).slice(2, 10).toUpperCase();
@@ -337,7 +337,7 @@ export async function createDemoAccount(): Promise<{ username: string; plainPass
     [subId, userId, expiresAt]
   );
 
-  return { username, plainPassword, expiresAt };
+  return { userId, username, plainPassword, expiresAt };
 }
 
 export async function resetDemoAccount(userId: string): Promise<boolean> {
