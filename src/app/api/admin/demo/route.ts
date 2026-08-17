@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createDemoAccount, resetDemoAccount, getDemoAccounts, deleteUserById, ensurePlainPassword } from '@/lib/auth-db';
+import { createDemoAccount, resetDemoAccount, getDemoAccounts, deleteUserById } from '@/lib/auth-db';
 import { initAuthTables } from '@/lib/init-auth-tables';
 
 const ADMIN_SETUP_KEY = process.env.ADMIN_SETUP_KEY || 'trade-bot-admin-2024';
@@ -18,10 +18,7 @@ export async function GET(request: NextRequest) {
     }
 
     const accounts = await getDemoAccounts();
-    // Ensure every demo account has plainPassword
-    await Promise.all(accounts.map(a => ensurePlainPassword(a.id)));
-    const accountsWithPwd = await getDemoAccounts();
-    return NextResponse.json({ accounts: accountsWithPwd });
+    return NextResponse.json({ accounts });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     console.error('[admin/demo GET] Error:', message);

@@ -424,7 +424,6 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
     const daysLeft = u.subscription && subActive
       ? Math.max(0, Math.ceil((new Date(u.subscription.expiresAt).getTime() - Date.now()) / 86400000))
       : 0;
-    const totalPaid = userPayments.filter(p => p.status === 'approved').reduce((s, p) => s + p.amountUSD, 0);
 
     return (
       <div className="fixed inset-0 z-[60] flex items-start justify-center pt-10 sm:pt-16 bg-black/60 backdrop-blur-sm" onClick={onClose}>
@@ -575,16 +574,30 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
             {/* Stats */}
             <div className="grid grid-cols-3 gap-3">
               <div className="bg-emerald-500/5 border border-emerald-500/15 rounded-xl p-3 text-center">
-                <div className="text-lg font-bold text-emerald-400">${totalPaid}</div>
-                <div className="text-[10px] text-white/30 mt-0.5">Всего оплачено</div>
+                <div className="text-lg font-bold text-emerald-400">
+                  ${tradingStates.length > 0
+                    ? tradingStates.filter(s => s.initialized).reduce((sum, s) => sum + s.initialBalance, 0).toFixed(0)
+                    : '0'}
+                </div>
+                <div className="text-[10px] text-white/30 mt-0.5">Депозит</div>
+              </div>
+              <div className="bg-blue-500/5 border border-blue-500/15 rounded-xl p-3 text-center">
+                <div className="text-lg font-bold text-blue-400">
+                  ${tradingStates.length > 0
+                    ? tradingStates.filter(s => s.initialized).reduce((sum, s) => sum + s.balance, 0).toFixed(2)
+                    : '0.00'}
+                </div>
+                <div className="text-[10px] text-white/30 mt-0.5">Текущий баланс</div>
               </div>
               <div className="bg-amber-500/5 border border-amber-500/15 rounded-xl p-3 text-center">
-                <div className="text-lg font-bold text-amber-400">{userPayments.filter(p => p.status === 'approved').length}</div>
-                <div className="text-[10px] text-white/30 mt-0.5">Успешных оплат</div>
-              </div>
-              <div className="bg-red-500/5 border border-red-500/15 rounded-xl p-3 text-center">
-                <div className="text-lg font-bold text-red-400">{userPending.length}</div>
-                <div className="text-[10px] text-white/30 mt-0.5">Ожидают проверки</div>
+                <div className="text-lg font-bold text-amber-400">
+                  {tradingStates.length > 0
+                    ? tradingStates.reduce((sum, s) => sum + s.totalPnl, 0) >= 0
+                      ? '+' + tradingStates.reduce((sum, s) => sum + s.totalPnl, 0).toFixed(2)
+                      : tradingStates.reduce((sum, s) => sum + s.totalPnl, 0).toFixed(2)
+                    : '0.00'}
+                </div>
+                <div className="text-[10px] text-white/30 mt-0.5">Общий PnL</div>
               </div>
             </div>
 
