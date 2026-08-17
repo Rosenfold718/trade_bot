@@ -37,6 +37,46 @@ export default function AuthScreen() {
     setLoading(true);
 
     try {
+      // First, try the diagnostic endpoint to get a specific error
+      try {
+        const diagRes = await fetch('/api/auth/test-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+        const diagData = await diagRes.json();
+
+        if (!diagData.success && diagData.error) {
+          // Provide specific error message based on diagnostic
+          if (diagData.error.includes('TURSO_DATABASE_URL not set') ||
+              diagData.error.includes('DB query failed') ||
+              diagData.error.includes('Failed to init tables')) {
+            setError('Ошибка подключения к базе данных. Свяжитесь с администратором.');
+            console.error('[Login] Diagnostic:', diagData);
+            setLoading(false);
+            return;
+          }
+          if (diagData.error === 'User not found') {
+            setError('Пользователь не найден');
+            setLoading(false);
+            return;
+          }
+          if (diagData.error === 'Invalid password') {
+            setError('Неверный пароль');
+            setLoading(false);
+            return;
+          }
+          // If diagnostic found a different error, still try normal login
+          if (diagData.error && !diagData.steps?.some((s: any) => s.step === 'password_check' && s.ok === false)) {
+            setError('Ошибка сервера: ' + diagData.error);
+            setLoading(false);
+            return;
+          }
+        }
+      } catch {
+        // Diagnostic endpoint not available — continue with normal login
+      }
+
       const result = await signIn('credentials', {
         username,
         password,
@@ -44,10 +84,24 @@ export default function AuthScreen() {
       });
 
       if (result?.error) {
-        const msg = result.error === 'CredentialsSignin'
-          ? 'Неверный логин или пароль'
-          : 'Ошибка входа';
-        setError(msg);
+        // Check last auth error from server
+        try {
+          const errRes = await fetch('/api/auth/last-error');
+          const errData = await errRes.json();
+          if (errData.lastError) {
+            const step = errData.lastError.step;
+            if (step === 'initAuthTables' || step === 'findUserByUsername' || step === 'bcrypt_compare') {
+              setError('Серверная ошибка авторизации. Код: ' + step);
+              console.error('[Login] Server error details:', errData);
+            } else {
+              setError('Неверный логин или пароль');
+            }
+          } else {
+            setError('Неверный логин или пароль');
+          }
+        } catch {
+          setError('Неверный логин или пароль');
+        }
       }
     } catch (err) {
       setError('Ошибка соединения с сервером');
