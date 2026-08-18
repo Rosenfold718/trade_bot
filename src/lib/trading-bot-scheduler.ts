@@ -10,8 +10,11 @@ import { STRATEGIES } from '@/lib/strategies';
 import { getAllSettings } from '@/lib/db';
 import { getAuthClient } from '@/lib/auth-db';
 import { initAuthTables } from '@/lib/init-auth-tables';
+import { TOP_50_SYMBOLS } from '@/lib/types';
 
 const CYCLE_INTERVAL_MS = 60_000;
+
+const SYMBOLS = TOP_50_SYMBOLS;
 
 let started = (globalThis as any).__tradingBotStarted === true;
 let cycleInProgress = false;
@@ -60,17 +63,6 @@ function getEffectiveStrategies(settings: Record<string, string>) {
     };
   });
 }
-
-const TOP_50_SYMBOLS = [
-  'BTCUSDT','ETHUSDT','BNBUSDT','SOLUSDT','XRPUSDT','ADAUSDT','DOGEUSDT',
-  'AVAXUSDT','DOTUSDT','MATICUSDT','LINKUSDT','LTCUSDT','UNIUSDT','ATOMUSDT',
-  'ETCUSDT','XLMUSDT','APTUSDT','NEARUSDT','FILUSDT','ARBUSDT','OPUSDT',
-  'SUIUSDT','SEIUSDT','TIAUSDT','INJUSDT','ARUSDT','FETUSDT','RENDERUSDT',
-  'AAVEUSDT','MKRUSDT','SNXUSDT','COMPUSDT','GRTUSDT','IMXUSDT',
-  'GALAUSDT','SANDUSDT','MANAUSDT','AXSUSDT','APEUSDT','DYDXUSDT',
-  'RUNEUSDT','PENDLEUSDT','PEPEUSDT','WIFUSDT','FLOKIUSDT','BONKUSDT',
-  'TRXUSDT','TONUSDT','TRUMPUSDT'
-];
 
 // ── Monitor open trades for a user + strategy ──
 async function monitorTrades(
@@ -222,7 +214,7 @@ async function findAndOpen(
   } catch { /* ignore */ }
 
   const openSymbols = new Set(openTrades.map(t => t.symbol));
-  const available = TOP_50_SYMBOLS.filter(s => !openSymbols.has(s));
+  const available = SYMBOLS.filter(s => !openSymbols.has(s));
   const scanLimit = strategy.id === 'scalper' ? 30 : 20;
   const toScan = available.sort(() => Math.random() - 0.5).slice(0, scanLimit);
 

@@ -714,9 +714,9 @@ function makeMomentumDecision(symbol: string, candles: CandleData[]): TradingDec
   // ==================================================================
   if (trend.direction === 'down' || trend.direction === 'range') {
     // Find nearest resistance above price
-    const resistLevel = findNearestLevel(price, levels, 'above', 3);
+    const resistLevel = findNearestLevel(price, levels, 'above', 5);
     if (resistLevel) {
-      const touch = verifyLevelTouch(candles, resistLevel, 'test_resistance', 3, 0.15);
+      const touch = verifyLevelTouch(candles, resistLevel, 'test_resistance', 3, 0.5);
       if (touch.touched) {
         // Check for rejection candle pattern
         const isBearishRejection =
@@ -725,7 +725,7 @@ function makeMomentumDecision(symbol: string, candles: CandleData[]): TradingDec
           pattern.type === 'long_wick_bearish';
         const isDojiAtResistance = pattern.type === 'doji';
 
-        if (isBearishRejection && price < resistLevel.price && volAboveAvg) {
+        if (isBearishRejection && price < resistLevel.price) {
           const sl = resistLevel.price + atr * 1.2;
           const slDist = sl - price;
           const nextSupport = findNearestLevel(price, levels, 'below', 10);
@@ -768,7 +768,7 @@ function makeMomentumDecision(symbol: string, candles: CandleData[]): TradingDec
         }
 
         // Doji at resistance in range/down trend = potential reversal
-        if (isDojiAtResistance && price < resistLevel.price && volAboveAvg) {
+        if (isDojiAtResistance && price < resistLevel.price) {
           const sl = resistLevel.price + atr * 1.2;
           const slDist = sl - price;
           const nextSupport = findNearestLevel(price, levels, 'below', 10);
@@ -792,7 +792,7 @@ function makeMomentumDecision(symbol: string, candles: CandleData[]): TradingDec
           const guard = spikeGuard(candles, closes, atr, rsi, 'short', ema20);
           if (guard.blocked) return noDecision(symbol);
 
-          const score = 0.35 + resistLevel.strength * 0.2 + 0.1;
+          const score = 0.35 + resistLevel.strength * 0.2 + 0.1 + (volAboveAvg ? 0.1 : 0);
 
           console.log(`[Momentum] ${symbol} SHORT @ ${price.toFixed(4)} | reason: doji_resistance | level: ${resistLevel.price.toFixed(4)} | touched: ${touch.touchType} | trend: ${trend.direction}(${trend.strength.toFixed(2)})`);
 
@@ -800,6 +800,45 @@ function makeMomentumDecision(symbol: string, candles: CandleData[]): TradingDec
             symbol,
             direction: 'short',
             score: Math.min(score, 0.8),
+            leverage: 2,
+            stopLoss: Math.round(sl * 1e8) / 1e8,
+            takeProfit: Math.round(tp * 1e8) / 1e8,
+            indicators: [],
+          };
+        }
+
+        // No specific candlestick pattern — allow with reduced score
+        if (price < resistLevel.price && !isBearishRejection && !isDojiAtResistance) {
+          const sl = resistLevel.price + atr * 1.2;
+          const slDist = sl - price;
+          const nextSupport = findNearestLevel(price, levels, 'below', 10);
+          let tp: number;
+          if (nextSupport && nextSupport.price < price) {
+            tp = nextSupport.price;
+          } else {
+            tp = price - slDist * 3;
+          }
+          tp = Math.max(tp, price * (1 - 0.15));
+
+          {
+            const slDist = Math.abs(sl - price) / price;
+            const tpDist = Math.abs(tp - price) / price;
+            if (tpDist < slDist * 2) {
+              tp = price - slDist * 2.5;
+            }
+          }
+
+          const guard = spikeGuard(candles, closes, atr, rsi, 'short', ema20);
+          if (guard.blocked) return noDecision(symbol);
+
+          let score = (0.35 + resistLevel.strength * 0.3 + (volAboveAvg ? 0.1 : 0)) * 0.7;
+
+          console.log(`[Momentum] ${symbol} SHORT @ ${price.toFixed(4)} | reason: rejection_resistance_no_pattern | level: ${resistLevel.price.toFixed(4)} | touched: ${touch.touchType} | trend: ${trend.direction}(${trend.strength.toFixed(2)})`);
+
+          return {
+            symbol,
+            direction: 'short',
+            score: Math.min(score, 1),
             leverage: 2,
             stopLoss: Math.round(sl * 1e8) / 1e8,
             takeProfit: Math.round(tp * 1e8) / 1e8,
@@ -814,9 +853,9 @@ function makeMomentumDecision(symbol: string, candles: CandleData[]): TradingDec
   // PATTERN B: Bounce at Support → LONG
   // ==================================================================
   if (trend.direction === 'up' || trend.direction === 'range') {
-    const supportLevel = findNearestLevel(price, levels, 'below', 3);
+    const supportLevel = findNearestLevel(price, levels, 'below', 5);
     if (supportLevel) {
-      const touch = verifyLevelTouch(candles, supportLevel, 'test_support', 3, 0.15);
+      const touch = verifyLevelTouch(candles, supportLevel, 'test_support', 3, 0.5);
       if (touch.touched) {
         const isBullishBounce =
           pattern.type === 'pin_bar_bullish' ||
@@ -824,7 +863,7 @@ function makeMomentumDecision(symbol: string, candles: CandleData[]): TradingDec
           pattern.type === 'long_wick_bullish';
         const isDojiAtSupport = pattern.type === 'doji';
 
-        if (isBullishBounce && price > supportLevel.price && volAboveAvg) {
+        if (isBullishBounce && price > supportLevel.price) {
           const sl = supportLevel.price - atr * 1.2;
           const slDist = price - sl;
           const nextResistance = findNearestLevel(price, levels, 'above', 10);
@@ -863,7 +902,7 @@ function makeMomentumDecision(symbol: string, candles: CandleData[]): TradingDec
           };
         }
 
-        if (isDojiAtSupport && price > supportLevel.price && volAboveAvg) {
+        if (isDojiAtSupport && price > supportLevel.price) {
           const sl = supportLevel.price - atr * 1.2;
           const slDist = price - sl;
           const nextResistance = findNearestLevel(price, levels, 'above', 10);
@@ -887,7 +926,7 @@ function makeMomentumDecision(symbol: string, candles: CandleData[]): TradingDec
           const guard = spikeGuard(candles, closes, atr, rsi, 'long', ema20);
           if (guard.blocked) return noDecision(symbol);
 
-          const score = 0.35 + supportLevel.strength * 0.2 + 0.1;
+          const score = 0.35 + supportLevel.strength * 0.2 + 0.1 + (volAboveAvg ? 0.1 : 0);
 
           console.log(`[Momentum] ${symbol} LONG @ ${price.toFixed(4)} | reason: doji_support | level: ${supportLevel.price.toFixed(4)} | touched: ${touch.touchType} | trend: ${trend.direction}(${trend.strength.toFixed(2)})`);
 
@@ -895,6 +934,45 @@ function makeMomentumDecision(symbol: string, candles: CandleData[]): TradingDec
             symbol,
             direction: 'long',
             score: Math.min(score, 0.8),
+            leverage: 2,
+            stopLoss: Math.round(sl * 1e8) / 1e8,
+            takeProfit: Math.round(tp * 1e8) / 1e8,
+            indicators: [],
+          };
+        }
+
+        // No specific candlestick pattern — allow with reduced score
+        if (price > supportLevel.price && !isBullishBounce && !isDojiAtSupport) {
+          const sl = supportLevel.price - atr * 1.2;
+          const slDist = price - sl;
+          const nextResistance = findNearestLevel(price, levels, 'above', 10);
+          let tp: number;
+          if (nextResistance && nextResistance.price > price) {
+            tp = nextResistance.price;
+          } else {
+            tp = price + slDist * 3;
+          }
+          tp = Math.min(tp, price * (1 + 0.15));
+
+          {
+            const slDist = Math.abs(sl - price) / price;
+            const tpDist = Math.abs(tp - price) / price;
+            if (tpDist < slDist * 2) {
+              tp = price + slDist * 2.5;
+            }
+          }
+
+          const guard = spikeGuard(candles, closes, atr, rsi, 'long', ema20);
+          if (guard.blocked) return noDecision(symbol);
+
+          let score = (0.35 + supportLevel.strength * 0.3 + (volAboveAvg ? 0.1 : 0)) * 0.7;
+
+          console.log(`[Momentum] ${symbol} LONG @ ${price.toFixed(4)} | reason: bounce_support_no_pattern | level: ${supportLevel.price.toFixed(4)} | touched: ${touch.touchType} | trend: ${trend.direction}(${trend.strength.toFixed(2)})`);
+
+          return {
+            symbol,
+            direction: 'long',
+            score: Math.min(score, 1),
             leverage: 2,
             stopLoss: Math.round(sl * 1e8) / 1e8,
             takeProfit: Math.round(tp * 1e8) / 1e8,
@@ -911,7 +989,7 @@ function makeMomentumDecision(symbol: string, candles: CandleData[]): TradingDec
   if (trend.direction === 'up' && (trend.structure === 'HH_HL' || trend.strength > 0.3)) {
     const supportLevel = findNearestLevel(price, levels, 'below', 5);
     if (supportLevel) {
-      const touch = verifyLevelTouch(candles, supportLevel, 'test_support', 3, 0.15);
+      const touch = verifyLevelTouch(candles, supportLevel, 'test_support', 3, 0.5);
       if (touch.touched) {
         // At minimum: doji or small body at support
         const lastShape = analyzeCandleShape(candles[n - 1]);
@@ -967,7 +1045,7 @@ function makeMomentumDecision(symbol: string, candles: CandleData[]): TradingDec
   if (trend.direction === 'down' && (trend.structure === 'LH_LL' || trend.strength > 0.3)) {
     const resistLevel = findNearestLevel(price, levels, 'above', 5);
     if (resistLevel) {
-      const touch = verifyLevelTouch(candles, resistLevel, 'test_resistance', 3, 0.15);
+      const touch = verifyLevelTouch(candles, resistLevel, 'test_resistance', 3, 0.5);
       if (touch.touched) {
         const lastShape = analyzeCandleShape(candles[n - 1]);
         const isIndecision = lastShape.bodyRatio < 0.35;
@@ -1040,8 +1118,8 @@ function makeScalpHunterDecision(symbol: string, candles: CandleData[]): Trading
   const volSpike = lastVol > volAvg * 1.5;
 
   // Find S/R levels with lookback=10 for 5M (need more bars)
-  const levels = findSRLevels(candles, 10, 0.4, 3); // minTouches=3 for stronger threshold
-  const strongLevels = levels.filter(l => l.strength > 0.3);
+  const levels = findSRLevels(candles, 10, 0.4, 2); // minTouches=2 (relaxed)
+  const strongLevels = levels.filter(l => l.strength > 0.15);
   if (strongLevels.length === 0) return noDecision(symbol);
 
   const pattern = detectCandlePattern(candles);
@@ -1060,9 +1138,9 @@ function makeScalpHunterDecision(symbol: string, candles: CandleData[]): Trading
   // ==================================================================
   // SHORT: Price touched resistance, rejection pattern + volume spike
   // ==================================================================
-  const resistLevel = findNearestLevel(price, strongLevels, 'above', 2);
+  const resistLevel = findNearestLevel(price, strongLevels, 'above', 4);
   if (resistLevel) {
-    const touch = verifyLevelTouch(candles, resistLevel, 'test_resistance', 3, 0.1);
+    const touch = verifyLevelTouch(candles, resistLevel, 'test_resistance', 3, 0.3);
     if (touch.touched) {
       const isBearishRejection =
         pattern.type === 'pin_bar_bearish' ||
@@ -1098,15 +1176,44 @@ function makeScalpHunterDecision(symbol: string, candles: CandleData[]): Trading
           };
         }
       }
+
+      // No specific candlestick pattern — allow with reduced score
+      if (!isBearishRejection && price < resistLevel.price) {
+        if (indicatorAgree <= 0 || volSpike) {
+          const sl = price + Math.max(atr * 1.2, price * 0.005);
+          const slDist = sl - price;
+          let tp = price - slDist * 2.5;
+          tp = Math.max(tp, price * (1 - 0.05));
+
+          const guard = spikeGuard(candles, closes, atr, rsi, 'short', ema20, {
+            atrMax: 2.0, rocMax: 5, rsiOS: 15,
+          });
+          if (guard.blocked) return noDecision(symbol);
+
+          const score = (0.2 + resistLevel.strength * 0.3 + (volSpike ? 0.2 : 0)) * 0.7;
+
+          console.log(`[Scalper] ${symbol} SHORT @ ${price.toFixed(4)} | reason: rejection_resistance_no_pattern | level: ${resistLevel.price.toFixed(4)} | touched: ${touch.touchType} | volSpike: ${volSpike} | rsi: ${rsi.toFixed(1)}`);
+
+          return {
+            symbol,
+            direction: 'short',
+            score: Math.min(score, 0.9),
+            leverage: 2,
+            stopLoss: Math.round(sl * 1e8) / 1e8,
+            takeProfit: Math.round(tp * 1e8) / 1e8,
+            indicators: [],
+          };
+        }
+      }
     }
   }
 
   // ==================================================================
   // LONG: Price touched support, bounce pattern + volume spike
   // ==================================================================
-  const supportLevel = findNearestLevel(price, strongLevels, 'below', 2);
+  const supportLevel = findNearestLevel(price, strongLevels, 'below', 4);
   if (supportLevel) {
-    const touch = verifyLevelTouch(candles, supportLevel, 'test_support', 3, 0.1);
+    const touch = verifyLevelTouch(candles, supportLevel, 'test_support', 3, 0.3);
     if (touch.touched) {
       const isBullishBounce =
         pattern.type === 'pin_bar_bullish' ||
@@ -1129,6 +1236,35 @@ function makeScalpHunterDecision(symbol: string, candles: CandleData[]): Trading
           const score = 0.2 + supportLevel.strength * 0.3 + pattern.strength * 0.2 + (volSpike ? 0.2 : 0);
 
           console.log(`[Scalper] ${symbol} LONG @ ${price.toFixed(4)} | reason: bounce_support | level: ${supportLevel.price.toFixed(4)} | touched: ${touch.touchType} | volSpike: ${volSpike} | rsi: ${rsi.toFixed(1)}`);
+
+          return {
+            symbol,
+            direction: 'long',
+            score: Math.min(score, 0.9),
+            leverage: 2,
+            stopLoss: Math.round(sl * 1e8) / 1e8,
+            takeProfit: Math.round(tp * 1e8) / 1e8,
+            indicators: [],
+          };
+        }
+      }
+
+      // No specific candlestick pattern — allow with reduced score
+      if (!isBullishBounce && price > supportLevel.price) {
+        if (indicatorAgree >= 0 || volSpike) {
+          const sl = price - Math.max(atr * 1.2, price * 0.005);
+          const slDist = price - sl;
+          let tp = price + slDist * 2.5;
+          tp = Math.min(tp, price * (1 + 0.05));
+
+          const guard = spikeGuard(candles, closes, atr, rsi, 'long', ema20, {
+            atrMax: 2.0, rocMax: 5, rsiOB: 85,
+          });
+          if (guard.blocked) return noDecision(symbol);
+
+          const score = (0.2 + supportLevel.strength * 0.3 + (volSpike ? 0.2 : 0)) * 0.7;
+
+          console.log(`[Scalper] ${symbol} LONG @ ${price.toFixed(4)} | reason: bounce_support_no_pattern | level: ${supportLevel.price.toFixed(4)} | touched: ${touch.touchType} | volSpike: ${volSpike} | rsi: ${rsi.toFixed(1)}`);
 
           return {
             symbol,
@@ -1165,8 +1301,8 @@ function makePositionAlphaDecision(symbol: string, candles: CandleData[]): Tradi
   const e20arr = ema(closes, 20);
   const ema20 = e20arr[e20arr.length - 1] || 0;
 
-  // ADX > 25 required (config says 30, but 25 is the strategy adxMin)
-  if (adxData.adx < 25) return noDecision(symbol);
+  // ADX > 15 required (relaxed from 25)
+  if (adxData.adx < 15) return noDecision(symbol);
 
   // EMA50 and EMA200
   const e50 = ema(closes, 50);
@@ -1204,10 +1340,10 @@ function makePositionAlphaDecision(symbol: string, candles: CandleData[]): Tradi
   const levels = findSRLevels(candles, 7, 0.5, 2);
   if (levels.length === 0) return noDecision(symbol);
 
-  // CRITICAL: Crossover must happen near a major S/R level (within 2%)
-  const nearLevel = findNearestLevel(price, levels, 'any', 2);
+  // CRITICAL: Crossover must happen near a major S/R level (within 4%)
+  const nearLevel = findNearestLevel(price, levels, 'any', 4);
   if (!nearLevel) {
-    console.log(`[PositionAlpha] ${symbol} SKIP: crossover(${crossoverType}) but no S/R level within 2% (price=${price.toFixed(4)})`);
+    console.log(`[PositionAlpha] ${symbol} SKIP: crossover(${crossoverType}) but no S/R level within 4% (price=${price.toFixed(4)})`);
     return noDecision(symbol);
   }
 
@@ -1313,7 +1449,7 @@ export function makeStrategyDecision(
     const slDist = Math.abs(decision.stopLoss - currentPrice) / currentPrice;
     const tpDist = Math.abs(decision.takeProfit - currentPrice) / currentPrice;
     const rr = tpDist / Math.max(slDist, 0.0001);
-    if (rr < 1.5) {
+    if (rr < 1.0) {
       decision.direction = 'none';
       decision.score = 0;
     }

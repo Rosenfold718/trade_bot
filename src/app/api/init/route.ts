@@ -2,6 +2,20 @@ import { NextRequest, NextResponse } from 'next/server';
 import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, getTotalClosedPnl, getClosedTradeCount, initUserTradingData, updateBalance, getClosedTrades } from '@/lib/db';
 import { getAuthUserId } from '@/lib/auth-helpers';
 
+// Cooldown to avoid running trading cycle too often from user visits
+let _lastCycleTime = 0;
+const CYCLE_COOLDOWN_MS = 45_000; // 45 seconds
+
+/** Fire-and-forget: run one trading cycle if cooldown elapsed */
+function maybeRunTradingCycle() {
+  const now = Date.now();
+  if (now - _lastCycleTime < CYCLE_COOLDOWN_MS) return;
+  _lastCycleTime = now;
+  import('@/lib/trading-bot-scheduler').then(({ runTradingCycle }) => {
+    runTradingCycle().catch(err => console.error('[init] Background trading cycle error:', err));
+  }).catch(() => {});
+}
+
 /**
  * Recalculate balance from trade history.
  * Expected balance = 100 (initial) + sum(all closed pnl) - sum(open trade amounts)
@@ -50,6 +64,9 @@ export async function GET(request: NextRequest) {
       // State doesn't exist yet, initialize it
       await initUserTradingData(userId);
     }
+
+    // Fire-and-forget: trigger trading cycle in background (cooldown-protected)
+    maybeRunTradingCycle();
 
     // Parallel fetch all data
     const [state, openTrades, recentTrades, totalClosedPnl, closedTradeCount, weights] = await Promise.all([

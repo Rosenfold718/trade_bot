@@ -29,17 +29,15 @@ export async function GET(request: NextRequest) {
     ]);
 
     // ── Balance self-heal: recalculate from trade history to fix any drift ──
-    // Formula: balance = INITIAL_DEPOSIT($100) + realizedPnl - lockedInOpenTrades
-    // This ensures balance GROWS when profitable trades close (realizedPnl increases)
-    // and shrinks when losing trades close. PnL (totalClosedPnl) = growth from initial $100.
+    // Formula: balance = initial_balance + realizedPnl - lockedInOpenTrades
     try {
       const allClosed = await getClosedTrades(userId, strategyId);
       const closedPnlSum = allClosed.reduce((s, t) => s + (t.pnl ?? 0), 0);
       const openAmountSum = openTrades.reduce((s, t) => s + t.amount, 0);
-      const INITIAL_DEPOSIT = 100;
-      const correctBalance = Math.max(0, INITIAL_DEPOSIT + closedPnlSum - openAmountSum);
+      const initialBalance = Number(state.initial_balance ?? 100);
+      const correctBalance = Math.max(0, initialBalance + closedPnlSum - openAmountSum);
       if (Math.abs(state.balance - correctBalance) > 0.01) {
-        console.log(`[trader GET] Balance self-heal: ${state.balance.toFixed(2)} → ${correctBalance.toFixed(2)} (initial=$${INITIAL_DEPOSIT} + pnl=${closedPnlSum.toFixed(2)} - open=${openAmountSum.toFixed(2)})`);
+        console.log(`[trader GET] Balance self-heal: ${state.balance.toFixed(2)} → ${correctBalance.toFixed(2)} (initial=$${initialBalance} + pnl=${closedPnlSum.toFixed(2)} - open=${openAmountSum.toFixed(2)})`);
         await updateBalance(userId, correctBalance, strategyId);
         state.balance = correctBalance;
       }
