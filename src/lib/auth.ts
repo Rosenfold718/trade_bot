@@ -117,6 +117,5 @@ export const authOptions: NextAuthOptions = {
       return session;
     },
   },
-  // NO pages config — we handle everything client-side
-  secret: process.env.NEXTAUTH_SECRET || 'fallback-secret-change-in-production-32chars!!',
+  secret: process.env.NEXTAUTH_SECRET!,
 };

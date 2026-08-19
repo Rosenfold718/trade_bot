@@ -5,23 +5,27 @@ import bcrypt from 'bcryptjs';
 
 /**
  * POST /api/auth/test-login
- * Diagnostic endpoint — tests login credentials and returns detailed info.
- * NOT for production auth, only for debugging.
+ * Diagnostic endpoint (admin only) — tests login credentials.
  */
 export async function POST(request: NextRequest) {
+  // Admin-only access via query param or header
+  const key = request.nextUrl.searchParams.get('key')
+    || request.headers.get('x-admin-key');
+  if (key !== process.env.ADMIN_SETUP_KEY) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
   const steps: { step: string; ok: boolean; detail: string }[] = [];
 
   try {
     // Step 1: Check env vars
     const tursoUrl = process.env.TURSO_DATABASE_URL;
-    const tursoToken = process.env.TURSO_AUTH_TOKEN;
     const nextauthSecret = process.env.NEXTAUTH_SECRET;
-    const nextauthUrl = process.env.NEXTAUTH_URL;
 
     steps.push({
       step: 'env_vars',
       ok: !!(tursoUrl && nextauthSecret),
-      detail: `TURSO_DATABASE_URL: ${tursoUrl ? tursoUrl.slice(0, 40) + '...' : 'MISSING'} | TURSO_AUTH_TOKEN: ${tursoToken ? 'SET' : 'MISSING'} | NEXTAUTH_SECRET: ${nextauthSecret ? 'SET' : 'MISSING'} | NEXTAUTH_URL: ${nextauthUrl || 'MISSING'}`,
+      detail: `TURSO_DATABASE_URL: ${tursoUrl ? 'SET' : 'MISSING'} | NEXTAUTH_SECRET: ${nextauthSecret ? 'SET' : 'MISSING'}`,
     });
 
     if (!tursoUrl) {
@@ -45,7 +49,7 @@ export async function POST(request: NextRequest) {
       steps.push({ step: 'input', ok: false, detail: 'Missing username or password' });
       return NextResponse.json({ success: false, steps, error: 'Username and password required' }, { status: 400 });
     }
-    steps.push({ step: 'input', ok: true, detail: `username="${username}", password length=${password.length}` });
+    steps.push({ step: 'input', ok: true, detail: `username="${username}"` });
 
     // Step 4: Find user
     let user;
@@ -55,7 +59,7 @@ export async function POST(request: NextRequest) {
         step: 'find_user',
         ok: !!user,
         detail: user
-          ? `Found: id=${user.id}, role=${user.role}, hasPlainPassword=${!!user.plainPassword}, passwordHash=${user.password.slice(0, 15)}...`
+          ? `Found: id=${user.id}, role=${user.role}`
           : 'User not found in database',
       });
     } catch (err: any) {
@@ -73,7 +77,7 @@ export async function POST(request: NextRequest) {
       steps.push({
         step: 'password_check',
         ok: isValid,
-        detail: isValid ? 'Password matches!' : `Password does NOT match. Stored hash: ${user.password.slice(0, 20)}...`,
+        detail: isValid ? 'Password matches!' : 'Password does NOT match.',
       });
 
       if (!isValid) {
@@ -99,7 +103,6 @@ export async function POST(request: NextRequest) {
       steps.push({ step: 'subscription', ok: false, detail: err.message });
     }
 
-    // Success!
     return NextResponse.json({
       success: true,
       steps,
