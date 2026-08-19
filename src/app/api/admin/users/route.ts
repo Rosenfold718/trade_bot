@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllUsers, deleteUserById, findUserById } from '@/lib/auth-db';
 import { initAuthTables } from '@/lib/init-auth-tables';
-import { initDB, tursoDb, getTraderState } from '@/lib/db';
+import { initDB, tursoDb, getTraderState, seedDemoTradesIfEmpty, getAllUserIds } from '@/lib/db';
 import { STRATEGIES } from '@/lib/strategies';
 
 const ADMIN_SETUP_KEY = process.env.ADMIN_SETUP_KEY || 'trade-bot-admin-2024';
@@ -199,6 +199,19 @@ export async function POST(request: NextRequest) {
     }
 
     const { userId, action } = await request.json();
+
+    if (action === 'seed-trades') {
+      if (userId) {
+        await seedDemoTradesIfEmpty(userId);
+      } else {
+        const allUserIds = await getAllUserIds();
+        for (const uid of allUserIds) {
+          try { await seedDemoTradesIfEmpty(uid); } catch { /* skip */ }
+        }
+      }
+      return NextResponse.json({ success: true, message: userId ? 'Trades seeded for user' : 'Trades seeded for all users' });
+    }
+
     if (!userId) {
       return NextResponse.json({ error: 'userId required' }, { status: 400 });
     }

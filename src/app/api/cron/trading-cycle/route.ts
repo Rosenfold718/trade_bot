@@ -1,42 +1,32 @@
 import { NextResponse } from 'next/server';
+import { initAuthTables } from '@/lib/init-auth-tables';
+import { initDB } from '@/lib/db';
 import { runTradingCycle } from '@/lib/trading-bot-scheduler';
 
 /**
- * GET /api/cron/trading-cycle
- * Triggered by Vercel Cron every minute.
- * Runs one trading cycle for all active subscribed users.
+ * Vercel Cron endpoint — called by external cron service (e.g. cron-job.org)
+ * every 1-2 minutes to keep the trading bot running on serverless.
+ * 
+ * No auth required — this is a public endpoint that just runs the trading cycle.
+ * The cycle itself only processes users with active subscriptions.
  */
-export async function GET(request: Request) {
-  // Verify this is called by Vercel Cron (or allow manually for testing)
-  const authHeader = request.headers.get('authorization');
-  const cronSecret = process.env.ADMIN_SETUP_KEY || 'trade-bot-admin-2024';
-
-  // Vercel Cron sends a special header
-  const isVercelCron = request.headers.get('authorization') === `Bearer ${cronSecret}`
-    || request.headers.get('x-vercel-cron') === 'true';
-
-  if (!isVercelCron && process.env.NODE_ENV === 'production') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
+export async function GET() {
   try {
+    await initAuthTables();
+    await initDB();
     const result = await runTradingCycle();
     return NextResponse.json({
-      ok: true,
-      timestamp: new Date().toISOString(),
+      success: true,
       ...result,
-    });
-  } catch (err: any) {
-    console.error('[cron/trading-cycle] Error:', err);
-    return NextResponse.json({
-      ok: false,
-      error: err.message,
       timestamp: new Date().toISOString(),
-    }, { status: 500 });
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    console.error('[cron/trading-cycle] Error:', message);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
-// Also accept POST for manual triggering
-export async function POST(request: Request) {
-  return GET(request);
+export async function POST() {
+  return GET();
 }

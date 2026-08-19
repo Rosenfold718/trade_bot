@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { initDB, getTraderState, getIndicatorWeights, getOpenTrades, getRecentTrades, getTotalClosedPnl, getClosedTradeCount, initUserTradingData, updateBalance, getClosedTrades } from '@/lib/db';
 import { getAuthUserId } from '@/lib/auth-helpers';
 
-// Cooldown to avoid running trading cycle too often from user visits
+// On Vercel serverless, setInterval doesn't persist. The trading cycle MUST run
+// on every user page visit. A minimal 8s cooldown prevents double-fire from
+// parallel tabs/requests hitting the same instance.
 let _lastCycleTime = 0;
-const CYCLE_COOLDOWN_MS = 45_000; // 45 seconds
+const CYCLE_COOLDOWN_MS = 8_000;
 
 /** Fire-and-forget: run one trading cycle if cooldown elapsed */
 function maybeRunTradingCycle() {
@@ -12,7 +14,9 @@ function maybeRunTradingCycle() {
   if (now - _lastCycleTime < CYCLE_COOLDOWN_MS) return;
   _lastCycleTime = now;
   import('@/lib/trading-bot-scheduler').then(({ runTradingCycle }) => {
-    runTradingCycle().catch(err => console.error('[init] Background trading cycle error:', err));
+    runTradingCycle().then(r => {
+      console.log(`[init] Trading cycle completed: users=${r.users} opened=${r.opened} closed=${r.closed} trailed=${r.trailed} (${r.elapsed})`);
+    }).catch(err => console.error('[init] Background trading cycle error:', err));
   }).catch(() => {});
 }
 
@@ -58,14 +62,17 @@ export async function GET(request: NextRequest) {
     const strategyId = request.nextUrl.searchParams.get('strategyId') || 'momentum';
 
     // Ensure user has trading data initialized
+    let justInitialized = false;
     try {
       await getTraderState(userId, strategyId);
     } catch {
       // State doesn't exist yet, initialize it
       await initUserTradingData(userId);
+      justInitialized = true;
     }
 
-    // Fire-and-forget: trigger trading cycle in background (cooldown-protected)
+    // Fire-and-forget: trigger trading cycle in background (minimal cooldown)
+    // On Vercel serverless, this is the PRIMARY way the bot runs.
     maybeRunTradingCycle();
 
     // Parallel fetch all data

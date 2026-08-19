@@ -147,6 +147,12 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
   const [tradingStates, setTradingStates] = useState<TradingStateInfo[]>([]);
   const [initLoading, setInitLoading] = useState(false);
 
+  // Bot & seed state
+  const [botRunning, setBotRunning] = useState(false);
+  const [botResult, setBotResult] = useState<string | null>(null);
+  const [seedLoading, setSeedLoading] = useState(false);
+  const [seedResult, setSeedResult] = useState<string | null>(null);
+
   const fetchRequests = useCallback(async () => {
     setLoading(true);
     try {
@@ -388,6 +394,51 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
       }
     } catch {}
     setDemoActionLoading(null);
+  };
+
+  const handleRunBot = async () => {
+    setBotRunning(true);
+    setBotResult(null);
+    try {
+      const res = await fetch('/api/admin/trading-cycle', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${ADMIN_KEY}` },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const parts: string[] = [];
+        if (data.usersCount != null) parts.push(`${data.usersCount} пользователей`);
+        if (data.openedTrades != null) parts.push(`${data.openedTrades} сделка открыта`);
+        setBotResult(`Бот: ${parts.join(', ') || 'выполнено'}`);
+      } else {
+        setBotResult(`Ошибка: ${data.error || res.status}`);
+      }
+    } catch {
+      setBotResult('Ошибка сети');
+    }
+    setBotRunning(false);
+  };
+
+  const handleSeedTrades = async () => {
+    setSeedLoading(true);
+    setSeedResult(null);
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ADMIN_KEY}` },
+        body: JSON.stringify({ action: 'seed-trades' }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSeedResult(data.message || 'Готово');
+        await fetchUsers();
+      } else {
+        setSeedResult(`Ошибка: ${data.error || res.status}`);
+      }
+    } catch {
+      setSeedResult('Ошибка сети');
+    }
+    setSeedLoading(false);
   };
 
   const copyToClipboard = (text: string) => {
@@ -768,6 +819,31 @@ export default function AdminPaymentsPanel({ open, onClose }: Props) {
           <div className="flex items-center gap-3">
             <CreditCard className="w-5 h-5 text-amber-400" />
             <h2 className="text-sm font-bold text-white">Админ-панель</h2>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Bot & Seed result feedback */}
+            {botResult && (
+              <span className="text-[10px] px-2 py-0.5 rounded font-medium bg-emerald-500/15 text-emerald-400 max-w-[200px] truncate">{botResult}</span>
+            )}
+            {seedResult && (
+              <span className="text-[10px] px-2 py-0.5 rounded font-medium bg-amber-500/15 text-amber-400 max-w-[200px] truncate">{seedResult}</span>
+            )}
+            <button
+              onClick={handleRunBot}
+              disabled={botRunning}
+              className="flex items-center gap-1 px-2 py-1 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 rounded text-[10px] font-medium transition-colors disabled:opacity-40 shrink-0"
+            >
+              {botRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+              Запустить бота
+            </button>
+            <button
+              onClick={handleSeedTrades}
+              disabled={seedLoading}
+              className="flex items-center gap-1 px-2 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 rounded text-[10px] font-medium transition-colors disabled:opacity-40 shrink-0"
+            >
+              {seedLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <TrendingUp className="w-3 h-3" />}
+              Заполнить PnL
+            </button>
           </div>
           <button onClick={onClose} className="p-1.5 text-white/30 hover:text-white/60 transition-colors rounded-lg hover:bg-white/5">
             <XCircle className="w-3.5 h-3.5" />

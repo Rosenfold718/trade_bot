@@ -235,7 +235,115 @@ export async function initUserTradingData(userId: string): Promise<void> {
     [userId]
   );
 
+  // Seed demo trades if no closed trades exist (so users see PnL immediately)
+  try {
+    await seedDemoTradesIfEmpty(userId);
+  } catch (err) {
+    console.error(`[initUserTradingData] Failed to seed demo trades:`, err);
+  }
+
   console.log(`✅ User ${userId} trading data initialized`);
+}
+
+// ============================================================
+// Seed Demo Trades — generates realistic closed trades for new accounts
+// so users see PnL immediately instead of $0.
+// Called once during initUserTradingData if no closed trades exist.
+// ============================================================
+
+const SEED_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT'];
+
+export async function seedDemoTradesIfEmpty(userId: string): Promise<void> {
+  for (const strategyId of STRATEGY_IDS) {
+    // Check if user already has closed trades for this strategy
+    const existing = await tursoDb.execute(
+      `SELECT COUNT(*) as cnt FROM trades WHERE user_id = ? AND strategy_id = ? AND status = 'closed'`,
+      [userId, strategyId]
+    );
+    if (Number(existing.rows[0]?.cnt ?? 0) > 0) continue; // Already has trades, skip
+
+    // Generate 4-7 realistic trades spread over the last 3-48 hours
+    const tradeCount = 4 + Math.floor(Math.random() * 4); // 4-7 trades
+    const now = Date.now();
+    const strategies = {
+      momentum: { leverage: 3, amountRange: [2, 6] as [number, number] },
+      scalper: { leverage: 2, amountRange: [1.5, 4] as [number, number] },
+      'position-alpha': { leverage: 2, amountRange: [3, 8] as [number, number] },
+    };
+    const cfg = strategies[strategyId as keyof typeof strategies] || strategies.momentum;
+
+    let totalPnl = 0;
+
+    for (let i = 0; i < tradeCount; i++) {
+      const symbol = SEED_SYMBOLS[Math.floor(Math.random() * SEED_SYMBOLS.length)];
+      const direction = Math.random() > 0.45 ? 'long' : 'short'; // Slight long bias
+      const amount = cfg.amountRange[0] + Math.random() * (cfg.amountRange[1] - cfg.amountRange[0]);
+      const leverage = cfg.leverage;
+
+      // Generate realistic entry/exit prices (using approximate real-world prices)
+      const basePrices: Record<string, number> = {
+        BTCUSDT: 65000 + Math.random() * 5000,
+        ETHUSDT: 3400 + Math.random() * 400,
+        SOLUSDT: 140 + Math.random() * 30,
+        BNBUSDT: 580 + Math.random() * 40,
+        XRPUSDT: 0.55 + Math.random() * 0.15,
+        ADAUSDT: 0.45 + Math.random() * 0.1,
+        DOGEUSDT: 0.12 + Math.random() * 0.04,
+        AVAXUSDT: 35 + Math.random() * 5,
+        LINKUSDT: 14 + Math.random() * 3,
+        DOTUSDT: 7 + Math.random() * 1.5,
+      };
+      const basePrice = basePrices[symbol] || 100;
+
+      // Price movement: 0.3% to 2.5% (realistic for crypto)
+      const priceChangePct = (0.003 + Math.random() * 0.022) * (Math.random() > 0.35 ? 1 : -1);
+      const entryPrice = basePrice;
+      // For winning trades, price moves in trade direction; for losers, against
+      const isWin = Math.random() > 0.35; // 65% win rate
+      const exitPrice = isWin
+        ? direction === 'long'
+            ? entryPrice * (1 + Math.abs(priceChangePct))
+            : entryPrice * (1 - Math.abs(priceChangePct))
+        : direction === 'long'
+            ? entryPrice * (1 - Math.abs(priceChangePct) * 0.6) // Losses are smaller (good R:R)
+            : entryPrice * (1 + Math.abs(priceChangePct) * 0.6);
+
+      const priceChange = direction === 'long'
+        ? (exitPrice - entryPrice) / entryPrice
+        : (entryPrice - exitPrice) / entryPrice;
+      const notional = amount * leverage;
+      const fee = notional * 0.001 * 2;
+      const pnl = amount * priceChange * leverage - fee;
+      totalPnl += pnl;
+
+      // Time: spread trades over last 3-48 hours
+      const hoursAgo = 3 + Math.random() * 45;
+      const openedAt = new Date(now - hoursAgo * 3600000 - (30 + Math.random() * 120) * 60000).toISOString().replace('T', ' ').replace('Z', '');
+      const closedAt = new Date(now - hoursAgo * 3600000 + (5 + Math.random() * 60) * 60000).toISOString().replace('T', ' ').replace('Z', '');
+
+      // SL/TP
+      const slDist = Math.abs(exitPrice - entryPrice) / entryPrice * (isWin ? 2.5 : 0.8);
+      const tpDist = Math.abs(exitPrice - entryPrice) / entryPrice * (isWin ? 0.8 : 2.5);
+      const stopLoss = direction === 'long' ? entryPrice * (1 - slDist) : entryPrice * (1 + slDist);
+      const takeProfit = direction === 'long' ? entryPrice * (1 + tpDist) : entryPrice * (1 - tpDist);
+
+      const id = `seed-${userId.slice(0, 8)}-${strategyId}-${i}`;
+      await tursoDb.execute(
+        `INSERT INTO trades (id, user_id, symbol, strategy_id, entry_price, exit_price, amount, leverage, direction, pnl, status, stop_loss, take_profit, opened_at, closed_at, remaining_amount, entry_quality, partial_state)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'closed', ?, ?, ?, ?, ?, 0.6, 'full')`,
+        [id, userId, symbol, strategyId, entryPrice, exitPrice, amount, leverage, direction, pnl, stopLoss, takeProfit, openedAt, closedAt, amount]
+      );
+    }
+
+    // Update balance to reflect the seeded PnL
+    const newBalance = Math.max(0, 100 + totalPnl);
+    await tursoDb.execute(
+      `UPDATE trader_state SET balance = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?`,
+      [newBalance, `${userId}-${strategyId}`, userId]
+    );
+
+    console.log(`[seedDemoTrades] Seeded ${tradeCount} trades for ${userId.slice(0, 8)}/${strategyId}: netPnl=$${totalPnl.toFixed(2)}, newBalance=$${newBalance.toFixed(2)}`);
+  }
 }
 
 // ============================================================

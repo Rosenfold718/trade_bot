@@ -83,6 +83,13 @@ export default function Home() {
   // Check subscription when user logs in
   const checkSubscription = useCallback(async () => {
     if (!userId) return;
+
+    // Admin always has full access, skip subscription check
+    if (isAdmin) {
+      setView('warning'); // Go through warning → activity → terminal flow
+      return;
+    }
+
     setCheckingSub(true);
     try {
       const res = await fetch('/api/subscription');
@@ -104,7 +111,7 @@ export default function Home() {
     } finally {
       setCheckingSub(false);
     }
-  }, [userId]);
+  }, [userId, isAdmin]);
 
   // React to session changes
   useEffect(() => {
@@ -181,7 +188,7 @@ export default function Home() {
   // ── Terminal ──
   return (
     <div className="h-[calc(100dvh-28px)] w-full flex flex-col bg-[#0a0a0f]">
-      <SubscriptionBar daysRemaining={subDays} username={username} pendingLabel={pendingLabel} onLogout={handleLogout} onAdminPayments={isAdmin ? () => setShowAdminPanel(p => !p) : undefined} onManual={() => setShowManual(true)} onProfileClick={() => setShowProfileDialog(true)} />
+      <SubscriptionBar daysRemaining={subDays} username={username} pendingLabel={pendingLabel} onLogout={handleLogout} onAdminPayments={isAdmin ? () => setShowAdminPanel(p => !p) : undefined} onManual={() => setShowManual(true)} onProfileClick={() => setShowProfileDialog(true)} isAdmin={isAdmin} />
       <AdminPaymentsPanel open={showAdminPanel} onClose={() => setShowAdminPanel(false)} />
       <ManualDialog open={showManual} onClose={() => setShowManual(false)} />
       {/* Profile / Password Change Dialog */}
@@ -261,11 +268,12 @@ export default function Home() {
   );
 }
 
-function SubscriptionBar({ daysRemaining, username, pendingLabel, onLogout, onAdminPayments, onManual, onProfileClick }: {
-  daysRemaining: number; username?: string; pendingLabel?: string | null; onLogout: () => void; onAdminPayments?: () => void; onManual?: () => void; onProfileClick?: () => void;
+function SubscriptionBar({ daysRemaining, username, pendingLabel, onLogout, onAdminPayments, onManual, onProfileClick, isAdmin }: {
+  daysRemaining: number; username?: string; pendingLabel?: string | null; onLogout: () => void; onAdminPayments?: () => void; onManual?: () => void; onProfileClick?: () => void; isAdmin?: boolean;
 }) {
-  const isLow = daysRemaining <= 7 && daysRemaining > 0;
-  const isExpired = daysRemaining <= 0;
+  // Admin always shows as active
+  const isLow = !isAdmin && daysRemaining <= 7 && daysRemaining > 0;
+  const isExpired = !isAdmin && daysRemaining <= 0;
   return (
     <div className={`h-7 flex items-center justify-between px-3 sm:px-4 text-[10px] font-mono shrink-0 z-30 safe-top ${
       isExpired ? 'bg-red-500/15 border-b border-red-500/20' :
